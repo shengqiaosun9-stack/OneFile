@@ -19,23 +19,45 @@ from project_model import (
     validate_title_candidate,
 )
 from storage import load_projects, save_projects
-from text_cleaning import sanitize_text_strict
+from text_cleaning import has_markup_contamination, is_timeline_leak_text, sanitize_text_strict
+
+
+def _contains_legacy_markup_payload(project: Dict[str, Any]) -> bool:
+    candidates = []
+    for key in ["version_footprint", "summary", "timeline"]:
+        candidates.append(project.get(key, ""))
+    versions = project.get("versions", [])
+    if isinstance(versions, list):
+        for item in versions:
+            if not isinstance(item, dict):
+                continue
+            candidates.append(item.get("event", ""))
+            candidates.append(item.get("update_text", ""))
+            candidates.append(item.get("version_text", ""))
+    joined = " ".join([str(x or "") for x in candidates])
+    return has_markup_contamination(joined) or is_timeline_leak_text(joined)
 
 
 def init_state() -> None:
     if "projects" not in st.session_state:
         loaded_projects = load_projects()
-        st.session_state.projects = [
-            hard_scrub_project_for_state(migrate_project_for_hygiene(project))
-            for project in loaded_projects
-        ]
+        sanitized_projects = []
+        for project in loaded_projects:
+            if _contains_legacy_markup_payload(project):
+                continue
+            sanitized_projects.append(hard_scrub_project_for_state(migrate_project_for_hygiene(project)))
+        st.session_state.projects = sanitized_projects
         if st.session_state.projects:
             persist_projects()
+        elif loaded_projects:
+            save_projects([])
     elif st.session_state.projects:
-        st.session_state.projects = [
-            hard_scrub_project_for_state(migrate_project_for_hygiene(project))
-            for project in st.session_state.projects
-        ]
+        sanitized_projects = []
+        for project in st.session_state.projects:
+            if _contains_legacy_markup_payload(project):
+                continue
+            sanitized_projects.append(hard_scrub_project_for_state(migrate_project_for_hygiene(project)))
+        st.session_state.projects = sanitized_projects
 
     if "last_generated_id" not in st.session_state:
         st.session_state.last_generated_id = None
