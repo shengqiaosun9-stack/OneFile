@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import streamlit as st
@@ -8,6 +9,7 @@ from project_model import (
     apply_rule_overrides,
     apply_schema_to_project,
     compare_field_value,
+    enrich_generated_project,
     get_export_payload,
     get_now_str,
     hard_scrub_project_for_state,
@@ -49,6 +51,7 @@ def init_state() -> None:
             sanitized_projects.append(hard_scrub_project_for_state(migrate_project_for_hygiene(project)))
         st.session_state.projects = sanitized_projects
         if st.session_state.projects:
+            _sort_projects_in_state()
             persist_projects()
         elif loaded_projects:
             save_projects([])
@@ -59,6 +62,7 @@ def init_state() -> None:
                 continue
             sanitized_projects.append(hard_scrub_project_for_state(migrate_project_for_hygiene(project)))
         st.session_state.projects = sanitized_projects
+        _sort_projects_in_state()
 
     if "last_generated_id" not in st.session_state:
         st.session_state.last_generated_id = None
@@ -87,6 +91,7 @@ def init_state() -> None:
 
     if st.session_state.projects:
         st.session_state.projects = [hard_scrub_project_for_state(project) for project in st.session_state.projects]
+        _sort_projects_in_state()
         if not st.session_state.data_hygiene_v3_done:
             persist_projects()
             st.session_state.data_hygiene_v3_done = True
@@ -106,22 +111,114 @@ def get_project_by_id(project_id: str) -> Optional[Dict[str, Any]]:
     return next((project for project in st.session_state.projects if project.get("id") == project_id), None)
 
 
+def _parse_updated_at(value: Any) -> datetime:
+    raw = sanitize_text_strict(value, allow_empty=True, max_len=32)
+    if not raw:
+        return datetime.min
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    return datetime.min
+
+
+def _sort_projects_in_state() -> None:
+    st.session_state.projects = sorted(
+        st.session_state.projects,
+        key=lambda item: (_parse_updated_at(item.get("updated_at")), str(item.get("id", ""))),
+        reverse=True,
+    )
+
+
+def _now_ts() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def replace_project_by_id(project_id: str, project: Dict[str, Any]) -> bool:
     for i, existing in enumerate(st.session_state.projects):
         if existing.get("id") == project_id:
             st.session_state.projects[i] = project
+            _sort_projects_in_state()
             persist_projects()
             return True
     return False
 
 
 def insert_project_top(project: Dict[str, Any]) -> None:
-    st.session_state.projects.insert(0, project)
+    st.session_state.projects.append(project)
+    _sort_projects_in_state()
     persist_projects()
 
 
 def persist_projects() -> None:
     save_projects(st.session_state.projects)
+
+
+def save_project_from_edit(project_id: Optional[str], title: str, desc: str, latest_update: str = "") -> str:
+    title_clean = sanitize_text_strict(title, allow_empty=True, max_len=42)
+    if not title_clean or not validate_title_candidate(title_clean):
+        raise ValueError("请先填写有效项目名称。")
+
+    desc_clean = sanitize_text_strict(desc, allow_empty=False, max_len=6000)
+    if not desc_clean:
+        raise ValueError("请至少填写项目描述。")
+
+    latest_update_clean = sanitize_text_strict(latest_update, allow_empty=True, max_len=280)
+    composed_input = desc_clean
+    if latest_update_clean:
+        composed_input = f"{desc_clean}\n\n最新进展：{latest_update_clean}"
+
+    schema = structure_project(composed_input, user_title=title_clean)
+    schema = sanitize_schema(
+        {
+            **schema,
+            "title": title_clean,
+            "desc": desc_clean,
+            "latest_update": latest_update_clean or schema.get("latest_update", schema.get("version_footprint", "")),
+            "version_footprint": latest_update_clean or schema.get("version_footprint", schema.get("latest_update", "")),
+        }
+    )
+
+    timestamp = _now_ts()
+    if project_id:
+        current = get_project_by_id(project_id)
+        if not current:
+            raise ValueError("目标项目不存在。")
+
+        st.session_state.undo_snapshots[project_id] = copy.deepcopy(current)
+        signals = parse_update_signals(latest_update_clean or desc_clean, current)
+        next_project = apply_schema_to_project(
+            current,
+            schema,
+            latest_update_clean or desc_clean,
+            timestamp,
+            signals=signals,
+        )
+        next_project["id"] = project_id
+        next_project["title"] = title_clean
+        next_project["desc"] = desc_clean
+        next_project["updated_at"] = timestamp
+        normalized = normalize_project(next_project)
+        normalized["updated_at"] = timestamp
+        if not replace_project_by_id(project_id, normalized):
+            raise ValueError("目标项目不存在。")
+        st.session_state.last_generated_id = project_id
+        st.session_state.selected_project_id = project_id
+        st.session_state.flash_message = "项目档案已更新。"
+        return project_id
+
+    generated = enrich_generated_project(schema)
+    generated["title"] = title_clean
+    generated["desc"] = desc_clean
+    generated["updated_at"] = timestamp
+    normalized = normalize_project(generated)
+    normalized["updated_at"] = timestamp
+    insert_project_top(normalized)
+    st.session_state.last_generated_id = normalized["id"]
+    st.session_state.selected_project_id = normalized["id"]
+    st.session_state.flash_message = "项目档案已创建。"
+    return normalized["id"]
 
 
 def _latest_version_text(project: Dict[str, Any]) -> str:
@@ -233,8 +330,8 @@ def undo_last_update(project_id: str) -> None:
     st.session_state.selected_project_id = project_id
     st.session_state.last_generated_id = project_id
     st.session_state.update_preview = None
-    st.session_state.update_target_id = project_id
-    st.session_state.flash_message = "已撤销最近一次更新，项目已恢复到上一个版本。"
+    st.session_state.update_target_id = None
+    st.session_state.flash_message = "已撤销最近一次编辑。"
 
 
 def delete_project_by_id(project_id: str) -> None:

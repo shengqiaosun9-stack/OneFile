@@ -176,6 +176,9 @@ def fallback_structure_project(raw_input: str, user_title: str = "") -> Dict[str
     summary = extract_field_by_prefix(raw, [r"一句话亮点", r"亮点", r"summary"], 78)
     if not summary:
         summary = sanitize_text_strict(safe_text, allow_empty=False, max_len=78)
+    problem_statement = extract_field_by_prefix(raw, [r"问题", r"痛点", r"problem"], 160) or sanitize_text_strict(safe_text, allow_empty=True, max_len=140)
+    solution_approach = extract_field_by_prefix(raw, [r"解决方案", r"方案", r"solution"], 160) or summary
+    use_cases = extract_field_by_prefix(raw, [r"使用场景", r"场景", r"use case"], 120) or f"{users}典型使用场景待补充"
 
     signals = parse_update_signals(safe_text, {})
     team_text = ""
@@ -193,8 +196,12 @@ def fallback_structure_project(raw_input: str, user_title: str = "") -> Dict[str
     return sanitize_schema(
         {
             "title": title,
+            "desc": safe_text,
             "tech_stack": tech_stack,
             "users": users,
+            "use_cases": use_cases,
+            "problem_statement": problem_statement,
+            "solution_approach": solution_approach,
             "model": model,
             "model_desc": model,
             "model_type": model_type,
@@ -202,6 +209,7 @@ def fallback_structure_project(raw_input: str, user_title: str = "") -> Dict[str
             "form_type": form_type,
             "stage": stage,
             "version_footprint": "v1.0 建立项目档案并完成首轮结构化",
+            "latest_update": "已完成首次结构化归档",
             "summary": summary,
             "team_text": team_text,
             "stage_metric": stage_metric,
@@ -216,6 +224,11 @@ def build_update_input(project: Dict[str, Any], update_text: str) -> str:
         "model_type": project.get("model_type", ""),
         "pricing_strategy": project.get("pricing_strategy", ""),
         "model_desc": project.get("model_desc", project.get("model", "")),
+        "desc": project.get("desc", ""),
+        "use_cases": project.get("use_cases", ""),
+        "problem_statement": project.get("problem_statement", ""),
+        "solution_approach": project.get("solution_approach", ""),
+        "latest_update": project.get("latest_update", ""),
         "team_text": project.get("team_text", ""),
         "stage_metric": project.get("stage_metric", ""),
     }
@@ -252,12 +265,17 @@ def structure_project(raw_input: str, user_title: str = "") -> Dict[str, Any]:
 9) model_type 必须严格为以下枚举之一：B2B_SUBSCRIPTION、B2C_SUBSCRIPTION、USAGE_BASED、COMMISSION、ONE_TIME、OUTSOURCING、ADS、MARKETPLACE、HYBRID、UNKNOWN。
 10) pricing_strategy 可为空字符串；若有值仅能是：FREEMIUM、FREE_TRIAL、ENTERPRISE_ONLY、SELF_SERVE。
 11) 在不影响 7 个标准字段的前提下，补充 model_desc、form_type、model_type、pricing_strategy、team_text、stage_metric。
+12) 可选补充字段：desc、problem_statement、solution_approach、use_cases、latest_update。
 
 JSON Schema:
 {{
   "title": "项目名称",
+  "desc": "用户原始输入整理后的干净描述（可为空字符串）",
   "tech_stack": ["技术1", "技术2"],
   "users": "目标用户一句话",
+  "use_cases": "目标用户典型使用场景",
+  "problem_statement": "项目解决的问题",
+  "solution_approach": "解决方案路径",
   "model": "商业模式自然语言描述",
   "model_desc": "商业模式自然语言描述（与model一致）",
   "model_type": "B2B_SUBSCRIPTION|B2C_SUBSCRIPTION|USAGE_BASED|COMMISSION|ONE_TIME|OUTSOURCING|ADS|MARKETPLACE|HYBRID|UNKNOWN",
@@ -265,6 +283,7 @@ JSON Schema:
   "form_type": "AI_NATIVE_APP|SAAS|API_SERVICE|AGENT|MARKETPLACE|DATA_TOOL|INFRASTRUCTURE|OTHER",
   "stage": "IDEA|BUILDING|MVP|VALIDATION|EARLY_REVENUE|SCALING|MATURE",
   "version_footprint": "版本足迹",
+  "latest_update": "当前状态的一句话进展",
   "summary": "一句话亮点",
   "team_text": "核心团队：X人（可为空字符串）",
   "stage_metric": "当前阶段：关键进展一句话（可为空字符串）"

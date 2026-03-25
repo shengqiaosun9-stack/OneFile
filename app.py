@@ -4,13 +4,12 @@ from project_model import get_now_str, project_matches
 from state_manager import get_project_by_id, init_state
 from ui_components import (
     render_cards_grid,
-    render_creator_panel,
+    render_edit_page,
     render_filters,
     render_nav,
     render_project_detail_page,
     render_share_page,
     render_styles,
-    render_update_panel,
 )
 
 st.set_page_config(page_title="OneFile · 一人档", page_icon="🧬", layout="wide")
@@ -21,12 +20,30 @@ init_state()
 
 project_id = st.query_params.get("project", "")
 page_view = str(st.query_params.get("view", "share" if project_id else "")).strip().lower()
+page_mode = str(st.query_params.get("mode", "")).strip().lower()
+
+if page_view == "edit":
+    render_styles()
+    render_nav(st.session_state.active_tab)
+    if page_mode == "create":
+        render_edit_page(None, mode="create")
+    else:
+        target_project = get_project_by_id(str(project_id)) if project_id else None
+        if target_project:
+            render_edit_page(target_project, mode="update")
+        else:
+            st.warning("目标项目不存在，请返回项目库。")
+            if st.button("返回项目库", type="primary"):
+                st.query_params.clear()
+                st.rerun()
+    st.stop()
+
 if project_id:
     target_project = get_project_by_id(str(project_id))
     if target_project:
         render_styles()
+        render_nav(st.session_state.active_tab)
         if page_view == "detail":
-            render_nav(st.session_state.active_tab)
             render_project_detail_page(target_project)
         else:
             render_share_page(target_project)
@@ -45,23 +62,16 @@ with top_left:
     )
 with top_right:
     if st.button("创建项目档案", type="primary", use_container_width=True):
-        st.session_state.show_creator = not st.session_state.show_creator
+        st.query_params.clear()
+        st.query_params["view"] = "edit"
+        st.query_params["mode"] = "create"
+        st.rerun()
     if st.button("园区后台", use_container_width=True):
         st.toast("园区管理后台为下一阶段功能，目前保留交互入口。")
 
 if st.session_state.flash_message:
     st.success(st.session_state.flash_message)
     st.session_state.flash_message = None
-
-if st.session_state.show_creator:
-    render_creator_panel()
-
-if st.session_state.update_target_id:
-    target_project = get_project_by_id(st.session_state.update_target_id)
-    if target_project:
-        render_update_panel(target_project)
-    else:
-        st.session_state.update_target_id = None
 
 if not st.session_state.projects:
     st.markdown(

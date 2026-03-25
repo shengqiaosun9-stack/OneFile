@@ -28,11 +28,20 @@ EXPORT_KEYS = [
 
 SCHEMA_TEMPLATE: Dict[str, Any] = {
     "title": "",
+    "desc": "",
     "tech_stack": [],
     "users": "",
+    "use_cases": "",
+    "problem_statement": "",
+    "solution_approach": "",
     "model": "",
+    "model_desc": "",
+    "model_type": "UNKNOWN",
+    "pricing_strategy": "",
+    "form_type": "OTHER",
     "stage": "",
     "version_footprint": "",
+    "latest_update": "",
     "summary": "",
 }
 
@@ -366,8 +375,12 @@ def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
 
     resolved = _sanitize_title_candidate(data.get("title", ""))
     clean["title"] = resolved if validate_title_candidate(resolved) else TITLE_DEFAULT
+    clean["desc"] = sanitize_text_strict(data.get("desc", ""), allow_empty=True, max_len=4000)
     clean["tech_stack"] = clean_list(data.get("tech_stack", []), max_items=4)
     clean["users"] = clean_text(data.get("users", "待补充"), max_len=44) or "待补充"
+    clean["use_cases"] = sanitize_text_strict(data.get("use_cases", ""), allow_empty=True, max_len=120)
+    clean["problem_statement"] = sanitize_text_strict(data.get("problem_statement", ""), allow_empty=True, max_len=180)
+    clean["solution_approach"] = sanitize_text_strict(data.get("solution_approach", ""), allow_empty=True, max_len=180)
     model_desc = clean_text(data.get("model_desc", data.get("model", "待补充")), max_len=50) or "待补充"
     clean["model"] = model_desc
     clean["model_desc"] = model_desc
@@ -386,12 +399,25 @@ def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
     clean["form_type"] = normalize_form_type(data.get("form_type", data.get("shape", "")), context=context_for_form)
     clean["model_type"] = normalize_model_type(data.get("model_type", ""), model_desc=model_desc)
     clean["pricing_strategy"] = normalize_pricing_strategy(data.get("pricing_strategy", ""), model_desc=model_desc)
-    clean["version_footprint"] = sanitize_version_event(data.get("version_footprint", "初始版本"), allow_fallback=True)
+    latest_from_input = sanitize_latest_update(
+        data.get("latest_update", data.get("version_footprint", "")),
+        fallback="",
+    )
+    clean["version_footprint"] = sanitize_version_event(
+        data.get("version_footprint", latest_from_input or "版本记录已更新"),
+        allow_fallback=True,
+    )
     clean["summary"] = sanitize_text_strict(data.get("summary", "暂无亮点摘要"), allow_empty=False, max_len=78)
     clean["latest_update"] = sanitize_latest_update(
         data.get("latest_update", clean["version_footprint"]),
         fallback=clean["version_footprint"],
     )
+    if not clean["problem_statement"] and clean["desc"]:
+        clean["problem_statement"] = sanitize_text_strict(clean["desc"], allow_empty=True, max_len=120)
+    if not clean["solution_approach"] and clean["summary"]:
+        clean["solution_approach"] = sanitize_text_strict(clean["summary"], allow_empty=True, max_len=120)
+    if not clean["use_cases"] and clean["users"]:
+        clean["use_cases"] = f"{clean['users']}的典型使用场景待补充"
     team_text = normalize_team_text(data.get("team_text", data.get("team_size", "")))
     stage_metric = normalize_stage_metric_text(data.get("stage_metric", data.get("stage_progress", "")))
     if team_text:
@@ -489,7 +515,10 @@ def infer_shape(schema: Dict[str, Any]) -> str:
 
 def build_versions_from_schema(schema: Dict[str, Any]) -> List[Dict[str, str]]:
     date = get_now_str()
-    event = sanitize_version_event(schema.get("version_footprint", "初始版本"), allow_fallback=True)
+    event = sanitize_version_event(
+        schema.get("latest_update", schema.get("version_footprint", "初始版本")),
+        allow_fallback=True,
+    )
     return [{"event": event, "date": date}]
 
 
@@ -555,7 +584,7 @@ def normalize_project(project: Dict[str, Any]) -> Dict[str, Any]:
     if not versions:
         versions = build_versions_from_schema(schema)
 
-    ui["versions"] = versions[:20]
+    ui["versions"] = versions[:1]
     latest_event = sanitize_version_event(ui["versions"][0].get("event", ""), allow_fallback=True)
     ui["version_footprint"] = latest_event
     ui["latest_update"] = sanitize_latest_update(
@@ -592,7 +621,7 @@ def sanitize_versions_for_render(project: Dict[str, Any]) -> List[Dict[str, str]
         fallback_date = sanitize_version_date(project.get("updated_at", get_now_str()))
         cleaned_versions = [{"event": fallback, "date": fallback_date}]
 
-    return cleaned_versions[:20]
+    return cleaned_versions[:1]
 
 
 def prepare_project_for_render(project: Dict[str, Any]) -> Dict[str, Any]:
@@ -871,12 +900,38 @@ def apply_schema_to_project(
     project: Dict[str, Any], schema: Dict[str, Any], update_text: str, timestamp: str, signals: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     next_project = copy.deepcopy(project)
-    # Update flow: keep stable profile fields; AI only refines summary/version text.
+    next_project["desc"] = sanitize_text_strict(
+        schema.get("desc", next_project.get("desc", "")),
+        allow_empty=False,
+        max_len=6000,
+    )
     next_project["summary"] = sanitize_text_strict(
         schema.get("summary", next_project.get("summary", "")),
         allow_empty=False,
         max_len=78,
     )
+    next_project["users"] = sanitize_text_strict(
+        schema.get("users", next_project.get("users", "")),
+        allow_empty=False,
+        max_len=44,
+    ) or "待补充"
+    next_project["use_cases"] = sanitize_text_strict(
+        schema.get("use_cases", next_project.get("use_cases", "")),
+        allow_empty=True,
+        max_len=120,
+    )
+    next_project["problem_statement"] = sanitize_text_strict(
+        schema.get("problem_statement", next_project.get("problem_statement", "")),
+        allow_empty=True,
+        max_len=180,
+    )
+    next_project["solution_approach"] = sanitize_text_strict(
+        schema.get("solution_approach", next_project.get("solution_approach", "")),
+        allow_empty=True,
+        max_len=180,
+    )
+    next_project["tech_stack"] = clean_list(schema.get("tech_stack", next_project.get("tech_stack", [])), max_items=4)
+
     schema_stage = normalize_stage_value(schema.get("stage", next_project.get("stage", "BUILDING")))
     next_project["stage"] = schema_stage
     schema_model_desc = clean_text(schema.get("model_desc", schema.get("model", next_project.get("model_desc", next_project.get("model", "")))), 50)
@@ -900,7 +955,11 @@ def apply_schema_to_project(
         next_project = apply_rule_overrides(next_project, signals)
 
     rule_summary = build_rule_summary(signals or {})
-    model_version = sanitize_text_strict(schema.get("version_footprint", ""), allow_empty=True, max_len=90)
+    model_version = sanitize_text_strict(
+        schema.get("latest_update", schema.get("version_footprint", "")),
+        allow_empty=True,
+        max_len=90,
+    )
     fallback_version = sanitize_text_strict(update_text, allow_empty=False, max_len=90)
     version_parts: List[str] = []
     for part in [rule_summary, model_version, fallback_version]:
@@ -909,12 +968,7 @@ def apply_schema_to_project(
     new_version_text = sanitize_version_event("；".join(version_parts), allow_fallback=True)
     next_project["version_footprint"] = new_version_text
     next_project["latest_update"] = sanitize_latest_update(new_version_text, fallback=fallback_version)
-
-    versions = next_project.get("versions", [])
-    if not isinstance(versions, list):
-        versions = []
-    versions.insert(0, {"event": new_version_text, "date": sanitize_version_date(timestamp)})
-    next_project["versions"] = versions[:20]
+    next_project["versions"] = [{"event": new_version_text, "date": sanitize_version_date(timestamp)}]
     next_project["updated_at"] = timestamp
     next_project["stage"] = normalize_stage_value(next_project.get("stage", ""))
     next_project["status_tag"] = infer_status_tag(next_project.get("stage", ""))

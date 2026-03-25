@@ -28,6 +28,7 @@ from state_manager import (
     generate_update_preview,
     insert_project_top,
     rename_project_title,
+    save_project_from_edit,
     undo_last_update,
 )
 from text_cleaning import clean_text, sanitize_text_strict
@@ -633,11 +634,10 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
             st.rerun()
     with action_cols[1]:
         if st.button("更新项目进展", key=f"update_{project['id']}"):
-            st.session_state.update_target_id = project["id"]
             st.session_state.selected_project_id = project["id"]
-            preview = st.session_state.get("update_preview")
-            if isinstance(preview, dict) and preview.get("project_id") != project["id"]:
-                st.session_state.update_preview = None
+            st.query_params["project"] = project["id"]
+            st.query_params["view"] = "edit"
+            st.query_params.pop("mode", None)
             st.rerun()
     with action_cols[2]:
         render_copy_link_button(project["id"], share_url)
@@ -712,33 +712,45 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
             except Exception as exc:
                 st.error(f"保存失败：{clean_text(exc, 120)}")
 
-    detail_left, detail_right = st.columns([0.62, 0.38])
-    with detail_left:
-        st.markdown("#### 历史更新记录")
-        versions = project.get("versions", [])
-        if isinstance(versions, list) and versions:
-            for version in versions:
-                if not isinstance(version, dict):
-                    continue
-                event = sanitize_text_strict(version.get("event", ""), allow_empty=True, max_len=120)
-                date = sanitize_text_strict(version.get("date", ""), allow_empty=True, max_len=24)
-                if not event:
-                    continue
-                st.markdown(f"- `{escape(date or '-')}` {escape(event)}")
-        else:
-            st.caption("暂无历史更新记录。")
-    with detail_right:
-        if export_enabled():
-            payload = get_export_payload(project)
-            st.markdown("#### 结构化导出（内部）")
-            st.code(json.dumps(payload, ensure_ascii=False, indent=2), language="json")
-            st.download_button(
-                "下载 JSON 档案",
-                data=json.dumps(payload, ensure_ascii=False, indent=2),
-                file_name=f"onefile_{project.get('id', 'project')}.json",
-                mime="application/json",
-                use_container_width=True,
-            )
+    st.markdown("#### Structured Metadata")
+    meta_cols = st.columns([0.33, 0.33, 0.34])
+    with meta_cols[0]:
+        st.markdown(f"**项目名称**\n\n{escape(project.get('title', ''))}")
+        st.markdown(f"**当前阶段**\n\n{escape(project.get('stage_label', stage_label(project.get('stage', ''))))}")
+    with meta_cols[1]:
+        st.markdown(f"**产品形态**\n\n{escape(project.get('form_type_label', ''))}")
+        st.markdown(f"**商业模式类型**\n\n{escape(project.get('model_type_label', model_type_label(project.get('model_type', ''))))}")
+    with meta_cols[2]:
+        model_desc = sanitize_text_strict(project.get("model_desc", project.get("model", "")), allow_empty=True, max_len=120)
+        pricing = sanitize_text_strict(project.get("pricing_strategy", ""), allow_empty=True, max_len=24) or "未设置"
+        st.markdown(f"**商业模式描述**\n\n{escape(model_desc or '待补充')}")
+        st.markdown(f"**定价策略**\n\n{escape(pricing)}")
+
+    st.markdown("#### Problem & Solution")
+    st.markdown(f"**问题定义**\n\n{escape(sanitize_text_strict(project.get('problem_statement', ''), allow_empty=True, max_len=220) or '待补充')}")
+    st.markdown(f"**解决方案**\n\n{escape(sanitize_text_strict(project.get('solution_approach', ''), allow_empty=True, max_len=220) or '待补充')}")
+
+    st.markdown("#### Users & Use Cases")
+    users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=120) or "待补充"
+    use_cases_text = sanitize_text_strict(project.get("use_cases", ""), allow_empty=True, max_len=180) or "待补充"
+    st.markdown(f"**目标用户**\n\n{escape(users_text)}")
+    st.markdown(f"**典型场景**\n\n{escape(use_cases_text)}")
+
+    st.markdown("#### Current Status")
+    latest_update = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=220) or "暂无最新进展"
+    st.info(latest_update)
+
+    if export_enabled():
+        payload = get_export_payload(project)
+        st.markdown("#### 结构化导出（内部）")
+        st.code(json.dumps(payload, ensure_ascii=False, indent=2), language="json")
+        st.download_button(
+            "下载 JSON 档案",
+            data=json.dumps(payload, ensure_ascii=False, indent=2),
+            file_name=f"onefile_{project.get('id', 'project')}.json",
+            mime="application/json",
+            use_container_width=True,
+        )
 
     st.markdown("#### 项目操作")
     action_cols = st.columns([0.18, 0.82])
@@ -765,17 +777,118 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
 
 def render_project_detail_page(project: Dict[str, Any]) -> None:
     project_id = clean_text(project.get("id", ""), 24, aggressive=True)
-    header_cols = st.columns([0.2, 0.22, 0.58])
+    header_cols = st.columns([0.18, 0.18, 0.18, 0.46])
     with header_cols[0]:
         if st.button("返回项目库", key=f"back_list_{project_id}", use_container_width=True):
             st.query_params.clear()
             st.rerun()
     with header_cols[1]:
+        if st.button("进入编辑态", key=f"detail_edit_{project_id}", use_container_width=True):
+            st.query_params["project"] = project_id
+            st.query_params["view"] = "edit"
+            st.query_params.pop("mode", None)
+            st.rerun()
+    with header_cols[2]:
         if st.button("打开分享页", key=f"detail_share_{project_id}", use_container_width=True):
             st.query_params["project"] = project_id
             st.query_params["view"] = "share"
             st.rerun()
     render_archive_panel(project)
+
+
+def render_edit_page(project: Dict[str, Any] | None, mode: str = "update") -> None:
+    is_create = mode == "create" or not project
+    target_project = prepare_project_for_render(project) if project else {}
+    project_id = clean_text(target_project.get("id", ""), 24, aggressive=True)
+    default_title = sanitize_text_strict(target_project.get("title", ""), allow_empty=True, max_len=42)
+    default_desc = sanitize_text_strict(target_project.get("desc", ""), allow_empty=True, max_len=6000)
+    if not default_desc and project:
+        default_desc = sanitize_text_strict(
+            f"项目摘要：{target_project.get('summary', '')}\n目标用户：{target_project.get('users', '')}\n商业模式：{target_project.get('model_desc', target_project.get('model', ''))}",
+            allow_empty=True,
+            max_len=6000,
+        )
+    default_latest = sanitize_text_strict(target_project.get("latest_update", ""), allow_empty=True, max_len=280)
+
+    title_for_header = default_title or "新建项目"
+    st.markdown(
+        f"""
+        <div class="creator-panel">
+          <div class="creator-kicker">Edit Mode</div>
+          <div style="font-size:24px;font-weight:700;color:#0f172a;margin-bottom:6px;">{escape(title_for_header)}</div>
+          <div style="color:#64748B;font-size:14px;">
+            {'创建项目档案：请先填写项目名称与描述，随后可持续完善。' if is_create else '更新项目档案：你正在编辑同一项目对象，保存后卡片、完整档案与分享页将同步更新。'}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if project and project_id in st.session_state.undo_snapshots:
+        undo_cols = st.columns([0.22, 0.78])
+        with undo_cols[0]:
+            if st.button("撤销最近一次编辑", key=f"undo_edit_{project_id}", use_container_width=True):
+                try:
+                    undo_last_update(project_id)
+                    st.query_params["project"] = project_id
+                    st.query_params["view"] = "detail"
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"撤销失败：{clean_text(exc, 120)}")
+
+    with st.form(f"edit_form_{project_id or 'new'}", clear_on_submit=False):
+        title_input = st.text_input(
+            "项目名称（必填）",
+            value=default_title if not is_create else "",
+            placeholder="例如：星火计划",
+        )
+        desc_input = st.text_area(
+            "项目描述（必填）",
+            value=default_desc,
+            height=220,
+            placeholder="输入项目背景、目标用户、产品方案、商业模式等信息。",
+        )
+        latest_update_input = st.text_area(
+            "当前状态（可选）",
+            value=default_latest,
+            height=110,
+            placeholder="例如：产品已上线并新增3个客户。",
+        )
+        st.caption("保存时会先清洗文本，再进入同一套 AI 结构化流程；详情页展示的字段为唯一事实源。")
+
+        action_cols = st.columns([0.2, 0.16, 0.64])
+        with action_cols[0]:
+            submit = st.form_submit_button(
+                "创建项目档案" if is_create else "保存项目档案",
+                type="primary",
+                use_container_width=True,
+            )
+        with action_cols[1]:
+            cancel = st.form_submit_button("取消", use_container_width=True)
+
+    if cancel:
+        if is_create:
+            st.query_params.clear()
+        else:
+            st.query_params["project"] = project_id
+            st.query_params["view"] = "detail"
+        st.rerun()
+
+    if submit:
+        try:
+            with st.spinner("正在结构化并保存档案..."):
+                saved_id = save_project_from_edit(
+                    project_id if not is_create else None,
+                    title_input,
+                    desc_input,
+                    latest_update_input,
+                )
+            st.query_params["project"] = saved_id
+            st.query_params["view"] = "detail"
+            st.query_params.pop("mode", None)
+            st.rerun()
+        except Exception as exc:
+            st.error(f"保存失败：{clean_text(exc, 140)}")
 
 
 def render_creator_panel() -> None:
@@ -986,19 +1099,14 @@ def render_share_page(project: Dict[str, Any]) -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("### 历史更新记录")
-    versions = project.get("versions", [])
-    if isinstance(versions, list) and versions:
-        for version in versions:
-            if not isinstance(version, dict):
-                continue
-            event = sanitize_text_strict(version.get("event", ""), allow_empty=True, max_len=120)
-            date = sanitize_text_strict(version.get("date", ""), allow_empty=True, max_len=24)
-            if not event:
-                continue
-            st.markdown(f"- `{escape(date or '-')}` {escape(event)}")
-    else:
-        st.caption("暂无历史更新记录。")
+    st.markdown("### 问题与解决方案")
+    st.markdown(f"**问题定义**：{escape(sanitize_text_strict(project.get('problem_statement', ''), allow_empty=True, max_len=180) or '待补充')}")
+    st.markdown(f"**解决方案**：{escape(sanitize_text_strict(project.get('solution_approach', ''), allow_empty=True, max_len=180) or '待补充')}")
+    st.markdown("### 用户与场景")
+    st.markdown(f"**目标用户**：{escape(sanitize_text_strict(project.get('users', ''), allow_empty=True, max_len=100) or '待补充')}")
+    st.markdown(f"**典型场景**：{escape(sanitize_text_strict(project.get('use_cases', ''), allow_empty=True, max_len=180) or '待补充')}")
+    st.markdown("### 当前状态")
+    st.info(sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=180) or "暂无最新进展")
     if st.button("返回项目库"):
         st.query_params.clear()
         st.rerun()
