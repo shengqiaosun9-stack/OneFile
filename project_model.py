@@ -51,15 +51,146 @@ CN_NUM_MAP = {
     "九": 9,
 }
 
+TITLE_MAX_LEN = 42
+TITLE_DEFAULT = "未命名项目"
+TITLE_VERB_HINTS = [
+    "是一个",
+    "是一款",
+    "我们做",
+    "用于",
+    "帮助",
+    "通过",
+    "提供",
+    "实现",
+    "支持",
+    "面向",
+]
+VERSION_EVENT_FALLBACK = "版本记录已更新"
+
 
 def get_now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def sanitize_version_event(value: Any, allow_fallback: bool = True) -> str:
+    raw = unescape(str(value or ""))
+    if has_markup_contamination(raw) or is_timeline_leak_text(raw):
+        cleaned = sanitize_text_strict(raw, allow_empty=True, max_len=120)
+    else:
+        cleaned = sanitize_text_strict(raw, allow_empty=True, max_len=120)
+    if has_markup_contamination(cleaned) or is_timeline_leak_text(cleaned):
+        cleaned = ""
+    cleaned = clean_text(cleaned, 120, aggressive=True)
+    if not cleaned and allow_fallback:
+        return VERSION_EVENT_FALLBACK
+    return cleaned
+
+
+def sanitize_version_date(value: Any) -> str:
+    date = clean_text(value, 24, aggressive=True)
+    if not date:
+        date = get_now_str()
+    return date
+
+
+def _sanitize_title_candidate(value: Any) -> str:
+    text = sanitize_text_strict(value, allow_empty=True, max_len=TITLE_MAX_LEN)
+    if not text:
+        return ""
+    text = clean_text(text, TITLE_MAX_LEN, aggressive=True)
+    text = re.sub(r"^[\"'“”‘’《》\[\]()（）\s]+|[\"'“”‘’《》\[\]()（）\s]+$", "", text).strip()
+    return text
+
+
+def validate_title_candidate(title: Any) -> bool:
+    text = _sanitize_title_candidate(title)
+    if not text:
+        return False
+    if has_markup_contamination(text) or is_timeline_leak_text(text):
+        return False
+    if len(text) > TITLE_MAX_LEN:
+        return False
+    if re.search(r"[。！？!?；;，,]", text) and len(text) > 14:
+        return False
+    lowered = text.lower()
+    if any(token in lowered for token in ["\n", "```", "<", ">", "class=", "timeline-"]):
+        return False
+    if any(hint in text for hint in TITLE_VERB_HINTS):
+        return False
+    return True
+
+
+def extract_title_from_text(raw_text: Any) -> str:
+    raw = unescape(str(raw_text or ""))
+    if not raw.strip():
+        return ""
+    compact = raw.replace("\r\n", "\n")
+    patterns = [
+        r"我们(?:项目)?叫\s*[：: ]?\s*([^\n。；;,，]{1,30})",
+        r"项目名称(?:是|叫)\s*[：: ]?\s*([^\n。；;,，]{1,30})",
+        r"我们是\s*([^\n。；;,，]{1,30})",
+        r"([A-Za-z0-9\u4e00-\u9fff·\-\s]{2,24})\s*是一个",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, compact, flags=re.IGNORECASE)
+        if not match:
+            continue
+        candidate = _sanitize_title_candidate(match.group(1))
+        if validate_title_candidate(candidate):
+            return candidate
+    first_line = sanitize_text_strict(compact.split("\n")[0] if compact.split("\n") else "", allow_empty=True, max_len=TITLE_MAX_LEN)
+    first_line = _sanitize_title_candidate(first_line)
+    if validate_title_candidate(first_line):
+        return first_line
+    return ""
+
+
+def resolve_title(user_title: Any, raw_input: Any, ai_title: Any, default: str = TITLE_DEFAULT) -> str:
+    manual = _sanitize_title_candidate(user_title)
+    if validate_title_candidate(manual):
+        return manual
+
+    rule_based = extract_title_from_text(raw_input)
+    if validate_title_candidate(rule_based):
+        return rule_based
+
+    ai_based = _sanitize_title_candidate(ai_title)
+    if validate_title_candidate(ai_based):
+        return ai_based
+
+    fallback = _sanitize_title_candidate(default)
+    if fallback:
+        return fallback
+    if str(default) == "":
+        return ""
+    fallback = TITLE_DEFAULT
+    return fallback
+
+
+def detect_rename_signal(update_text: Any) -> str:
+    text = sanitize_text_strict(update_text, allow_empty=True, max_len=280)
+    if not text:
+        return ""
+    patterns = [
+        r"我们(?:项目)?改名为\s*([^\n。；;,，]{1,30})",
+        r"项目(?:现在|目前)?叫\s*([^\n。；;,，]{1,30})",
+        r"(?:更名为|改名成)\s*([^\n。；;,，]{1,30})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        candidate = _sanitize_title_candidate(match.group(1))
+        if validate_title_candidate(candidate):
+            return candidate
+    return ""
+
+
 def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
     clean = dict(SCHEMA_TEMPLATE)
 
-    clean["title"] = clean_text(data.get("title", ""), max_len=42) or "未命名项目"
+    resolved = _sanitize_title_candidate(data.get("title", ""))
+    clean["title"] = resolved if validate_title_candidate(resolved) else TITLE_DEFAULT
     clean["tech_stack"] = clean_list(data.get("tech_stack", []), max_items=4)
     clean["users"] = clean_text(data.get("users", "待补充"), max_len=44) or "待补充"
     clean["model"] = clean_text(data.get("model", "待补充"), max_len=34) or "待补充"
@@ -168,9 +299,9 @@ def infer_shape(schema: Dict[str, Any]) -> str:
 
 
 def build_versions_from_schema(schema: Dict[str, Any]) -> List[Dict[str, str]]:
-    timestamp = get_now_str()
-    text = sanitize_text_strict(schema.get("version_footprint", "初始版本"), allow_empty=False, max_len=120)
-    return [{"update_text": text, "timestamp": timestamp}]
+    date = get_now_str()
+    event = sanitize_version_event(schema.get("version_footprint", "初始版本"), allow_fallback=True)
+    return [{"event": event, "date": date}]
 
 
 def build_generated_timeline(schema: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -216,27 +347,30 @@ def normalize_project(project: Dict[str, Any]) -> Dict[str, Any]:
         for item in raw_versions:
             if not isinstance(item, dict):
                 continue
-            update_text = sanitize_text_strict(item.get("update_text", item.get("version_text", "")), allow_empty=True, max_len=120)
-            timestamp = clean_text(item.get("timestamp", get_now_str()), 24, aggressive=True)
-            if not update_text or has_markup_contamination(update_text) or is_timeline_leak_text(update_text):
+            event = sanitize_version_event(
+                item.get("event", item.get("update_text", item.get("version_text", ""))),
+                allow_fallback=False,
+            )
+            date = sanitize_version_date(item.get("date", item.get("timestamp", get_now_str())))
+            if not event:
                 continue
-            versions.append({"update_text": update_text, "timestamp": timestamp or get_now_str()})
+            versions.append({"event": event, "date": date})
 
     if not versions:
         versions = build_versions_from_schema(schema)
 
     ui["versions"] = versions[:20]
-    ui["version_footprint"] = sanitize_text_strict(ui["versions"][0]["update_text"], allow_empty=False, max_len=120)
+    ui["version_footprint"] = sanitize_version_event(ui["versions"][0].get("event", ""), allow_fallback=True)
 
     timeline_items: List[Dict[str, Any]] = []
     for i, version in enumerate(ui["versions"][:3]):
-        version_text = sanitize_text_strict(version.get("update_text", ""), allow_empty=True, max_len=120)
-        if not version_text or has_markup_contamination(version_text):
+        version_text = sanitize_version_event(version.get("event", ""), allow_fallback=False)
+        if not version_text:
             continue
         timeline_items.append(
             {
                 "title": clean_text(version_text, 42, aggressive=True),
-                "date": clean_text(version.get("timestamp", ""), 24, aggressive=True),
+                "date": clean_text(version.get("date", ""), 24, aggressive=True),
                 "desc": clean_text(version_text, 82, aggressive=True) if len(version_text) > 44 else "",
                 "current": i == 0,
             }
@@ -263,31 +397,19 @@ def sanitize_versions_for_render(project: Dict[str, Any]) -> List[Dict[str, str]
     for item in versions:
         if not isinstance(item, dict):
             continue
-        raw_text = unescape(str(item.get("update_text", item.get("version_text", "")) or ""))
-        lowered_raw = raw_text.lower()
-        if has_markup_contamination(raw_text) or any(token in lowered_raw for token in [
-            "timeline-item", "timeline-row", "timeline-dot", "timeline-headline", "timeline-date", "class=", "</div", "<div", "<span", "</span", "div class", "span class"
-        ]):
+        safe_text = sanitize_version_event(
+            item.get("event", item.get("update_text", item.get("version_text", ""))),
+            allow_fallback=False,
+        )
+        safe_date = sanitize_version_date(item.get("date", item.get("timestamp", get_now_str())))
+        if not safe_text or not SAFE_TEXT_PATTERN.match(safe_text):
             continue
-
-        safe_text = sanitize_text_strict(raw_text, allow_empty=True, max_len=120)
-        safe_ts = clean_text(item.get("timestamp", get_now_str()), 24, aggressive=True) or get_now_str()
-        if not safe_text:
-            continue
-        if has_markup_contamination(safe_text) or is_timeline_leak_text(safe_text):
-            continue
-        if "<" in safe_text or ">" in safe_text or "`" in safe_text:
-            continue
-        if not SAFE_TEXT_PATTERN.match(safe_text):
-            continue
-        cleaned_versions.append({"update_text": safe_text, "timestamp": safe_ts})
+        cleaned_versions.append({"event": safe_text, "date": safe_date})
 
     if not cleaned_versions:
-        fallback = sanitize_text_strict(project.get("version_footprint", ""), allow_empty=True, max_len=120)
-        if not fallback:
-            fallback = "版本记录已更新"
-        fallback_ts = clean_text(project.get("updated_at", get_now_str()), 24, aggressive=True) or get_now_str()
-        cleaned_versions = [{"update_text": fallback, "timestamp": fallback_ts}]
+        fallback = sanitize_version_event(project.get("version_footprint", ""), allow_fallback=True)
+        fallback_date = sanitize_version_date(project.get("updated_at", get_now_str()))
+        cleaned_versions = [{"event": fallback, "date": fallback_date}]
 
     return cleaned_versions[:20]
 
@@ -296,7 +418,7 @@ def prepare_project_for_render(project: Dict[str, Any]) -> Dict[str, Any]:
     render_project = normalize_project(project)
     render_versions = sanitize_versions_for_render(render_project)
     render_project["versions"] = render_versions
-    render_project["version_footprint"] = render_versions[0]["update_text"]
+    render_project["version_footprint"] = render_versions[0]["event"]
     return render_project
 
 
@@ -304,7 +426,7 @@ def hard_scrub_project_for_state(project: Dict[str, Any]) -> Dict[str, Any]:
     scrubbed = normalize_project(project)
     scrubbed_versions = sanitize_versions_for_render(scrubbed)
     scrubbed["versions"] = scrubbed_versions
-    scrubbed["version_footprint"] = scrubbed_versions[0]["update_text"]
+    scrubbed["version_footprint"] = scrubbed_versions[0]["event"]
     scrubbed["summary"] = sanitize_text_strict(scrubbed.get("summary", ""), allow_empty=False, max_len=78)
     return scrubbed
 
@@ -317,18 +439,20 @@ def migrate_project_for_hygiene(project: Dict[str, Any]) -> Dict[str, Any]:
         for item in versions:
             if not isinstance(item, dict):
                 continue
-            text = sanitize_text_strict(item.get("update_text", item.get("version_text", "")), allow_empty=True, max_len=120)
-            timestamp = clean_text(item.get("timestamp", get_now_str()), 24, aggressive=True) or get_now_str()
-            if not text or has_markup_contamination(text) or is_timeline_leak_text(text):
+            event = sanitize_version_event(
+                item.get("event", item.get("update_text", item.get("version_text", ""))),
+                allow_fallback=False,
+            )
+            date = sanitize_version_date(item.get("date", item.get("timestamp", get_now_str())))
+            if not event:
                 continue
-            cleaned_versions.append({"update_text": text, "timestamp": timestamp})
+            cleaned_versions.append({"event": event, "date": date})
     if not cleaned_versions:
-        fallback = sanitize_text_strict(
+        fallback = sanitize_version_event(
             migrated.get("version_footprint", migrated.get("summary", "")),
-            allow_empty=False,
-            max_len=120,
+            allow_fallback=True,
         )
-        cleaned_versions = [{"update_text": fallback, "timestamp": clean_text(migrated.get("updated_at", get_now_str()), 24, aggressive=True) or get_now_str()}]
+        cleaned_versions = [{"event": fallback, "date": sanitize_version_date(migrated.get("updated_at", get_now_str()))}]
     migrated["versions"] = cleaned_versions[:20]
     return migrated
 
@@ -376,6 +500,7 @@ def parse_update_signals(update_text: str, project: Dict[str, Any]) -> Dict[str,
         "stage_override": "",
         "status_tag_override": "",
         "status_theme_override": "",
+        "title_override": "",
         "hits": [],
     }
 
@@ -500,6 +625,11 @@ def parse_update_signals(update_text: str, project: Dict[str, Any]) -> Dict[str,
                 signals["stage_override"] = tag
             break
 
+    rename_to = detect_rename_signal(text)
+    if rename_to:
+        signals["title_override"] = rename_to
+        signals["hits"].append(f"项目更名为{rename_to}")
+
     return signals
 
 
@@ -515,6 +645,7 @@ def apply_rule_overrides(project: Dict[str, Any], signals: Dict[str, Any]) -> Di
     stage_override = clean_text(signals.get("stage_override", ""), 24, aggressive=True)
     status_tag_override = clean_text(signals.get("status_tag_override", ""), 30, aggressive=True)
     status_theme_override = clean_text(signals.get("status_theme_override", ""), 16, aggressive=True)
+    title_override = _sanitize_title_candidate(signals.get("title_override", ""))
 
     if team_delta > 0:
         base_size = extract_team_size(next_project) or 1
@@ -547,6 +678,9 @@ def apply_rule_overrides(project: Dict[str, Any], signals: Dict[str, Any]) -> Di
     if final_status:
         next_project["status_theme"] = status_theme_override or get_status_theme(final_status)
 
+    if title_override and validate_title_candidate(title_override):
+        next_project["title"] = title_override
+
     return next_project
 
 
@@ -560,6 +694,9 @@ def apply_schema_to_project(
     project: Dict[str, Any], schema: Dict[str, Any], update_text: str, timestamp: str, signals: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     next_project = copy.deepcopy(project)
+    rename_to = detect_rename_signal(update_text)
+    if rename_to and validate_title_candidate(rename_to):
+        next_project["title"] = rename_to
     # Update flow: keep stable profile fields; AI only refines summary/version text.
     next_project["summary"] = sanitize_text_strict(
         schema.get("summary", next_project.get("summary", "")),
@@ -577,13 +714,13 @@ def apply_schema_to_project(
     for part in [rule_summary, model_version, fallback_version]:
         if part and part not in version_parts:
             version_parts.append(part)
-    new_version_text = sanitize_text_strict("；".join(version_parts), allow_empty=False, max_len=120)
+    new_version_text = sanitize_version_event("；".join(version_parts), allow_fallback=True)
     next_project["version_footprint"] = new_version_text
 
     versions = next_project.get("versions", [])
     if not isinstance(versions, list):
         versions = []
-    versions.insert(0, {"update_text": new_version_text, "timestamp": timestamp})
+    versions.insert(0, {"event": new_version_text, "date": sanitize_version_date(timestamp)})
     next_project["versions"] = versions[:20]
     next_project["updated_at"] = timestamp
     next_project["status_tag"] = infer_status_tag(next_project.get("stage", ""))

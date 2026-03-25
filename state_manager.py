@@ -14,7 +14,9 @@ from project_model import (
     migrate_project_for_hygiene,
     normalize_project,
     parse_update_signals,
+    resolve_title,
     sanitize_schema,
+    validate_title_candidate,
 )
 from storage import load_projects, save_projects
 from text_cleaning import sanitize_text_strict
@@ -57,9 +59,14 @@ def init_state() -> None:
         st.session_state.used_local_structuring = False
     if "last_api_error" not in st.session_state:
         st.session_state.last_api_error = None
+    if "data_hygiene_v3_done" not in st.session_state:
+        st.session_state.data_hygiene_v3_done = False
 
     if st.session_state.projects:
         st.session_state.projects = [hard_scrub_project_for_state(project) for project in st.session_state.projects]
+        if not st.session_state.data_hygiene_v3_done:
+            persist_projects()
+            st.session_state.data_hygiene_v3_done = True
     ensure_selected_project()
 
 
@@ -97,7 +104,7 @@ def persist_projects() -> None:
 def _latest_version_text(project: Dict[str, Any]) -> str:
     versions = project.get("versions", [])
     if isinstance(versions, list) and versions and isinstance(versions[0], dict):
-        text = sanitize_text_strict(versions[0].get("update_text", ""), allow_empty=True, max_len=120)
+        text = sanitize_text_strict(versions[0].get("event", ""), allow_empty=True, max_len=120)
         if text:
             return text
     return sanitize_text_strict(project.get("version_footprint", ""), allow_empty=True, max_len=120)
@@ -226,3 +233,21 @@ def delete_project_by_id(project_id: str) -> None:
 
     ensure_selected_project()
     st.session_state.flash_message = "项目档案已删除。"
+
+
+def rename_project_title(project_id: str, new_title: str) -> None:
+    project = get_project_by_id(project_id)
+    if not project:
+        raise ValueError("目标项目不存在。")
+
+    resolved = resolve_title(new_title, "", "", default="")
+    if not resolved or not validate_title_candidate(resolved):
+        raise ValueError("请输入有效项目名称。")
+
+    updated = normalize_project({**project, "title": resolved})
+    if not replace_project_by_id(project_id, updated):
+        raise ValueError("目标项目不存在。")
+
+    st.session_state.selected_project_id = project_id
+    st.session_state.last_generated_id = project_id
+    st.session_state.flash_message = "项目名称已更新。"

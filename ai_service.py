@@ -1,14 +1,71 @@
 import json
 import os
 import re
+from io import BytesIO
 from html import unescape
 from typing import Any, Dict, List
 
 import streamlit as st
 from openai import OpenAI
+from pypdf import PdfReader
 
-from project_model import get_export_payload, parse_count_token, parse_update_signals, sanitize_schema
+from project_model import (
+    get_export_payload,
+    parse_count_token,
+    parse_update_signals,
+    resolve_title,
+    sanitize_schema,
+)
 from text_cleaning import clean_text, sanitize_text_strict
+
+
+def extract_text_from_uploaded_file(uploaded_file: Any) -> str:
+    if not uploaded_file:
+        return ""
+    name = str(getattr(uploaded_file, "name", "") or "").lower()
+    data = uploaded_file.getvalue()
+    if not data:
+        return ""
+
+    if name.endswith(".pdf"):
+        try:
+            reader = PdfReader(BytesIO(data))
+            pages: List[str] = []
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                if text.strip():
+                    pages.append(text)
+            merged = "\n".join(pages).strip()
+            return sanitize_text_strict(merged, allow_empty=True, max_len=6000)
+        except Exception as exc:
+            raise ValueError(f"PDF 解析失败：{clean_text(exc, 80)}")
+
+    if name.endswith(".txt") or name.endswith(".md"):
+        try:
+            text = data.decode("utf-8", errors="ignore")
+            return sanitize_text_strict(text, allow_empty=True, max_len=6000)
+        except Exception as exc:
+            raise ValueError(f"文本文件解析失败：{clean_text(exc, 80)}")
+
+    raise ValueError("仅支持 PDF、TXT、MD 文件。")
+
+
+def get_model_name() -> str:
+    model = (
+        os.getenv("DASHSCOPE_MODEL")
+        or os.getenv("QWEN_MODEL")
+        or os.getenv("MODEL_NAME")
+    )
+    if not model:
+        try:
+            model = (
+                st.secrets.get("DASHSCOPE_MODEL")
+                or st.secrets.get("QWEN_MODEL")
+                or st.secrets.get("MODEL_NAME")
+            )
+        except Exception:
+            model = None
+    return str(model or "qwen3.5-flash").strip()
 
 
 def get_client() -> OpenAI:
@@ -103,7 +160,7 @@ def extract_field_by_prefix(text: str, prefixes: List[str], max_len: int) -> str
     return ""
 
 
-def fallback_structure_project(raw_input: str) -> Dict[str, Any]:
+def fallback_structure_project(raw_input: str, user_title: str = "") -> Dict[str, Any]:
     raw = unescape(str(raw_input or ""))
     safe_text = sanitize_text_strict(raw, allow_empty=False, max_len=1500)
     lines = [sanitize_text_strict(line, allow_empty=True, max_len=80) for line in raw.splitlines()]
@@ -112,8 +169,7 @@ def fallback_structure_project(raw_input: str) -> Dict[str, Any]:
     title = extract_field_by_prefix(raw, [r"项目名称", r"项目名", r"name"], 42)
     if not title and lines:
         title = clean_text(lines[0], 42)
-    if not title:
-        title = "未命名项目"
+    title = resolve_title(user_title, raw, title)
 
     tech_stack = extract_tech_stack_heuristic(raw)
     users = extract_field_by_prefix(raw, [r"目标用户", r"用户", r"target users?"], 44) or "待补充"
@@ -164,7 +220,7 @@ def build_update_input(project: Dict[str, Any], update_text: str) -> str:
     )
 
 
-def structure_project(raw_input: str) -> Dict[str, Any]:
+def structure_project(raw_input: str, user_title: str = "") -> Dict[str, Any]:
     st.session_state.used_local_structuring = False
     st.session_state.last_api_error = None
     system_prompt = (
@@ -207,7 +263,7 @@ JSON Schema:
     try:
         client = get_client()
         resp = client.chat.completions.create(
-            model="qwen-max",
+            model=get_model_name(),
             temperature=0.2,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -215,8 +271,10 @@ JSON Schema:
             ],
         )
         parsed = extract_json_object(resp.choices[0].message.content or "{}")
-        return sanitize_schema(parsed)
+        schema = sanitize_schema(parsed)
+        schema["title"] = resolve_title(user_title, raw_input, schema.get("title", ""))
+        return sanitize_schema(schema)
     except Exception as exc:
         st.session_state.used_local_structuring = True
         st.session_state.last_api_error = clean_text(exc, 180)
-        return fallback_structure_project(raw_input)
+        return fallback_structure_project(raw_input, user_title=user_title)

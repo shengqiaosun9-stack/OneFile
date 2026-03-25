@@ -6,13 +6,14 @@ from typing import Any, Dict, List
 import streamlit as st
 import streamlit.components.v1 as components
 
-from ai_service import structure_project
-from project_model import enrich_generated_project, get_export_payload, prepare_project_for_render, sanitize_versions_for_render
+from ai_service import extract_text_from_uploaded_file, structure_project
+from project_model import enrich_generated_project, get_export_payload, prepare_project_for_render
 from state_manager import (
     commit_update_preview,
     delete_project_by_id,
     generate_update_preview,
     insert_project_top,
+    rename_project_title,
     undo_last_update,
 )
 from text_cleaning import clean_text, sanitize_text_strict
@@ -469,7 +470,9 @@ def render_nav(active_tab: str) -> None:
 
 def render_timeline_html(project: Dict[str, Any]) -> str:
     items = []
-    versions = sanitize_versions_for_render(project)
+    versions = project.get("versions", [])
+    if not isinstance(versions, list):
+        versions = []
     for i, version in enumerate(versions[:6]):
         if not isinstance(version, dict):
             continue
@@ -477,11 +480,11 @@ def render_timeline_html(project: Dict[str, Any]) -> str:
         dot_class = "timeline-dot current" if is_current else "timeline-dot"
         head_class = "timeline-headline" if is_current else "timeline-headline faded"
         date_class = "timeline-date" if is_current else "timeline-date faded"
-        version_text = sanitize_text_strict(version.get("update_text", ""), allow_empty=False, max_len=120)
+        version_text = str(version.get("event", "") or "").strip()
         safe_desc = ""
         desc = f"<p class='timeline-desc'>{escape(safe_desc)}</p>" if safe_desc else ""
         safe_title = clean_text(version_text, 42, aggressive=True)
-        safe_date = clean_text(version.get("timestamp", ""), 16, aggressive=True)
+        safe_date = clean_text(version.get("date", ""), 16, aggressive=True)
         if not safe_title and not safe_desc:
             continue
         items.append(
@@ -696,6 +699,24 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
         """,
         unsafe_allow_html=True,
     )
+    st.markdown("#### 项目名称维护")
+    rename_cols = st.columns([0.72, 0.18, 0.1])
+    with rename_cols[0]:
+        edited_title = st.text_input(
+            "项目名称",
+            value=project.get("title", ""),
+            key=f"title_edit_{project_id}",
+            label_visibility="collapsed",
+            placeholder="输入项目名称",
+        )
+    with rename_cols[1]:
+        if st.button("保存名称", key=f"save_title_{project_id}", use_container_width=True):
+            try:
+                rename_project_title(project_id, edited_title)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"保存失败：{clean_text(exc, 120)}")
+
     detail_left, detail_right = st.columns([0.62, 0.38])
     with detail_left:
         st.markdown("#### 项目时间线")
@@ -747,11 +768,24 @@ def render_creator_panel() -> None:
         unsafe_allow_html=True,
     )
     with st.form("creator_form", clear_on_submit=False):
-        raw_input = st.text_area(
-            "输入项目描述",
-            height=180,
-            placeholder="例：我们在做一个面向园区创业者的 AI 申报助手，输入项目 PDF 和口述内容后，30 秒内输出标准化项目档案、版本足迹和投递摘要。",
+        manual_title = st.text_input(
+            "项目名称（可选）",
+            placeholder="例如：星火计划",
         )
+        input_cols = st.columns([0.72, 0.28])
+        with input_cols[0]:
+            raw_input = st.text_area(
+                "输入项目描述",
+                height=180,
+                placeholder="例：我们在做一个面向园区创业者的 AI 申报助手，输入项目 PDF 和口述内容后，30 秒内输出标准化项目档案、版本足迹和投递摘要。",
+            )
+        with input_cols[1]:
+            uploaded_file = st.file_uploader(
+                "上传文件（可选）",
+                type=["pdf", "txt", "md"],
+                accept_multiple_files=False,
+                help="支持 PDF / TXT / MD。系统会先提取纯文本，再与输入描述一起结构化。",
+            )
         action_cols = st.columns([0.22, 0.16, 0.62])
         with action_cols[0]:
             submitted = st.form_submit_button("创建项目档案", type="primary", use_container_width=True)
@@ -760,12 +794,25 @@ def render_creator_panel() -> None:
         if cancel:
             st.session_state.show_creator = False
         if submitted:
-            if not raw_input.strip():
-                st.warning("请先输入项目描述。")
+            try:
+                file_text = extract_text_from_uploaded_file(uploaded_file) if uploaded_file else ""
+            except Exception as exc:
+                st.error(f"文件解析失败：{clean_text(exc, 140)}")
+                file_text = ""
+
+            composed_input_parts = []
+            if raw_input.strip():
+                composed_input_parts.append(raw_input.strip())
+            if file_text.strip():
+                composed_input_parts.append(file_text.strip())
+            composed_input = "\n\n".join(composed_input_parts).strip()
+
+            if not composed_input:
+                st.warning("请先输入项目描述或上传可解析文件。")
             else:
                 with st.spinner("Qwen 正在进行结构化抽取..."):
                     try:
-                        schema = structure_project(raw_input)
+                        schema = structure_project(composed_input, user_title=manual_title)
                         project = enrich_generated_project(schema)
                         insert_project_top(project)
                         st.session_state.last_generated_id = project["id"]
@@ -847,7 +894,7 @@ def render_update_panel(project: Dict[str, Any]) -> None:
         if isinstance(preview_project, dict):
             versions = preview_project.get("versions", [])
             if isinstance(versions, list) and versions and isinstance(versions[0], dict):
-                new_version = sanitize_text_strict(versions[0].get("update_text", ""), allow_empty=True, max_len=120)
+                new_version = sanitize_text_strict(versions[0].get("event", ""), allow_empty=True, max_len=120)
         st.markdown("#### 更新预览（未写入）")
         st.markdown(
             f"- 目标项目：`{escape(project.get('title', ''))}`\n"
