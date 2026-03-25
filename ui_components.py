@@ -7,7 +7,13 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from ai_service import extract_text_from_uploaded_file, structure_project
-from project_model import enrich_generated_project, get_export_payload, prepare_project_for_render
+from project_model import (
+    enrich_generated_project,
+    get_export_payload,
+    prepare_project_for_render,
+    sanitize_schema,
+    validate_title_candidate,
+)
 from state_manager import (
     commit_update_preview,
     delete_project_by_id,
@@ -468,42 +474,6 @@ def render_nav(active_tab: str) -> None:
     )
 
 
-def render_timeline_html(project: Dict[str, Any]) -> str:
-    items = []
-    versions = project.get("versions", [])
-    if not isinstance(versions, list):
-        versions = []
-    for i, version in enumerate(versions[:6]):
-        if not isinstance(version, dict):
-            continue
-        is_current = i == 0
-        dot_class = "timeline-dot current" if is_current else "timeline-dot"
-        head_class = "timeline-headline" if is_current else "timeline-headline faded"
-        date_class = "timeline-date" if is_current else "timeline-date faded"
-        version_text = str(version.get("event", "") or "").strip()
-        if "<" in version_text or ">" in version_text:
-            continue
-        safe_desc = ""
-        desc = f"<p class='timeline-desc'>{escape(safe_desc)}</p>" if safe_desc else ""
-        safe_title = clean_text(version_text, 42, aggressive=True)
-        safe_date = clean_text(version.get("date", ""), 16, aggressive=True)
-        if not safe_title and not safe_desc:
-            continue
-        items.append(
-            f"""
-            <div class="timeline-item">
-              <div class="{dot_class}"></div>
-              <div class="timeline-row">
-                <span class="{head_class}">{escape(safe_title)}</span>
-                <span class="{date_class}">{escape(safe_date)}</span>
-              </div>
-              {desc}
-            </div>
-            """
-        )
-    return f"<div class='timeline'>{''.join(items)}</div>"
-
-
 def render_copy_link_button(project_id: str, share_url: str) -> None:
     safe_project = clean_text(project_id, 20, aggressive=True)
     button_id = f"copy-btn-{safe_project}"
@@ -600,7 +570,6 @@ def render_copy_link_button(project_id: str, share_url: str) -> None:
 def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     project = prepare_project_for_render(project)
     status_class = f"status-chip status-{project.get('status_theme', 'blue')}"
-    timeline_html = render_timeline_html(project)
     border_style = "2px solid #DBEAFE" if project.get("id") == highlight_id else "1px solid #E2E8F0"
     box_shadow = "0 10px 18px rgba(45,122,255,0.14)" if project.get("id") == highlight_id else None
     shell_style = f"border:{border_style};"
@@ -622,14 +591,11 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
               <div class="meta-line"><span>📦</span><span><span style="color:#64748B;">形态:</span> <strong>{escape(project.get("shape", ""))}</strong></span></div>
               <div class="meta-line"><span>💰</span><span><span style="color:#64748B;">模式:</span> <strong>{escape(project.get("model", ""))}</strong></span></div>
             </div>
-            <div class="metric-bar">
-              <span>{escape(project.get("team_text", ""))}</span>
-              <span>{escape(project.get("stage_metric", ""))}</span>
+            <div class="metric-bar" style="display:block;">
+              <div style="font-size:11px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">当前状态</div>
+              <div style="font-size:13px;color:#334155;margin-bottom:6px;"><strong>阶段：</strong>{escape(project.get("stage", ""))}</div>
+              <div style="font-size:13px;color:#334155;"><strong>最新进展：</strong>{escape(project.get("latest_update", ""))}</div>
             </div>
-          </div>
-          <div class="timeline-wrap">
-            <div class="timeline-title">VERSION FOOTPRINT</div>
-            {timeline_html}
           </div>
         </div>
         """,
@@ -702,7 +668,7 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
         unsafe_allow_html=True,
     )
     st.markdown("#### 项目名称维护")
-    rename_cols = st.columns([0.72, 0.18, 0.1])
+    rename_cols = st.columns([0.78, 0.22])
     with rename_cols[0]:
         edited_title = st.text_input(
             "项目名称",
@@ -721,8 +687,19 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
 
     detail_left, detail_right = st.columns([0.62, 0.38])
     with detail_left:
-        st.markdown("#### 项目时间线")
-        st.markdown(render_timeline_html(project), unsafe_allow_html=True)
+        st.markdown("#### 历史更新记录")
+        versions = project.get("versions", [])
+        if isinstance(versions, list) and versions:
+            for version in versions:
+                if not isinstance(version, dict):
+                    continue
+                event = sanitize_text_strict(version.get("event", ""), allow_empty=True, max_len=120)
+                date = sanitize_text_strict(version.get("date", ""), allow_empty=True, max_len=24)
+                if not event:
+                    continue
+                st.markdown(f"- `{escape(date or '-')}` {escape(event)}")
+        else:
+            st.caption("暂无历史更新记录。")
     with detail_right:
         st.markdown("#### 结构化导出")
         st.code(json.dumps(payload, ensure_ascii=False, indent=2), language="json")
@@ -771,7 +748,7 @@ def render_creator_panel() -> None:
     )
     with st.form("creator_form", clear_on_submit=False):
         manual_title = st.text_input(
-            "项目名称（可选）",
+            "项目名称（必填）",
             placeholder="例如：星火计划",
         )
         input_cols = st.columns([0.72, 0.28])
@@ -796,6 +773,14 @@ def render_creator_panel() -> None:
         if cancel:
             st.session_state.show_creator = False
         if submitted:
+            manual_title_clean = sanitize_text_strict(manual_title, allow_empty=True, max_len=42)
+            if not manual_title_clean:
+                st.warning("请先填写项目名称，再创建项目档案。")
+                return
+            if not validate_title_candidate(manual_title_clean):
+                st.warning("项目名称格式无效，请使用简短清晰的名称（不含句子或模板代码）。")
+                return
+
             try:
                 file_text = extract_text_from_uploaded_file(uploaded_file) if uploaded_file else ""
             except Exception as exc:
@@ -814,7 +799,8 @@ def render_creator_panel() -> None:
             else:
                 with st.spinner("混元正在进行结构化抽取..."):
                     try:
-                        schema = structure_project(composed_input, user_title=manual_title)
+                        schema = structure_project(composed_input, user_title=manual_title_clean)
+                        schema = sanitize_schema({**schema, "title": manual_title_clean})
                         project = enrich_generated_project(schema)
                         insert_project_top(project)
                         st.session_state.last_generated_id = project["id"]
@@ -841,12 +827,12 @@ def render_update_panel(project: Dict[str, Any]) -> None:
         <div class="creator-panel">
           <div class="creator-kicker">Project Update</div>
           <div style="font-size:24px;font-weight:700;color:#0f172a;margin-bottom:6px;">更新项目进展：{escape(project.get("title", ""))}</div>
-          <div style="color:#64748B;font-size:14px;">这是档案维护流程：进入更新模式 → 生成更新预览 → 确认写入。写入后会新增版本历史，并可能刷新当前阶段、摘要和版本足迹。</div>
+          <div style="color:#64748B;font-size:14px;">这是档案维护流程：进入更新模式 → 生成更新预览 → 确认写入。写入后会新增历史记录，并可能刷新当前阶段与最新进展快照。</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.caption("本次更新会写入版本历史，并可能刷新项目阶段、摘要或版本足迹。取消预览不会修改任何已有档案。")
+    st.caption("本次更新会写入历史记录，并刷新“当前状态”中的阶段或最新进展。取消预览不会修改任何已有档案。")
     update_text = st.text_area(
         "最新进展",
         key=update_key,
@@ -948,13 +934,26 @@ def render_share_page(project: Dict[str, Any]) -> None:
             <div class="archive-kpi"><div class="archive-kpi-label">技术栈</div><div class="archive-kpi-value">{escape(', '.join(project.get("tech_stack", [])))}</div></div>
             <div class="archive-kpi"><div class="archive-kpi-label">目标用户</div><div class="archive-kpi-value">{escape(project.get("users", ""))}</div></div>
             <div class="archive-kpi"><div class="archive-kpi-label">商业模式</div><div class="archive-kpi-value">{escape(project.get("model", ""))}</div></div>
+            <div class="archive-kpi"><div class="archive-kpi-label">当前阶段</div><div class="archive-kpi-value">{escape(project.get("stage", ""))}</div></div>
+            <div class="archive-kpi"><div class="archive-kpi-label">最新进展</div><div class="archive-kpi-value">{escape(project.get("latest_update", ""))}</div></div>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("### 版本历史")
-    st.markdown(render_timeline_html(project), unsafe_allow_html=True)
+    st.markdown("### 历史更新记录")
+    versions = project.get("versions", [])
+    if isinstance(versions, list) and versions:
+        for version in versions:
+            if not isinstance(version, dict):
+                continue
+            event = sanitize_text_strict(version.get("event", ""), allow_empty=True, max_len=120)
+            date = sanitize_text_strict(version.get("date", ""), allow_empty=True, max_len=24)
+            if not event:
+                continue
+            st.markdown(f"- `{escape(date or '-')}` {escape(event)}")
+    else:
+        st.caption("暂无历史更新记录。")
     if st.button("返回项目库"):
         st.query_params.clear()
         st.rerun()

@@ -66,6 +66,15 @@ TITLE_VERB_HINTS = [
     "面向",
 ]
 VERSION_EVENT_FALLBACK = "版本记录已更新"
+LATEST_UPDATE_FALLBACK = "暂无最新进展"
+STAGE_NORMALIZED = {
+    "mvp": "MVP",
+    "内测": "内测",
+    "公测": "公测",
+    "已上线": "已上线",
+    "融资中": "融资中",
+    "早期": "早期",
+}
 
 
 def get_now_str() -> str:
@@ -95,6 +104,35 @@ def sanitize_version_date(value: Any) -> str:
     if not date:
         date = get_now_str()
     return date
+
+
+def normalize_stage_value(value: Any) -> str:
+    raw = sanitize_text_strict(value, allow_empty=True, max_len=24)
+    if not raw:
+        return STAGE_NORMALIZED["早期"]
+    lowered = raw.lower()
+    if "上线" in raw or "launch" in lowered or "production" in lowered or "ga" == lowered:
+        return STAGE_NORMALIZED["已上线"]
+    if "mvp" in lowered:
+        return STAGE_NORMALIZED["mvp"]
+    if "公测" in raw or "public beta" in lowered:
+        return STAGE_NORMALIZED["公测"]
+    if "内测" in raw or "beta" in lowered:
+        return STAGE_NORMALIZED["内测"]
+    if "融资" in raw or "seed" in lowered or "pre-a" in lowered or "pre a" in lowered:
+        return STAGE_NORMALIZED["融资中"]
+    cleaned = clean_text(raw, 12, aggressive=True)
+    return cleaned or STAGE_NORMALIZED["早期"]
+
+
+def sanitize_latest_update(value: Any, fallback: str = "") -> str:
+    text = sanitize_text_strict(value, allow_empty=True, max_len=110)
+    if not text:
+        text = sanitize_text_strict(fallback, allow_empty=True, max_len=110)
+    if has_markup_contamination(text) or is_timeline_leak_text(text) or "<" in text or ">" in text:
+        text = ""
+    text = clean_text(text, 110, aggressive=True)
+    return text or LATEST_UPDATE_FALLBACK
 
 
 def _sanitize_title_candidate(value: Any) -> str:
@@ -198,9 +236,13 @@ def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
     clean["tech_stack"] = clean_list(data.get("tech_stack", []), max_items=4)
     clean["users"] = clean_text(data.get("users", "待补充"), max_len=44) or "待补充"
     clean["model"] = clean_text(data.get("model", "待补充"), max_len=34) or "待补充"
-    clean["stage"] = clean_text(data.get("stage", "早期阶段"), max_len=24) or "早期阶段"
-    clean["version_footprint"] = sanitize_text_strict(data.get("version_footprint", "初始版本"), allow_empty=False, max_len=120)
+    clean["stage"] = normalize_stage_value(data.get("stage", STAGE_NORMALIZED["早期"]))
+    clean["version_footprint"] = sanitize_version_event(data.get("version_footprint", "初始版本"), allow_fallback=True)
     clean["summary"] = sanitize_text_strict(data.get("summary", "暂无亮点摘要"), allow_empty=False, max_len=78)
+    clean["latest_update"] = sanitize_latest_update(
+        data.get("latest_update", clean["version_footprint"]),
+        fallback=clean["version_footprint"],
+    )
     team_text = normalize_team_text(data.get("team_text", data.get("team_size", "")))
     stage_metric = normalize_stage_metric_text(data.get("stage_metric", data.get("stage_progress", "")))
     if team_text:
@@ -212,21 +254,18 @@ def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def infer_status_tag(stage: str) -> str:
-    s = stage.lower()
-    if "seed" in s or "种子" in stage:
-        return "融资中 (Seed)"
-    if "pre-a" in s or "pre a" in s or "prea" in s:
-        return "融资中 (Pre-A)"
-    if "融资" in stage or "fundraising" in s or "raising" in s:
+    normalized = normalize_stage_value(stage)
+    s = normalized.lower()
+    if "融资" in normalized or "seed" in s or "pre-a" in s or "pre a" in s:
         return "融资中"
-    if "mvp" in s or "上线" in stage:
+    if normalized == STAGE_NORMALIZED["已上线"]:
+        return "已上线 / 运营中"
+    if normalized == STAGE_NORMALIZED["mvp"]:
         return "MVP 已上线"
-    if "公测" in stage:
+    if normalized == STAGE_NORMALIZED["公测"]:
         return "公测中"
-    if "内测" in stage or "beta" in s:
+    if normalized == STAGE_NORMALIZED["内测"]:
         return "内测中"
-    if "增长" in stage:
-        return "增长阶段"
     return "早期阶段"
 
 
@@ -265,7 +304,10 @@ def to_ui_project(schema: Dict[str, Any], generated: bool) -> Dict[str, Any]:
         "id": str(uuid.uuid4())[:8],
         "status_tag": infer_status_tag(schema.get("stage", "")),
         "updated_at": get_now_str(),
-        "footprints": build_footprints(schema.get("version_footprint", "")),
+        "latest_update": sanitize_latest_update(
+            schema.get("latest_update", schema.get("version_footprint", "")),
+            fallback=schema.get("version_footprint", ""),
+        ),
         "metrics": infer_metrics(schema),
         "generated": generated,
         **schema,
@@ -364,31 +406,15 @@ def normalize_project(project: Dict[str, Any]) -> Dict[str, Any]:
         versions = build_versions_from_schema(schema)
 
     ui["versions"] = versions[:20]
-    ui["version_footprint"] = sanitize_version_event(ui["versions"][0].get("event", ""), allow_fallback=True)
-
-    timeline_items: List[Dict[str, Any]] = []
-    for i, version in enumerate(ui["versions"][:3]):
-        version_text = sanitize_version_event(version.get("event", ""), allow_fallback=False)
-        if not version_text:
-            continue
-        timeline_items.append(
-            {
-                "title": clean_text(version_text, 42, aggressive=True),
-                "date": clean_text(version.get("date", ""), 24, aggressive=True),
-                "desc": clean_text(version_text, 82, aggressive=True) if len(version_text) > 44 else "",
-                "current": i == 0,
-            }
-        )
-    if not timeline_items:
-        timeline_items = [
-            {
-                "title": clean_text(ui["version_footprint"], 42, aggressive=True),
-                "date": clean_text(ui.get("updated_at", get_now_str()), 24, aggressive=True),
-                "desc": "",
-                "current": True,
-            }
-        ]
-    ui["timeline"] = timeline_items
+    latest_event = sanitize_version_event(ui["versions"][0].get("event", ""), allow_fallback=True)
+    ui["version_footprint"] = latest_event
+    ui["latest_update"] = sanitize_latest_update(
+        project.get("latest_update", latest_event),
+        fallback=latest_event,
+    )
+    ui["stage"] = normalize_stage_value(ui.get("stage", ""))
+    ui["status_tag"] = infer_status_tag(ui["stage"])
+    ui["status_theme"] = get_status_theme(ui["status_tag"])
     return ui
 
 
@@ -423,6 +449,10 @@ def prepare_project_for_render(project: Dict[str, Any]) -> Dict[str, Any]:
     render_versions = sanitize_versions_for_render(render_project)
     render_project["versions"] = render_versions
     render_project["version_footprint"] = render_versions[0]["event"]
+    render_project["latest_update"] = sanitize_latest_update(
+        render_project.get("latest_update", render_versions[0]["event"]),
+        fallback=render_versions[0]["event"],
+    )
     return render_project
 
 
@@ -431,6 +461,10 @@ def hard_scrub_project_for_state(project: Dict[str, Any]) -> Dict[str, Any]:
     scrubbed_versions = sanitize_versions_for_render(scrubbed)
     scrubbed["versions"] = scrubbed_versions
     scrubbed["version_footprint"] = scrubbed_versions[0]["event"]
+    scrubbed["latest_update"] = sanitize_latest_update(
+        scrubbed.get("latest_update", scrubbed_versions[0]["event"]),
+        fallback=scrubbed_versions[0]["event"],
+    )
     scrubbed["summary"] = sanitize_text_strict(scrubbed.get("summary", ""), allow_empty=False, max_len=78)
     return scrubbed
 
@@ -504,7 +538,6 @@ def parse_update_signals(update_text: str, project: Dict[str, Any]) -> Dict[str,
         "stage_override": "",
         "status_tag_override": "",
         "status_theme_override": "",
-        "title_override": "",
         "hits": [],
     }
 
@@ -629,11 +662,6 @@ def parse_update_signals(update_text: str, project: Dict[str, Any]) -> Dict[str,
                 signals["stage_override"] = tag
             break
 
-    rename_to = detect_rename_signal(text)
-    if rename_to:
-        signals["title_override"] = rename_to
-        signals["hits"].append(f"项目更名为{rename_to}")
-
     return signals
 
 
@@ -649,7 +677,6 @@ def apply_rule_overrides(project: Dict[str, Any], signals: Dict[str, Any]) -> Di
     stage_override = clean_text(signals.get("stage_override", ""), 24, aggressive=True)
     status_tag_override = clean_text(signals.get("status_tag_override", ""), 30, aggressive=True)
     status_theme_override = clean_text(signals.get("status_theme_override", ""), 16, aggressive=True)
-    title_override = _sanitize_title_candidate(signals.get("title_override", ""))
 
     if team_delta > 0:
         base_size = extract_team_size(next_project) or 1
@@ -672,8 +699,9 @@ def apply_rule_overrides(project: Dict[str, Any], signals: Dict[str, Any]) -> Di
         next_project["stage_metric"] = f"当前阶段：{'；'.join(metric_parts[:3])}"
 
     if stage_override:
-        next_project["stage"] = stage_override
-        next_project["status_tag"] = infer_status_tag(stage_override)
+        normalized_stage = normalize_stage_value(stage_override)
+        next_project["stage"] = normalized_stage
+        next_project["status_tag"] = infer_status_tag(normalized_stage)
 
     if status_tag_override:
         next_project["status_tag"] = status_tag_override
@@ -681,9 +709,6 @@ def apply_rule_overrides(project: Dict[str, Any], signals: Dict[str, Any]) -> Di
     final_status = next_project.get("status_tag", "")
     if final_status:
         next_project["status_theme"] = status_theme_override or get_status_theme(final_status)
-
-    if title_override and validate_title_candidate(title_override):
-        next_project["title"] = title_override
 
     return next_project
 
@@ -698,9 +723,6 @@ def apply_schema_to_project(
     project: Dict[str, Any], schema: Dict[str, Any], update_text: str, timestamp: str, signals: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     next_project = copy.deepcopy(project)
-    rename_to = detect_rename_signal(update_text)
-    if rename_to and validate_title_candidate(rename_to):
-        next_project["title"] = rename_to
     # Update flow: keep stable profile fields; AI only refines summary/version text.
     next_project["summary"] = sanitize_text_strict(
         schema.get("summary", next_project.get("summary", "")),
@@ -720,6 +742,7 @@ def apply_schema_to_project(
             version_parts.append(part)
     new_version_text = sanitize_version_event("；".join(version_parts), allow_fallback=True)
     next_project["version_footprint"] = new_version_text
+    next_project["latest_update"] = sanitize_latest_update(new_version_text, fallback=fallback_version)
 
     versions = next_project.get("versions", [])
     if not isinstance(versions, list):
@@ -727,6 +750,7 @@ def apply_schema_to_project(
     versions.insert(0, {"event": new_version_text, "date": sanitize_version_date(timestamp)})
     next_project["versions"] = versions[:20]
     next_project["updated_at"] = timestamp
+    next_project["stage"] = normalize_stage_value(next_project.get("stage", ""))
     next_project["status_tag"] = infer_status_tag(next_project.get("stage", ""))
     next_project["status_theme"] = get_status_theme(next_project["status_tag"])
     return normalize_project(next_project)
@@ -743,14 +767,21 @@ def compare_field_value(value: Any) -> str:
 def enrich_generated_project(schema: Dict[str, Any]) -> Dict[str, Any]:
     team_text = normalize_team_text(schema.get("team_text", schema.get("team_size", ""))) or "核心团队：1人"
     stage_metric = normalize_stage_metric_text(schema.get("stage_metric", schema.get("stage_progress", ""))) or "当前阶段：完成首轮验证"
+    normalized_stage = normalize_stage_value(schema.get("stage", ""))
+    latest_update = sanitize_latest_update(
+        schema.get("latest_update", schema.get("version_footprint", "")),
+        fallback=schema.get("version_footprint", ""),
+    )
     project = normalize_project(
         {
             **schema,
-            "status_tag": infer_status_tag(schema.get("stage", "")),
+            "stage": normalized_stage,
+            "latest_update": latest_update,
+            "status_tag": infer_status_tag(normalized_stage),
             "shape": infer_shape(schema),
             "team_text": team_text,
             "stage_metric": stage_metric,
-            "status_theme": get_status_theme(infer_status_tag(schema.get("stage", ""))),
+            "status_theme": get_status_theme(infer_status_tag(normalized_stage)),
             "generated": True,
             "versions": build_versions_from_schema(schema),
         }
@@ -776,6 +807,7 @@ def project_matches(project: Dict[str, Any], tech_filter: str, stage_filter: str
             project.get("users", ""),
             project.get("model", ""),
             project.get("summary", ""),
+            project.get("latest_update", ""),
             project.get("shape", ""),
         ]
     ).lower()

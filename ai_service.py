@@ -13,7 +13,6 @@ from project_model import (
     get_export_payload,
     parse_count_token,
     parse_update_signals,
-    resolve_title,
     sanitize_schema,
 )
 from text_cleaning import clean_text, sanitize_text_strict
@@ -172,10 +171,7 @@ def fallback_structure_project(raw_input: str, user_title: str = "") -> Dict[str
     lines = [sanitize_text_strict(line, allow_empty=True, max_len=80) for line in raw.splitlines()]
     lines = [line for line in lines if line]
 
-    title = extract_field_by_prefix(raw, [r"项目名称", r"项目名", r"name"], 42)
-    if not title and lines:
-        title = clean_text(lines[0], 42)
-    title = resolve_title(user_title, raw, title)
+    title = sanitize_text_strict(user_title, allow_empty=True, max_len=42) or "未命名项目"
 
     tech_stack = extract_tech_stack_heuristic(raw)
     users = extract_field_by_prefix(raw, [r"目标用户", r"用户", r"target users?"], 44) or "待补充"
@@ -282,7 +278,8 @@ JSON Schema:
         )
         parsed = extract_json_object(resp.choices[0].message.content or "{}")
         schema = sanitize_schema(parsed)
-        schema["title"] = resolve_title(user_title, raw_input, schema.get("title", ""))
+        if sanitize_text_strict(user_title, allow_empty=True, max_len=42):
+            schema["title"] = sanitize_text_strict(user_title, allow_empty=False, max_len=42)
         return sanitize_schema(schema)
     except Exception as exc:
         st.session_state.used_local_structuring = True

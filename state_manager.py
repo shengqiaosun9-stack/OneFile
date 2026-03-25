@@ -14,7 +14,6 @@ from project_model import (
     migrate_project_for_hygiene,
     normalize_project,
     parse_update_signals,
-    resolve_title,
     sanitize_schema,
     validate_title_candidate,
 )
@@ -126,6 +125,9 @@ def persist_projects() -> None:
 
 
 def _latest_version_text(project: Dict[str, Any]) -> str:
+    latest_update = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=120)
+    if latest_update:
+        return latest_update
     versions = project.get("versions", [])
     if isinstance(versions, list) and versions and isinstance(versions[0], dict):
         text = sanitize_text_strict(versions[0].get("event", ""), allow_empty=True, max_len=120)
@@ -163,6 +165,7 @@ def generate_update_preview(project_id: str, update_text: str) -> Dict[str, Any]
         ("stage_metric", "当前进展"),
         ("stage", "当前阶段"),
         ("status_tag", "状态标签"),
+        ("latest_update", "最新进展"),
     ]
     for field, label in field_specs:
         before = compare_field_value(project.get(field))
@@ -264,7 +267,7 @@ def rename_project_title(project_id: str, new_title: str) -> None:
     if not project:
         raise ValueError("目标项目不存在。")
 
-    resolved = resolve_title(new_title, "", "", default="")
+    resolved = sanitize_text_strict(new_title, allow_empty=True, max_len=42)
     if not resolved or not validate_title_candidate(resolved):
         raise ValueError("请输入有效项目名称。")
 
