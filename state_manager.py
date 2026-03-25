@@ -1,5 +1,8 @@
 import copy
+import importlib
+import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import streamlit as st
@@ -19,8 +22,26 @@ from project_model import (
     sanitize_schema,
     validate_title_candidate,
 )
-from storage import load_projects, save_projects
-from text_cleaning import has_markup_contamination, is_timeline_leak_text, sanitize_text_strict
+try:
+    from storage import load_projects, save_projects
+except Exception:
+    root_dir = str(Path(__file__).resolve().parent)
+    if root_dir not in sys.path:
+        sys.path.insert(0, root_dir)
+    storage_module = importlib.import_module("storage")
+    load_projects = getattr(storage_module, "load_projects")
+    save_projects = getattr(storage_module, "save_projects")
+
+try:
+    from text_cleaning import has_markup_contamination, is_timeline_leak_text, sanitize_text_strict
+except Exception:
+    root_dir = str(Path(__file__).resolve().parent)
+    if root_dir not in sys.path:
+        sys.path.insert(0, root_dir)
+    cleaning_module = importlib.import_module("text_cleaning")
+    has_markup_contamination = getattr(cleaning_module, "has_markup_contamination")
+    is_timeline_leak_text = getattr(cleaning_module, "is_timeline_leak_text")
+    sanitize_text_strict = getattr(cleaning_module, "sanitize_text_strict")
 
 
 def _contains_legacy_markup_payload(project: Dict[str, Any]) -> bool:
