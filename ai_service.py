@@ -68,6 +68,16 @@ def get_model_name() -> str:
     return str(model or "qwen3.5-flash").strip()
 
 
+def get_base_url() -> str:
+    base_url = os.getenv("DASHSCOPE_BASE_URL")
+    if not base_url:
+        try:
+            base_url = st.secrets.get("DASHSCOPE_BASE_URL")
+        except Exception:
+            base_url = None
+    return str(base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1").strip()
+
+
 def get_client() -> OpenAI:
     api_key = (
         os.getenv("DASHSCOPE_API_KEY")
@@ -89,7 +99,7 @@ def get_client() -> OpenAI:
 
     return OpenAI(
         api_key=api_key,
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        base_url=get_base_url(),
     )
 
 
@@ -262,8 +272,11 @@ JSON Schema:
 
     try:
         client = get_client()
+        model_name = get_model_name()
+        base_url = get_base_url()
+        print(f"[OneFile] provider=dashscope base_url={base_url} model={model_name}")
         resp = client.chat.completions.create(
-            model=get_model_name(),
+            model=model_name,
             temperature=0.2,
             messages=[
                 {"role": "system", "content": system_prompt},
