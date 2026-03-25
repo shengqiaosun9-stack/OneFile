@@ -14,12 +14,15 @@ streamlit run app.py
 ## Secrets
 Set keys in **Streamlit Cloud**: App → Settings → Secrets.
 
-Required (any one works):
-- `DASHSCOPE_API_KEY`
-- `QWEN_API_KEY`
+Required (recommended):
+- `HUNYUAN_API_KEY`
+
+Fallback:
 - `OPENAI_API_KEY`
 
 Optional:
+- `HUNYUAN_MODEL` (default: `hunyuan-turbos-latest`)
+- `HUNYUAN_BASE_URL` (default: `https://api.hunyuan.cloud.tencent.com/v1`)
 - `ONEFILE_BASE_URL` (e.g. `https://your-app-name.streamlit.app`) to generate absolute share links.
 
 Local template:

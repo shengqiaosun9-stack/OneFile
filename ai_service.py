@@ -52,50 +52,46 @@ def extract_text_from_uploaded_file(uploaded_file: Any) -> str:
 
 def get_model_name() -> str:
     model = (
-        os.getenv("DASHSCOPE_MODEL")
-        or os.getenv("QWEN_MODEL")
+        os.getenv("HUNYUAN_MODEL")
         or os.getenv("MODEL_NAME")
     )
     if not model:
         try:
             model = (
-                st.secrets.get("DASHSCOPE_MODEL")
-                or st.secrets.get("QWEN_MODEL")
+                st.secrets.get("HUNYUAN_MODEL")
                 or st.secrets.get("MODEL_NAME")
             )
         except Exception:
             model = None
-    return str(model or "qwen3.5-flash").strip()
+    return str(model or "hunyuan-turbos-latest").strip()
 
 
 def get_base_url() -> str:
-    base_url = os.getenv("DASHSCOPE_BASE_URL")
+    base_url = os.getenv("HUNYUAN_BASE_URL") or os.getenv("OPENAI_BASE_URL")
     if not base_url:
         try:
-            base_url = st.secrets.get("DASHSCOPE_BASE_URL")
+            base_url = st.secrets.get("HUNYUAN_BASE_URL") or st.secrets.get("OPENAI_BASE_URL")
         except Exception:
             base_url = None
-    return str(base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1").strip()
+    return str(base_url or "https://api.hunyuan.cloud.tencent.com/v1").strip()
 
 
 def get_client() -> OpenAI:
     api_key = (
-        os.getenv("DASHSCOPE_API_KEY")
-        or os.getenv("QWEN_API_KEY")
+        os.getenv("HUNYUAN_API_KEY")
         or os.getenv("OPENAI_API_KEY")
     )
     if not api_key:
         try:
             api_key = (
-                st.secrets.get("DASHSCOPE_API_KEY")
-                or st.secrets.get("QWEN_API_KEY")
+                st.secrets.get("HUNYUAN_API_KEY")
                 or st.secrets.get("OPENAI_API_KEY")
             )
         except Exception:
             api_key = None
     api_key = str(api_key or "").strip()
     if not api_key:
-        raise ValueError("未检测到 API Key。请设置环境变量 DASHSCOPE_API_KEY，或在 .streamlit/secrets.toml 中配置 DASHSCOPE_API_KEY。")
+        raise ValueError("未检测到 API Key。请设置 HUNYUAN_API_KEY，或使用 OPENAI_API_KEY 作为回退。")
 
     return OpenAI(
         api_key=api_key,
@@ -274,7 +270,7 @@ JSON Schema:
         client = get_client()
         model_name = get_model_name()
         base_url = get_base_url()
-        print(f"[OneFile] provider=dashscope base_url={base_url} model={model_name}")
+        print(f"[OneFile] provider=hunyuan base_url={base_url} model={model_name}")
         resp = client.chat.completions.create(
             model=model_name,
             temperature=0.2,
@@ -282,6 +278,7 @@ JSON Schema:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            extra_body={"enable_enhancement": True},
         )
         parsed = extract_json_object(resp.choices[0].message.content or "{}")
         schema = sanitize_schema(parsed)

@@ -812,7 +812,7 @@ def render_creator_panel() -> None:
             if not composed_input:
                 st.warning("请先输入项目描述或上传可解析文件。")
             else:
-                with st.spinner("Qwen 正在进行结构化抽取..."):
+                with st.spinner("混元正在进行结构化抽取..."):
                     try:
                         schema = structure_project(composed_input, user_title=manual_title)
                         project = enrich_generated_project(schema)
