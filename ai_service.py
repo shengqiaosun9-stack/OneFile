@@ -11,6 +11,10 @@ from pypdf import PdfReader
 
 from project_model import (
     get_export_payload,
+    normalize_form_type,
+    normalize_model_type,
+    normalize_pricing_strategy,
+    normalize_stage_value,
     parse_count_token,
     parse_update_signals,
     sanitize_schema,
@@ -114,18 +118,7 @@ def extract_json_object(text: str) -> Dict[str, Any]:
 
 
 def infer_stage_from_text(text: str) -> str:
-    lowered = text.lower()
-    if "已上线" in text or "正式上线" in text or "上线" in text:
-        return "产品已上线"
-    if "mvp" in lowered:
-        return "MVP 已上线"
-    if "公测" in text:
-        return "公测阶段"
-    if "内测" in text or "beta" in lowered:
-        return "内测阶段"
-    if "融资" in text:
-        return "融资中"
-    return "早期阶段"
+    return normalize_stage_value(text)
 
 
 def extract_tech_stack_heuristic(text: str) -> List[str]:
@@ -175,8 +168,11 @@ def fallback_structure_project(raw_input: str, user_title: str = "") -> Dict[str
 
     tech_stack = extract_tech_stack_heuristic(raw)
     users = extract_field_by_prefix(raw, [r"目标用户", r"用户", r"target users?"], 44) or "待补充"
-    model = extract_field_by_prefix(raw, [r"商业模式", r"模式", r"business model"], 34) or "待补充"
+    model = extract_field_by_prefix(raw, [r"商业模式", r"模式", r"business model"], 50) or "待补充"
     stage = infer_stage_from_text(safe_text)
+    form_type = normalize_form_type("", context=safe_text)
+    model_type = normalize_model_type("", model_desc=model)
+    pricing_strategy = normalize_pricing_strategy("", model_desc=model)
     summary = extract_field_by_prefix(raw, [r"一句话亮点", r"亮点", r"summary"], 78)
     if not summary:
         summary = sanitize_text_strict(safe_text, allow_empty=False, max_len=78)
@@ -200,6 +196,10 @@ def fallback_structure_project(raw_input: str, user_title: str = "") -> Dict[str
             "tech_stack": tech_stack,
             "users": users,
             "model": model,
+            "model_desc": model,
+            "model_type": model_type,
+            "pricing_strategy": pricing_strategy,
+            "form_type": form_type,
             "stage": stage,
             "version_footprint": "v1.0 建立项目档案并完成首轮结构化",
             "summary": summary,
@@ -212,6 +212,10 @@ def fallback_structure_project(raw_input: str, user_title: str = "") -> Dict[str
 def build_update_input(project: Dict[str, Any], update_text: str) -> str:
     context = {
         **get_export_payload(project),
+        "form_type": project.get("form_type", ""),
+        "model_type": project.get("model_type", ""),
+        "pricing_strategy": project.get("pricing_strategy", ""),
+        "model_desc": project.get("model_desc", project.get("model", "")),
         "team_text": project.get("team_text", ""),
         "stage_metric": project.get("stage_metric", ""),
     }
@@ -243,15 +247,23 @@ def structure_project(raw_input: str, user_title: str = "") -> Dict[str, Any]:
 4) users 必须是一句话明确目标用户。
 5) summary 必须是一句话亮点（偏投资人视角）。
 6) 所有字段必须是纯自然语言，不要 HTML、标签或模板代码（例如 <div>、<span>、class=、timeline-*）。
-7) 在不影响 7 个标准字段的前提下，尽量补充 team_text 和 stage_metric 两个内部结构化字段。
+7) stage 必须严格为以下枚举之一：IDEA、BUILDING、MVP、VALIDATION、EARLY_REVENUE、SCALING、MATURE。
+8) form_type 必须严格为以下枚举之一：AI_NATIVE_APP、SAAS、API_SERVICE、AGENT、MARKETPLACE、DATA_TOOL、INFRASTRUCTURE、OTHER。
+9) model_type 必须严格为以下枚举之一：B2B_SUBSCRIPTION、B2C_SUBSCRIPTION、USAGE_BASED、COMMISSION、ONE_TIME、OUTSOURCING、ADS、MARKETPLACE、HYBRID、UNKNOWN。
+10) pricing_strategy 可为空字符串；若有值仅能是：FREEMIUM、FREE_TRIAL、ENTERPRISE_ONLY、SELF_SERVE。
+11) 在不影响 7 个标准字段的前提下，补充 model_desc、form_type、model_type、pricing_strategy、team_text、stage_metric。
 
 JSON Schema:
 {{
   "title": "项目名称",
   "tech_stack": ["技术1", "技术2"],
   "users": "目标用户一句话",
-  "model": "商业模式",
-  "stage": "当前阶段",
+  "model": "商业模式自然语言描述",
+  "model_desc": "商业模式自然语言描述（与model一致）",
+  "model_type": "B2B_SUBSCRIPTION|B2C_SUBSCRIPTION|USAGE_BASED|COMMISSION|ONE_TIME|OUTSOURCING|ADS|MARKETPLACE|HYBRID|UNKNOWN",
+  "pricing_strategy": "FREEMIUM|FREE_TRIAL|ENTERPRISE_ONLY|SELF_SERVE|''",
+  "form_type": "AI_NATIVE_APP|SAAS|API_SERVICE|AGENT|MARKETPLACE|DATA_TOOL|INFRASTRUCTURE|OTHER",
+  "stage": "IDEA|BUILDING|MVP|VALIDATION|EARLY_REVENUE|SCALING|MATURE",
   "version_footprint": "版本足迹",
   "summary": "一句话亮点",
   "team_text": "核心团队：X人（可为空字符串）",

@@ -8,10 +8,18 @@ import streamlit.components.v1 as components
 
 from ai_service import extract_text_from_uploaded_file, structure_project
 from project_model import (
+    FORM_TYPE_LABELS,
+    FORM_TYPE_VALUES,
+    MODEL_TYPE_LABELS,
+    MODEL_TYPE_VALUES,
+    STAGE_LABELS,
+    STAGE_VALUES,
     enrich_generated_project,
     get_export_payload,
+    model_type_label,
     prepare_project_for_render,
     sanitize_schema,
+    stage_label,
     validate_title_candidate,
 )
 from state_manager import (
@@ -48,8 +56,21 @@ def build_share_url(project_id: str) -> str:
     pid = clean_text(project_id, 24, aggressive=True)
     base = get_share_base_url()
     if base:
-        return f"{base}/?project={pid}"
-    return f"/?project={pid}"
+        return f"{base}/?project={pid}&view=share"
+    return f"/?project={pid}&view=share"
+
+
+def export_enabled() -> bool:
+    raw = (
+        os.getenv("ONEFILE_ENABLE_EXPORT")
+        or os.getenv("ONEFILE_SHOW_EXPORT")
+    )
+    if not raw:
+        try:
+            raw = st.secrets.get("ONEFILE_ENABLE_EXPORT") or st.secrets.get("ONEFILE_SHOW_EXPORT")
+        except Exception:
+            raw = None
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def render_styles() -> None:
@@ -588,12 +609,12 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
             <div class="card-grid">
               <div class="meta-line"><span>🧠</span><span><span style="color:#64748B;">技术栈:</span> <strong>{escape(', '.join(project.get("tech_stack", [])))}</strong></span></div>
               <div class="meta-line"><span>👥</span><span><span style="color:#64748B;">用户:</span> <strong>{escape(project.get("users", ""))}</strong></span></div>
-              <div class="meta-line"><span>📦</span><span><span style="color:#64748B;">形态:</span> <strong>{escape(project.get("shape", ""))}</strong></span></div>
-              <div class="meta-line"><span>💰</span><span><span style="color:#64748B;">模式:</span> <strong>{escape(project.get("model", ""))}</strong></span></div>
+              <div class="meta-line"><span>📦</span><span><span style="color:#64748B;">形态:</span> <strong>{escape(project.get("form_type_label", project.get("shape", "")))}</strong></span></div>
+              <div class="meta-line"><span>💰</span><span><span style="color:#64748B;">模式:</span> <strong>{escape(project.get("model_desc", project.get("model", "")))}</strong></span></div>
             </div>
             <div class="metric-bar" style="display:block;">
               <div style="font-size:11px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">当前状态</div>
-              <div style="font-size:13px;color:#334155;margin-bottom:6px;"><strong>阶段：</strong>{escape(project.get("stage", ""))}</div>
+              <div style="font-size:13px;color:#334155;margin-bottom:6px;"><strong>阶段：</strong>{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</div>
               <div style="font-size:13px;color:#334155;"><strong>最新进展：</strong>{escape(project.get("latest_update", ""))}</div>
             </div>
           </div>
@@ -607,6 +628,9 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     with action_cols[0]:
         if st.button("查看完整档案", key=f"view_{project['id']}"):
             st.session_state.selected_project_id = project["id"]
+            st.query_params["project"] = project["id"]
+            st.query_params["view"] = "detail"
+            st.rerun()
     with action_cols[1]:
         if st.button("更新项目进展", key=f"update_{project['id']}"):
             st.session_state.update_target_id = project["id"]
@@ -620,6 +644,7 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     with action_cols[3]:
         if st.button("打开分享页", key=f"open_share_{project['id']}"):
             st.query_params["project"] = project["id"]
+            st.query_params["view"] = "share"
             st.rerun()
     st.caption(share_url if share_url.startswith("http") else f"当前应用链接：{share_url}")
 
@@ -637,7 +662,6 @@ def render_cards_grid(projects: List[Dict[str, Any]], highlight_id: str) -> None
 
 def render_archive_panel(project: Dict[str, Any]) -> None:
     project = prepare_project_for_render(project)
-    payload = get_export_payload(project)
     project_id = project.get("id", "")
     share_url = build_share_url(project_id)
     st.markdown(
@@ -660,9 +684,12 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
     st.markdown(
         f"""
         <div class="archive-kpis">
-          <div class="archive-kpi"><div class="archive-kpi-label">版本数量</div><div class="archive-kpi-value">{len(project.get("versions", []))}</div></div>
+          <div class="archive-kpi"><div class="archive-kpi-label">当前阶段</div><div class="archive-kpi-value">{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</div></div>
+          <div class="archive-kpi"><div class="archive-kpi-label">产品形态</div><div class="archive-kpi-value">{escape(project.get("form_type_label", ""))}</div></div>
+          <div class="archive-kpi"><div class="archive-kpi-label">商业模式类型</div><div class="archive-kpi-value">{escape(project.get("model_type_label", model_type_label(project.get("model_type", ""))))}</div></div>
           <div class="archive-kpi"><div class="archive-kpi-label">分享链接</div><div class="archive-kpi-value">{escape(share_url)}</div></div>
           <div class="archive-kpi"><div class="archive-kpi-label">更新时间</div><div class="archive-kpi-value">{escape(project.get("updated_at", "-"))}</div></div>
+          <div class="archive-kpi"><div class="archive-kpi-label">最新进展</div><div class="archive-kpi-value">{escape(project.get("latest_update", ""))}</div></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -701,15 +728,17 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
         else:
             st.caption("暂无历史更新记录。")
     with detail_right:
-        st.markdown("#### 结构化导出")
-        st.code(json.dumps(payload, ensure_ascii=False, indent=2), language="json")
-        st.download_button(
-            "下载 JSON 档案",
-            data=json.dumps(payload, ensure_ascii=False, indent=2),
-            file_name=f"onefile_{project.get('id', 'project')}.json",
-            mime="application/json",
-            use_container_width=True,
-        )
+        if export_enabled():
+            payload = get_export_payload(project)
+            st.markdown("#### 结构化导出（内部）")
+            st.code(json.dumps(payload, ensure_ascii=False, indent=2), language="json")
+            st.download_button(
+                "下载 JSON 档案",
+                data=json.dumps(payload, ensure_ascii=False, indent=2),
+                file_name=f"onefile_{project.get('id', 'project')}.json",
+                mime="application/json",
+                use_container_width=True,
+            )
 
     st.markdown("#### 项目操作")
     action_cols = st.columns([0.18, 0.82])
@@ -732,6 +761,21 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
             if st.button("取消", key=f"cancel_delete_{project_id}", use_container_width=True):
                 st.session_state.delete_confirm_id = None
                 st.rerun()
+
+
+def render_project_detail_page(project: Dict[str, Any]) -> None:
+    project_id = clean_text(project.get("id", ""), 24, aggressive=True)
+    header_cols = st.columns([0.2, 0.22, 0.58])
+    with header_cols[0]:
+        if st.button("返回项目库", key=f"back_list_{project_id}", use_container_width=True):
+            st.query_params.clear()
+            st.rerun()
+    with header_cols[1]:
+        if st.button("打开分享页", key=f"detail_share_{project_id}", use_container_width=True):
+            st.query_params["project"] = project_id
+            st.query_params["view"] = "share"
+            st.rerun()
+    render_archive_panel(project)
 
 
 def render_creator_panel() -> None:
@@ -933,8 +977,9 @@ def render_share_page(project: Dict[str, Any]) -> None:
           <div class="archive-kpis">
             <div class="archive-kpi"><div class="archive-kpi-label">技术栈</div><div class="archive-kpi-value">{escape(', '.join(project.get("tech_stack", [])))}</div></div>
             <div class="archive-kpi"><div class="archive-kpi-label">目标用户</div><div class="archive-kpi-value">{escape(project.get("users", ""))}</div></div>
-            <div class="archive-kpi"><div class="archive-kpi-label">商业模式</div><div class="archive-kpi-value">{escape(project.get("model", ""))}</div></div>
-            <div class="archive-kpi"><div class="archive-kpi-label">当前阶段</div><div class="archive-kpi-value">{escape(project.get("stage", ""))}</div></div>
+            <div class="archive-kpi"><div class="archive-kpi-label">商业模式</div><div class="archive-kpi-value">{escape(project.get("model_desc", project.get("model", "")))}</div></div>
+            <div class="archive-kpi"><div class="archive-kpi-label">当前阶段</div><div class="archive-kpi-value">{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</div></div>
+            <div class="archive-kpi"><div class="archive-kpi-label">产品形态</div><div class="archive-kpi-value">{escape(project.get("form_type_label", ""))}</div></div>
             <div class="archive-kpi"><div class="archive-kpi-label">最新进展</div><div class="archive-kpi-value">{escape(project.get("latest_update", ""))}</div></div>
           </div>
         </div>
@@ -961,26 +1006,42 @@ def render_share_page(project: Dict[str, Any]) -> None:
 
 def render_filters(projects: List[Dict[str, Any]]) -> Dict[str, str]:
     all_tech = sorted({tech for project in projects for tech in project.get("tech_stack", [])})
-    all_stage = sorted({project.get("status_tag", "") for project in projects if project.get("status_tag")})
-    model_options = ["B2B订阅", "按量计费", "交易抽佣", "产品直销", "研发外包"]
+    stage_options = [stage for stage in STAGE_VALUES if any(p.get("stage") == stage for p in projects)]
+    form_options = [form for form in FORM_TYPE_VALUES if any(p.get("form_type") == form for p in projects)]
+    model_options = [model for model in MODEL_TYPE_VALUES if any(p.get("model_type") == model for p in projects)]
     st.markdown(
         """
         <div style="height:10px;"></div>
         """,
         unsafe_allow_html=True,
     )
-    cols = st.columns([0.19, 0.19, 0.19, 0.43])
+    cols = st.columns([0.17, 0.17, 0.17, 0.17, 0.32])
     with cols[0]:
         tech_filter = st.selectbox("技术栈", ["全部技术"] + all_tech)
     with cols[1]:
-        stage_filter = st.selectbox("阶段", ["所有阶段"] + all_stage)
+        stage_filter = st.selectbox(
+            "阶段",
+            ["所有阶段"] + stage_options,
+            format_func=lambda x: STAGE_LABELS.get(x, x),
+        )
     with cols[2]:
-        model_filter = st.selectbox("商业模式", ["所有模式"] + model_options)
+        form_filter = st.selectbox(
+            "产品形态",
+            ["所有形态"] + form_options,
+            format_func=lambda x: FORM_TYPE_LABELS.get(x, x),
+        )
     with cols[3]:
+        model_filter = st.selectbox(
+            "商业模式",
+            ["所有模式"] + model_options,
+            format_func=lambda x: MODEL_TYPE_LABELS.get(x, x),
+        )
+    with cols[4]:
         keyword = st.text_input("搜索", placeholder="搜索项目、团队或技术关键词...")
     return {
         "tech": tech_filter,
         "stage": stage_filter,
+        "form": form_filter,
         "model": model_filter,
         "keyword": keyword,
     }

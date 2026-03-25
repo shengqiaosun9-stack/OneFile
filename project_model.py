@@ -67,18 +67,73 @@ TITLE_VERB_HINTS = [
 ]
 VERSION_EVENT_FALLBACK = "版本记录已更新"
 LATEST_UPDATE_FALLBACK = "暂无最新进展"
-STAGE_NORMALIZED = {
-    "mvp": "MVP",
-    "内测": "内测",
-    "公测": "公测",
-    "已上线": "已上线",
-    "融资中": "融资中",
-    "早期": "早期",
+
+STAGE_VALUES = ["IDEA", "BUILDING", "MVP", "VALIDATION", "EARLY_REVENUE", "SCALING", "MATURE"]
+FORM_TYPE_VALUES = ["AI_NATIVE_APP", "SAAS", "API_SERVICE", "AGENT", "MARKETPLACE", "DATA_TOOL", "INFRASTRUCTURE", "OTHER"]
+MODEL_TYPE_VALUES = [
+    "B2B_SUBSCRIPTION",
+    "B2C_SUBSCRIPTION",
+    "USAGE_BASED",
+    "COMMISSION",
+    "ONE_TIME",
+    "OUTSOURCING",
+    "ADS",
+    "MARKETPLACE",
+    "HYBRID",
+    "UNKNOWN",
+]
+PRICING_STRATEGY_VALUES = ["FREEMIUM", "FREE_TRIAL", "ENTERPRISE_ONLY", "SELF_SERVE"]
+
+STAGE_LABELS = {
+    "IDEA": "构思阶段",
+    "BUILDING": "开发中",
+    "MVP": "MVP",
+    "VALIDATION": "验证阶段",
+    "EARLY_REVENUE": "早期收入",
+    "SCALING": "规模增长",
+    "MATURE": "成熟阶段",
+}
+FORM_TYPE_LABELS = {
+    "AI_NATIVE_APP": "AI 原生应用",
+    "SAAS": "SaaS",
+    "API_SERVICE": "API 服务",
+    "AGENT": "智能体",
+    "MARKETPLACE": "交易市场",
+    "DATA_TOOL": "数据工具",
+    "INFRASTRUCTURE": "基础设施",
+    "OTHER": "其他",
+}
+MODEL_TYPE_LABELS = {
+    "B2B_SUBSCRIPTION": "B2B 订阅",
+    "B2C_SUBSCRIPTION": "B2C 订阅",
+    "USAGE_BASED": "按量计费",
+    "COMMISSION": "交易抽佣",
+    "ONE_TIME": "一次性付费",
+    "OUTSOURCING": "外包/服务",
+    "ADS": "广告变现",
+    "MARKETPLACE": "平台撮合",
+    "HYBRID": "混合模式",
+    "UNKNOWN": "未知模式",
 }
 
 
 def get_now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def stage_label(stage: Any) -> str:
+    key = str(stage or "").strip().upper()
+    return STAGE_LABELS.get(key, STAGE_LABELS["BUILDING"])
+
+
+def form_type_label(form_type: Any) -> str:
+    key = str(form_type or "").strip().upper()
+    return FORM_TYPE_LABELS.get(key, FORM_TYPE_LABELS["OTHER"])
+
+
+def model_type_label(model_type: Any) -> str:
+    key = str(model_type or "").strip().upper()
+    return MODEL_TYPE_LABELS.get(key, MODEL_TYPE_LABELS["UNKNOWN"])
 
 
 def sanitize_version_event(value: Any, allow_fallback: bool = True) -> str:
@@ -107,22 +162,100 @@ def sanitize_version_date(value: Any) -> str:
 
 
 def normalize_stage_value(value: Any) -> str:
-    raw = sanitize_text_strict(value, allow_empty=True, max_len=24)
+    raw = sanitize_text_strict(value, allow_empty=True, max_len=36)
     if not raw:
-        return STAGE_NORMALIZED["早期"]
+        return "BUILDING"
+    upper = raw.upper().strip()
+    if upper in STAGE_VALUES:
+        return upper
     lowered = raw.lower()
-    if "上线" in raw or "launch" in lowered or "production" in lowered or "ga" == lowered:
-        return STAGE_NORMALIZED["已上线"]
-    if "mvp" in lowered:
-        return STAGE_NORMALIZED["mvp"]
-    if "公测" in raw or "public beta" in lowered:
-        return STAGE_NORMALIZED["公测"]
-    if "内测" in raw or "beta" in lowered:
-        return STAGE_NORMALIZED["内测"]
-    if "融资" in raw or "seed" in lowered or "pre-a" in lowered or "pre a" in lowered:
-        return STAGE_NORMALIZED["融资中"]
-    cleaned = clean_text(raw, 12, aggressive=True)
-    return cleaned or STAGE_NORMALIZED["早期"]
+    if any(x in lowered for x in ["idea", "想法", "构思"]):
+        return "IDEA"
+    if any(x in lowered for x in ["mvp", "最小可行"]):
+        return "MVP"
+    if any(x in lowered for x in ["验证", "内测", "公测", "beta", "试点", "pilot", "poc"]):
+        return "VALIDATION"
+    if any(x in lowered for x in ["融资", "seed", "pre-a", "pre a", "募资"]):
+        return "VALIDATION"
+    if any(x in lowered for x in ["收入", "营收", "mrr", "gmv", "付费", "变现"]):
+        return "EARLY_REVENUE"
+    if any(x in lowered for x in ["scaling", "scale", "增长", "扩张"]):
+        return "SCALING"
+    if any(x in lowered for x in ["mature", "成熟", "稳定运营", "龙头"]):
+        return "MATURE"
+    if any(x in lowered for x in ["上线", "launch", "production", "ga"]):
+        return "EARLY_REVENUE"
+    if any(x in lowered for x in ["开发", "搭建", "building", "研发"]):
+        return "BUILDING"
+    return "BUILDING"
+
+
+def normalize_form_type(value: Any, context: str = "") -> str:
+    raw = sanitize_text_strict(value, allow_empty=True, max_len=36)
+    upper = raw.upper().strip()
+    if upper in FORM_TYPE_VALUES:
+        return upper
+    probe = f"{raw} {context}".lower()
+    if any(x in probe for x in ["agent", "智能体", "助手", "copilot"]):
+        return "AGENT"
+    if any(x in probe for x in ["api", "sdk", "接口", "openapi"]):
+        return "API_SERVICE"
+    if any(x in probe for x in ["marketplace", "交易市场", "撮合", "market"]):
+        return "MARKETPLACE"
+    if any(x in probe for x in ["数据", "data", "bi", "分析", "dashboard"]):
+        return "DATA_TOOL"
+    if any(x in probe for x in ["infra", "基础设施", "中间件", "cloud native", "platform"]):
+        return "INFRASTRUCTURE"
+    if any(x in probe for x in ["saas"]):
+        return "SAAS"
+    if any(x in probe for x in ["ai", "llm", "生成式"]):
+        return "AI_NATIVE_APP"
+    return "OTHER"
+
+
+def normalize_model_type(value: Any, model_desc: str = "") -> str:
+    raw = sanitize_text_strict(value, allow_empty=True, max_len=36)
+    upper = raw.upper().strip()
+    if upper in MODEL_TYPE_VALUES:
+        return upper
+    probe = f"{raw} {model_desc}".lower()
+    if "hybrid" in probe or "混合" in probe or "+" in model_desc:
+        return "HYBRID"
+    if any(x in probe for x in ["b2b", "企业订阅", "企业版订阅"]):
+        return "B2B_SUBSCRIPTION"
+    if any(x in probe for x in ["b2c", "个人订阅", "会员"]):
+        return "B2C_SUBSCRIPTION"
+    if any(x in probe for x in ["按量", "usage", "token", "调用量"]):
+        return "USAGE_BASED"
+    if any(x in probe for x in ["抽佣", "佣金", "commission"]):
+        return "COMMISSION"
+    if any(x in probe for x in ["买断", "一次性", "one-time", "one time"]):
+        return "ONE_TIME"
+    if any(x in probe for x in ["外包", "定制", "服务费", "outsourcing", "consulting"]):
+        return "OUTSOURCING"
+    if any(x in probe for x in ["广告", "ads", "ad "]):
+        return "ADS"
+    if any(x in probe for x in ["marketplace", "平台撮合", "交易平台"]):
+        return "MARKETPLACE"
+    if any(x in probe for x in ["订阅", "subscription"]):
+        return "B2B_SUBSCRIPTION"
+    return "UNKNOWN"
+
+
+def normalize_pricing_strategy(value: Any, model_desc: str = "") -> str:
+    raw = sanitize_text_strict(value, allow_empty=True, max_len=24).upper().strip()
+    if raw in PRICING_STRATEGY_VALUES:
+        return raw
+    probe = f"{value} {model_desc}".lower()
+    if any(x in probe for x in ["freemium", "免费增值"]):
+        return "FREEMIUM"
+    if any(x in probe for x in ["free trial", "试用", "试用期"]):
+        return "FREE_TRIAL"
+    if any(x in probe for x in ["enterprise", "企业版", "仅企业"]):
+        return "ENTERPRISE_ONLY"
+    if any(x in probe for x in ["self-serve", "自助", "在线开通"]):
+        return "SELF_SERVE"
+    return ""
 
 
 def sanitize_latest_update(value: Any, fallback: str = "") -> str:
@@ -235,8 +368,24 @@ def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
     clean["title"] = resolved if validate_title_candidate(resolved) else TITLE_DEFAULT
     clean["tech_stack"] = clean_list(data.get("tech_stack", []), max_items=4)
     clean["users"] = clean_text(data.get("users", "待补充"), max_len=44) or "待补充"
-    clean["model"] = clean_text(data.get("model", "待补充"), max_len=34) or "待补充"
-    clean["stage"] = normalize_stage_value(data.get("stage", STAGE_NORMALIZED["早期"]))
+    model_desc = clean_text(data.get("model_desc", data.get("model", "待补充")), max_len=50) or "待补充"
+    clean["model"] = model_desc
+    clean["model_desc"] = model_desc
+    stage_source = data.get("stage", data.get("status_tag", ""))
+    clean["stage"] = normalize_stage_value(stage_source)
+    context_for_form = " ".join(
+        [
+            clean["title"],
+            model_desc,
+            clean.get("users", ""),
+            " ".join(clean.get("tech_stack", [])),
+            clean_text(data.get("summary", ""), max_len=80),
+            clean_text(data.get("shape", ""), max_len=40),
+        ]
+    )
+    clean["form_type"] = normalize_form_type(data.get("form_type", data.get("shape", "")), context=context_for_form)
+    clean["model_type"] = normalize_model_type(data.get("model_type", ""), model_desc=model_desc)
+    clean["pricing_strategy"] = normalize_pricing_strategy(data.get("pricing_strategy", ""), model_desc=model_desc)
     clean["version_footprint"] = sanitize_version_event(data.get("version_footprint", "初始版本"), allow_fallback=True)
     clean["summary"] = sanitize_text_strict(data.get("summary", "暂无亮点摘要"), allow_empty=False, max_len=78)
     clean["latest_update"] = sanitize_latest_update(
@@ -255,25 +404,26 @@ def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def infer_status_tag(stage: str) -> str:
     normalized = normalize_stage_value(stage)
-    s = normalized.lower()
-    if "融资" in normalized or "seed" in s or "pre-a" in s or "pre a" in s:
-        return "融资中"
-    if normalized == STAGE_NORMALIZED["已上线"]:
-        return "已上线 / 运营中"
-    if normalized == STAGE_NORMALIZED["mvp"]:
+    if normalized == "MVP":
         return "MVP 已上线"
-    if normalized == STAGE_NORMALIZED["公测"]:
-        return "公测中"
-    if normalized == STAGE_NORMALIZED["内测"]:
-        return "内测中"
-    return "早期阶段"
+    if normalized == "VALIDATION":
+        return "验证中"
+    if normalized == "EARLY_REVENUE":
+        return "已上线 / 早期收入"
+    if normalized == "SCALING":
+        return "规模增长"
+    if normalized == "MATURE":
+        return "成熟阶段"
+    if normalized == "IDEA":
+        return "构思阶段"
+    return "开发中"
 
 
 def infer_metrics(schema: Dict[str, Any]) -> Dict[str, str]:
-    m = schema.get("model", "")
-    stg = schema.get("stage", "")
+    m = schema.get("model_desc", schema.get("model", ""))
+    stg = normalize_stage_value(schema.get("stage", ""))
     sig = "订阅收入验证中" if ("订阅" in m or "付费" in m) else "产品价值验证中"
-    prog = "稳定迭代" if ("上线" in stg or "运营" in stg) else ("小范围验证" if "内测" in stg else "方向打磨")
+    prog = "规模化推进" if stg in ("SCALING", "MATURE") else ("收入验证" if stg == "EARLY_REVENUE" else ("小范围验证" if stg == "VALIDATION" else "方向打磨"))
     team_hint = normalize_team_text(schema.get("team_text", schema.get("team_size", "")))
     progress_hint = normalize_stage_metric_text(schema.get("stage_metric", schema.get("stage_progress", "")))
     return {
@@ -310,6 +460,9 @@ def to_ui_project(schema: Dict[str, Any], generated: bool) -> Dict[str, Any]:
         ),
         "metrics": infer_metrics(schema),
         "generated": generated,
+        "stage_label": stage_label(schema.get("stage", "")),
+        "form_type_label": form_type_label(schema.get("form_type", "")),
+        "model_type_label": model_type_label(schema.get("model_type", "")),
         **schema,
     }
 
@@ -319,29 +472,19 @@ def get_export_payload(project: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_status_theme(status: str) -> str:
-    if "Seed" in status or "种子" in status:
-        return "purple"
-    if "Pre-A" in status or "Pre A" in status:
-        return "amber"
     if "融资中" in status:
         return "amber"
-    if "投后" in status or "稳定增长" in status:
+    if "规模增长" in status or "成熟阶段" in status:
         return "green"
-    if "已上线" in status or "MVP" in status:
+    if "已上线" in status or "MVP" in status or "验证中" in status:
         return "blue"
+    if "构思阶段" in status:
+        return "purple"
     return "slate"
 
 
 def infer_shape(schema: Dict[str, Any]) -> str:
-    tech_text = " ".join(schema.get("tech_stack", []))
-    model = schema.get("model", "")
-    if "Rust" in tech_text or "硬件" in model:
-        return "嵌入式硬件模块"
-    if "AI" in schema.get("title", "") or "AI" in tech_text:
-        return "AI 原生应用"
-    if "订阅" in model or "SaaS" in model:
-        return "Cloud Native SaaS"
-    return "结构化项目平台"
+    return form_type_label(schema.get("form_type", "OTHER"))
 
 
 def build_versions_from_schema(schema: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -381,7 +524,14 @@ def normalize_project(project: Dict[str, Any]) -> Dict[str, Any]:
     ui["updated_at"] = clean_text(project.get("updated_at", ui["updated_at"]), 24)
     ui["status_tag"] = clean_text(project.get("status_tag", ui["status_tag"]), 28)
     ui["status_theme"] = clean_text(project.get("status_theme", get_status_theme(ui["status_tag"])), 16)
-    ui["shape"] = clean_text(project.get("shape", infer_shape(schema)), 28)
+    ui["form_type"] = normalize_form_type(project.get("form_type", schema.get("form_type", "")), context=" ".join([schema.get("title", ""), schema.get("summary", ""), schema.get("model_desc", "")]))
+    ui["shape"] = clean_text(project.get("shape", infer_shape({"form_type": ui["form_type"]})), 28)
+    ui["form_type_label"] = form_type_label(ui["form_type"])
+    ui["model_type"] = normalize_model_type(project.get("model_type", schema.get("model_type", "")), model_desc=schema.get("model_desc", schema.get("model", "")))
+    ui["model_type_label"] = model_type_label(ui["model_type"])
+    ui["pricing_strategy"] = normalize_pricing_strategy(project.get("pricing_strategy", schema.get("pricing_strategy", "")), model_desc=schema.get("model_desc", ""))
+    ui["model_desc"] = clean_text(project.get("model_desc", schema.get("model_desc", schema.get("model", ""))), 50) or "待补充"
+    ui["model"] = ui["model_desc"]
     ui["team_text"] = clean_text(project.get("team_text", ui["metrics"]["team_size"]), 28)
     ui["stage_metric"] = clean_text(project.get("stage_metric", ui["metrics"]["progress"]), 44)
     ui["share_slug"] = clean_text(project.get("share_slug", f"onefile-{ui['id']}"), 40)
@@ -413,6 +563,7 @@ def normalize_project(project: Dict[str, Any]) -> Dict[str, Any]:
         fallback=latest_event,
     )
     ui["stage"] = normalize_stage_value(ui.get("stage", ""))
+    ui["stage_label"] = stage_label(ui["stage"])
     ui["status_tag"] = infer_status_tag(ui["stage"])
     ui["status_theme"] = get_status_theme(ui["status_tag"])
     return ui
@@ -632,25 +783,22 @@ def parse_update_signals(update_text: str, project: Dict[str, Any]) -> Dict[str,
         signals["hits"].append(signals["gmv_signal"])
 
     stage_keywords = [
-        (["产品已上线", "正式上线", "已上线", "上线了"], "产品已上线"),
-        (["public beta", "公开测试", "公测"], "公测阶段"),
-        (["internal beta", "内部测试", "内测"], "内测阶段"),
-        (["公测"], "公测阶段"),
-        (["内测"], "内测阶段"),
-        (["mvp"], "MVP 已上线"),
+        (["产品已上线", "正式上线", "已上线", "上线了"], "EARLY_REVENUE"),
+        (["public beta", "公开测试", "公测"], "VALIDATION"),
+        (["internal beta", "内部测试", "内测"], "VALIDATION"),
+        (["mvp"], "MVP"),
+        (["增长", "规模化"], "SCALING"),
+        (["成熟", "稳定运营"], "MATURE"),
     ]
     for keywords, stage in stage_keywords:
         if any(keyword in lowered for keyword in keywords):
             signals["stage_override"] = stage
-            if stage == "产品已上线":
-                signals["hits"].append("产品已上线")
-            else:
-                signals["hits"].append(stage)
+            signals["hits"].append(stage)
             break
 
     fundraising_keywords = [
-        (["seed", "种子"], "融资中 (Seed)"),
-        (["pre-a", "pre a", "prea"], "融资中 (Pre-A)"),
+        (["seed", "种子"], "融资中"),
+        (["pre-a", "pre a", "prea"], "融资中"),
         (["融资", "募资", "fundraising", "raising"], "融资中"),
     ]
     for keywords, tag in fundraising_keywords:
@@ -729,6 +877,24 @@ def apply_schema_to_project(
         allow_empty=False,
         max_len=78,
     )
+    schema_stage = normalize_stage_value(schema.get("stage", next_project.get("stage", "BUILDING")))
+    next_project["stage"] = schema_stage
+    schema_model_desc = clean_text(schema.get("model_desc", schema.get("model", next_project.get("model_desc", next_project.get("model", "")))), 50)
+    if schema_model_desc:
+        next_project["model_desc"] = schema_model_desc
+        next_project["model"] = schema_model_desc
+    next_project["form_type"] = normalize_form_type(
+        schema.get("form_type", next_project.get("form_type", "")),
+        context=" ".join([next_project.get("title", ""), next_project.get("summary", ""), next_project.get("model_desc", "")]),
+    )
+    next_project["model_type"] = normalize_model_type(
+        schema.get("model_type", next_project.get("model_type", "")),
+        model_desc=next_project.get("model_desc", next_project.get("model", "")),
+    )
+    next_project["pricing_strategy"] = normalize_pricing_strategy(
+        schema.get("pricing_strategy", next_project.get("pricing_strategy", "")),
+        model_desc=next_project.get("model_desc", ""),
+    )
 
     if signals:
         next_project = apply_rule_overrides(next_project, signals)
@@ -789,12 +955,21 @@ def enrich_generated_project(schema: Dict[str, Any]) -> Dict[str, Any]:
     return project
 
 
-def project_matches(project: Dict[str, Any], tech_filter: str, stage_filter: str, model_filter: str, keyword: str) -> bool:
+def project_matches(
+    project: Dict[str, Any],
+    tech_filter: str,
+    stage_filter: str,
+    form_filter: str,
+    model_filter: str,
+    keyword: str,
+) -> bool:
     if tech_filter != "全部技术" and tech_filter not in project.get("tech_stack", []):
         return False
-    if stage_filter != "所有阶段" and stage_filter != project.get("status_tag", ""):
+    if stage_filter != "所有阶段" and stage_filter != project.get("stage", ""):
         return False
-    if model_filter != "所有模式" and model_filter not in project.get("model", ""):
+    if form_filter != "所有形态" and form_filter != project.get("form_type", ""):
+        return False
+    if model_filter != "所有模式" and model_filter != project.get("model_type", ""):
         return False
 
     query = clean_text(keyword, 40).lower()
@@ -805,10 +980,13 @@ def project_matches(project: Dict[str, Any], tech_filter: str, stage_filter: str
             project.get("title", ""),
             " ".join(project.get("tech_stack", [])),
             project.get("users", ""),
-            project.get("model", ""),
+            project.get("model_desc", project.get("model", "")),
             project.get("summary", ""),
             project.get("latest_update", ""),
             project.get("shape", ""),
+            project.get("stage_label", ""),
+            project.get("form_type_label", ""),
+            project.get("model_type_label", ""),
         ]
     ).lower()
     return query in haystack

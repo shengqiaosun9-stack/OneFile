@@ -3,11 +3,11 @@ import streamlit as st
 from project_model import get_now_str, project_matches
 from state_manager import get_project_by_id, init_state
 from ui_components import (
-    render_archive_panel,
     render_cards_grid,
     render_creator_panel,
     render_filters,
     render_nav,
+    render_project_detail_page,
     render_share_page,
     render_styles,
     render_update_panel,
@@ -19,13 +19,19 @@ st.set_page_config(page_title="OneFile · 一人档", page_icon="🧬", layout="
 # === App Orchestration ===
 init_state()
 
-share_project_id = st.query_params.get("project", "")
-if share_project_id:
-    shared_project = get_project_by_id(str(share_project_id))
-    if shared_project:
+project_id = st.query_params.get("project", "")
+page_view = str(st.query_params.get("view", "share" if project_id else "")).strip().lower()
+if project_id:
+    target_project = get_project_by_id(str(project_id))
+    if target_project:
         render_styles()
-        render_share_page(shared_project)
+        if page_view == "detail":
+            render_nav(st.session_state.active_tab)
+            render_project_detail_page(target_project)
+        else:
+            render_share_page(target_project)
         st.stop()
+    st.query_params.clear()
 
 render_styles()
 render_nav(st.session_state.active_tab)
@@ -74,14 +80,7 @@ else:
     filtered_projects = [
         project
         for project in st.session_state.projects
-        if project_matches(project, filters["tech"], filters["stage"], filters["model"], filters["keyword"])
+        if project_matches(project, filters["tech"], filters["stage"], filters["form"], filters["model"], filters["keyword"])
     ]
 
     render_cards_grid(filtered_projects, st.session_state.last_generated_id)
-
-    selected_project = next(
-        (project for project in st.session_state.projects if project.get("id") == st.session_state.selected_project_id),
-        None,
-    )
-    if selected_project:
-        render_archive_panel(selected_project)
