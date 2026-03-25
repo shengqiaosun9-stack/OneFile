@@ -4,13 +4,16 @@ from project_model import get_now_str, project_matches
 from state_manager import get_project_by_id, init_state
 from ui_components import (
     render_cards_grid,
-    render_edit_page,
     render_filters,
     render_nav,
     render_project_detail_page,
     render_share_page,
     render_styles,
 )
+try:
+    from ui_components import render_edit_page
+except ImportError:
+    render_edit_page = None
 
 st.set_page_config(page_title="OneFile · 一人档", page_icon="🧬", layout="wide")
 
@@ -25,7 +28,12 @@ page_mode = str(st.query_params.get("mode", "")).strip().lower()
 if page_view == "edit":
     render_styles()
     render_nav(st.session_state.active_tab)
-    if page_mode == "create":
+    if render_edit_page is None:
+        st.warning("当前部署版本缺少统一编辑页，请返回项目库后重试。")
+        if st.button("返回项目库", type="primary"):
+            st.query_params.clear()
+            st.rerun()
+    elif page_mode == "create":
         render_edit_page(None, mode="create")
     else:
         target_project = get_project_by_id(str(project_id)) if project_id else None

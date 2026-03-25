@@ -1,7 +1,7 @@
 import json
 import os
 from html import escape
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -796,7 +796,7 @@ def render_project_detail_page(project: Dict[str, Any]) -> None:
     render_archive_panel(project)
 
 
-def render_edit_page(project: Dict[str, Any] | None, mode: str = "update") -> None:
+def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") -> None:
     is_create = mode == "create" or not project
     target_project = prepare_project_for_render(project) if project else {}
     project_id = clean_text(target_project.get("id", ""), 24, aggressive=True)
