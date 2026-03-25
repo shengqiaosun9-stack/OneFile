@@ -481,6 +481,8 @@ def render_timeline_html(project: Dict[str, Any]) -> str:
         head_class = "timeline-headline" if is_current else "timeline-headline faded"
         date_class = "timeline-date" if is_current else "timeline-date faded"
         version_text = str(version.get("event", "") or "").strip()
+        if "<" in version_text or ">" in version_text:
+            continue
         safe_desc = ""
         desc = f"<p class='timeline-desc'>{escape(safe_desc)}</p>" if safe_desc else ""
         safe_title = clean_text(version_text, 42, aggressive=True)

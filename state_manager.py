@@ -35,6 +35,8 @@ def _contains_legacy_markup_payload(project: Dict[str, Any]) -> bool:
             candidates.append(item.get("update_text", ""))
             candidates.append(item.get("version_text", ""))
     joined = " ".join([str(x or "") for x in candidates])
+    if "<" in joined or ">" in joined:
+        return True
     return has_markup_contamination(joined) or is_timeline_leak_text(joined)
 
 

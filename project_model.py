@@ -74,11 +74,15 @@ def get_now_str() -> str:
 
 def sanitize_version_event(value: Any, allow_fallback: bool = True) -> str:
     raw = unescape(str(value or ""))
+    if "<" in raw or ">" in raw:
+        return VERSION_EVENT_FALLBACK if allow_fallback else ""
     if has_markup_contamination(raw) or is_timeline_leak_text(raw):
         cleaned = sanitize_text_strict(raw, allow_empty=True, max_len=120)
     else:
         cleaned = sanitize_text_strict(raw, allow_empty=True, max_len=120)
     if has_markup_contamination(cleaned) or is_timeline_leak_text(cleaned):
+        cleaned = ""
+    if "<" in cleaned or ">" in cleaned:
         cleaned = ""
     cleaned = clean_text(cleaned, 120, aggressive=True)
     if not cleaned and allow_fallback:
