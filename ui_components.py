@@ -24,13 +24,10 @@ from project_model import (
     validate_title_candidate,
 )
 from state_manager import (
-    commit_update_preview,
     delete_project_by_id,
-    generate_update_preview,
     insert_project_top,
     save_project_direct_edit,
     submit_overlay_update,
-    undo_last_update,
 )
 from text_cleaning import clean_text, sanitize_text_strict
 
@@ -1084,6 +1081,10 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
         """,
         unsafe_allow_html=True,
     )
+    st.markdown("#### 关键状态")
+    latest_update = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=280) or "暂无最新进展"
+    st.info(latest_update)
+
     st.markdown("#### Problem & Solution")
     st.markdown(f"**问题定义**\n\n{escape(sanitize_text_strict(project.get('problem_statement', ''), allow_empty=True, max_len=220) or '待补充')}")
     st.markdown(f"**解决方案**\n\n{escape(sanitize_text_strict(project.get('solution_approach', ''), allow_empty=True, max_len=220) or '待补充')}")
@@ -1093,23 +1094,6 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
     use_cases_text = sanitize_text_strict(project.get("use_cases", ""), allow_empty=True, max_len=180) or "待补充"
     st.markdown(f"**目标用户**\n\n{escape(users_text)}")
     st.markdown(f"**典型场景**\n\n{escape(use_cases_text)}")
-
-    st.markdown("#### Current Status")
-    latest_update = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=220) or "暂无最新进展"
-    st.info(latest_update)
-
-    st.markdown("#### Structured Metadata")
-    meta_cols = st.columns([0.33, 0.33, 0.34])
-    with meta_cols[0]:
-        st.markdown(f"**项目名称**\n\n{escape(project.get('title', ''))}")
-        st.markdown(f"**当前阶段**\n\n{escape(project.get('stage_label', stage_label(project.get('stage', ''))))}")
-    with meta_cols[1]:
-        st.markdown(f"**产品形态**\n\n{escape(project.get('form_type_label', ''))}")
-        st.markdown(f"**商业模式类型**\n\n{escape(project.get('model_type_label', model_type_label(project.get('model_type', ''))))}")
-    with meta_cols[2]:
-        model_desc = sanitize_text_strict(project.get("model_desc", project.get("model", "")), allow_empty=True, max_len=120)
-        st.markdown(f"**商业模式描述**\n\n{escape(model_desc or '待补充')}")
-        st.markdown(f"**更新时间**\n\n{escape(project.get('updated_at', '-'))}")
 
     if export_enabled():
         payload = get_export_payload(project)
@@ -1181,11 +1165,17 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
 
     defaults = {
         f"direct_title_{state_suffix}": sanitize_text_strict(target_project.get("title", ""), allow_empty=True, max_len=42),
+        f"direct_summary_{state_suffix}": sanitize_text_strict(target_project.get("summary", ""), allow_empty=True, max_len=140),
         f"direct_problem_{state_suffix}": sanitize_text_strict(target_project.get("problem_statement", ""), allow_empty=True, max_len=220),
         f"direct_solution_{state_suffix}": sanitize_text_strict(target_project.get("solution_approach", ""), allow_empty=True, max_len=220),
         f"direct_users_{state_suffix}": sanitize_text_strict(target_project.get("users", ""), allow_empty=True, max_len=120),
         f"direct_use_cases_{state_suffix}": sanitize_text_strict(target_project.get("use_cases", ""), allow_empty=True, max_len=220),
         f"direct_latest_{state_suffix}": sanitize_text_strict(target_project.get("latest_update", ""), allow_empty=True, max_len=280),
+        f"direct_model_desc_{state_suffix}": sanitize_text_strict(
+            target_project.get("model_desc", target_project.get("model", "")),
+            allow_empty=True,
+            max_len=120,
+        ),
         f"direct_stage_{state_suffix}": target_project.get("stage", "BUILDING"),
         f"direct_model_type_{state_suffix}": target_project.get("model_type", "UNKNOWN"),
         f"direct_form_type_{state_suffix}": target_project.get("form_type", "OTHER"),
@@ -1214,6 +1204,7 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
         cancel_clicked = st.button("取消", use_container_width=True, key=f"cancel_direct_{state_suffix}")
 
     st.markdown("#### Problem & Solution")
+    st.text_area("一句话定位（Summary）", key=f"direct_summary_{state_suffix}", height=120, placeholder="用一句话说明项目是什么。")
     st.text_area("问题定义", key=f"direct_problem_{state_suffix}", height=170, placeholder="这个项目要解决什么问题？")
     st.text_area("解决方案", key=f"direct_solution_{state_suffix}", height=170, placeholder="你如何解决这个问题？")
 
@@ -1247,6 +1238,7 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
             key=f"direct_form_type_{state_suffix}",
             format_func=lambda x: FORM_TYPE_LABELS.get(x, x),
         )
+    st.text_area("商业模式描述", key=f"direct_model_desc_{state_suffix}", height=110, placeholder="补充对外可读的商业模式描述。")
 
     if cancel_clicked:
         st.query_params["project"] = project_id
@@ -1260,9 +1252,11 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
                 "title": st.session_state.get(f"direct_title_{state_suffix}", ""),
                 "problem_statement": st.session_state.get(f"direct_problem_{state_suffix}", ""),
                 "solution_approach": st.session_state.get(f"direct_solution_{state_suffix}", ""),
+                "summary": st.session_state.get(f"direct_summary_{state_suffix}", ""),
                 "users": st.session_state.get(f"direct_users_{state_suffix}", ""),
                 "use_cases": st.session_state.get(f"direct_use_cases_{state_suffix}", ""),
                 "latest_update": st.session_state.get(f"direct_latest_{state_suffix}", ""),
+                "model_desc": st.session_state.get(f"direct_model_desc_{state_suffix}", ""),
                 "stage": st.session_state.get(f"direct_stage_{state_suffix}", "BUILDING"),
                 "model_type": st.session_state.get(f"direct_model_type_{state_suffix}", "UNKNOWN"),
                 "form_type": st.session_state.get(f"direct_form_type_{state_suffix}", "OTHER"),
@@ -1274,192 +1268,6 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
             st.rerun()
         except Exception as exc:
             st.error(f"保存失败：{clean_text(exc, 140)}")
-
-
-def render_creator_panel() -> None:
-    st.markdown(
-        """
-        <div class="creator-panel">
-          <div class="creator-kicker">AI Structuring Engine</div>
-          <div style="font-size:26px;font-weight:700;color:#0f172a;margin-bottom:6px;">30 秒创建你的 OneFile 项目档案</div>
-          <div style="color:#64748B;font-size:14px;">输入混乱描述、BP 摘要或口述信息，系统会自动提炼为可展示、可分享、可归档的结构化项目资产。</div>
-          <div style="margin-top:10px;color:#2D7AFF;font-size:13px;font-weight:600;">你的项目档案可用于：融资展示 / 园区申请 / 合作对接 / 持续记录</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    with st.form("creator_form", clear_on_submit=False):
-        manual_title = st.text_input(
-            "项目名称（必填）",
-            placeholder="例如：星火计划",
-        )
-        input_cols = st.columns([0.72, 0.28])
-        with input_cols[0]:
-            raw_input = st.text_area(
-                "输入项目描述",
-                height=180,
-                placeholder="例：我们在做一个面向园区创业者的 AI 申报助手，输入项目 PDF 和口述内容后，30 秒内输出标准化项目档案、版本足迹和投递摘要。",
-            )
-        with input_cols[1]:
-            uploaded_file = st.file_uploader(
-                "上传文件（可选）",
-                type=["pdf", "txt", "md"],
-                accept_multiple_files=False,
-                help="支持 PDF / TXT / MD。系统会先提取纯文本，再与输入描述一起结构化。",
-            )
-        action_cols = st.columns([0.22, 0.16, 0.62])
-        with action_cols[0]:
-            submitted = st.form_submit_button("创建项目档案", type="primary", use_container_width=True)
-        with action_cols[1]:
-            cancel = st.form_submit_button("收起", use_container_width=True)
-        if cancel:
-            st.session_state.show_creator = False
-        if submitted:
-            manual_title_clean = sanitize_text_strict(manual_title, allow_empty=True, max_len=42)
-            if not manual_title_clean:
-                st.warning("请先填写项目名称，再创建项目档案。")
-                return
-            if not validate_title_candidate(manual_title_clean):
-                st.warning("项目名称格式无效，请使用简短清晰的名称（不含句子或模板代码）。")
-                return
-
-            try:
-                file_text = extract_text_from_uploaded_file(uploaded_file) if uploaded_file else ""
-            except Exception as exc:
-                st.error(f"文件解析失败：{clean_text(exc, 140)}")
-                file_text = ""
-
-            composed_input_parts = []
-            if raw_input.strip():
-                composed_input_parts.append(raw_input.strip())
-            if file_text.strip():
-                composed_input_parts.append(file_text.strip())
-            composed_input = "\n\n".join(composed_input_parts).strip()
-
-            if not composed_input:
-                st.warning("请先输入项目描述或上传可解析文件。")
-            else:
-                with st.spinner("混元正在进行结构化抽取..."):
-                    try:
-                        schema = structure_project(composed_input, user_title=manual_title_clean)
-                        schema = sanitize_schema({**schema, "title": manual_title_clean})
-                        project = enrich_generated_project(schema)
-                        insert_project_top(project)
-                        st.session_state.last_generated_id = project["id"]
-                        st.session_state.selected_project_id = project["id"]
-                        st.session_state.show_creator = False
-                        st.success("项目档案已创建并插入项目库顶部。")
-                        if st.session_state.get("used_local_structuring"):
-                            api_err = clean_text(st.session_state.get("last_api_error", ""), 120)
-                            st.info(f"已使用本地结构化兜底（API 暂不可用）：{api_err}")
-                    except Exception as exc:
-                        st.error(f"生成失败：{clean_text(exc, 140)}")
-
-
-def render_update_panel(project: Dict[str, Any]) -> None:
-    project_id = project["id"]
-    st.session_state.selected_project_id = project_id
-    undo_available = project_id in st.session_state.undo_snapshots
-    update_key = f"update_input_{project_id}"
-    preview = st.session_state.get("update_preview")
-    preview_for_current = isinstance(preview, dict) and preview.get("project_id") == project_id
-
-    st.markdown(
-        f"""
-        <div class="creator-panel">
-          <div class="creator-kicker">Project Update</div>
-          <div style="font-size:24px;font-weight:700;color:#0f172a;margin-bottom:6px;">更新项目进展：{escape(project.get("title", ""))}</div>
-          <div style="color:#64748B;font-size:14px;">这是档案维护流程：进入更新模式 → 生成更新预览 → 确认写入。写入后会新增历史记录，并可能刷新当前阶段与最新进展快照。</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.caption("本次更新会写入历史记录，并刷新“当前状态”中的阶段或最新进展。取消预览不会修改任何已有档案。")
-    update_text = st.text_area(
-        "最新进展",
-        key=update_key,
-        height=130,
-        placeholder="例如：新增3个企业试点客户，完成支付闭环，月收入达到2万元。",
-    )
-    action_cols = st.columns([0.22, 0.18, 0.2, 0.4])
-    with action_cols[0]:
-        if st.button("生成更新预览", type="primary", key=f"preview_{project_id}", use_container_width=True):
-            if not sanitize_text_strict(update_text, allow_empty=True, max_len=240):
-                st.warning("请先输入有效进展内容。")
-            else:
-                with st.spinner("正在生成更新预览..."):
-                    try:
-                        st.session_state.update_preview = generate_update_preview(project_id, update_text)
-                        st.session_state.selected_project_id = project_id
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"预览生成失败：{clean_text(exc, 140)}")
-    with action_cols[1]:
-        if st.button("退出更新模式", key=f"close_update_{project_id}", use_container_width=True):
-            if preview_for_current:
-                st.session_state.update_preview = None
-            st.session_state.update_target_id = None
-            st.rerun()
-    with action_cols[2]:
-        if st.button(
-            "撤销最近一次更新",
-            key=f"undo_update_{project_id}",
-            use_container_width=True,
-            disabled=not undo_available,
-        ):
-            try:
-                undo_last_update(project_id)
-                st.rerun()
-            except Exception as exc:
-                st.error(f"撤销失败：{clean_text(exc, 140)}")
-
-    if preview_for_current:
-        changed_fields = preview.get("changed_fields", [])
-        preview_fields = preview.get("preview_fields", [])
-        signals = preview.get("signals", {})
-        rule_hits = [sanitize_text_strict(hit, allow_empty=True, max_len=40) for hit in signals.get("hits", [])] if isinstance(signals, dict) else []
-        rule_hits = [hit for hit in rule_hits if hit]
-        preview_project = preview.get("preview_project", {})
-        new_version = ""
-        if isinstance(preview_project, dict):
-            versions = preview_project.get("versions", [])
-            if isinstance(versions, list) and versions and isinstance(versions[0], dict):
-                new_version = sanitize_text_strict(versions[0].get("event", ""), allow_empty=True, max_len=120)
-        st.markdown("#### 更新预览（未写入）")
-        st.markdown(
-            f"- 目标项目：`{escape(project.get('title', ''))}`\n"
-            f"- 预览时间：`{escape(clean_text(preview.get('timestamp', ''), 24))}`\n"
-            f"- 将新增版本记录：`{escape(new_version or '（无）')}`"
-        )
-        if rule_hits:
-            st.markdown(f"**规则命中：** {' / '.join([escape(hit) for hit in rule_hits])}")
-        if preview_fields:
-            st.markdown("**关键字段前后对比：**")
-            for item in preview_fields:
-                label = sanitize_text_strict(item.get("label", ""), allow_empty=True, max_len=20)
-                before = sanitize_text_strict(item.get("before", ""), allow_empty=True, max_len=120)
-                after = sanitize_text_strict(item.get("after", ""), allow_empty=True, max_len=120)
-                changed = bool(item.get("changed"))
-                prefix = "变更" if changed else "不变"
-                st.markdown(f"- {escape(label)}（{prefix}）：`{escape(before)}` → `{escape(after)}`")
-        else:
-            st.info("结构化字段无明显变化，但确认后仍会新增一条版本历史。")
-
-        if not changed_fields:
-            st.info("当前更新不会修改核心字段，将只写入一条新的版本记录。")
-
-        confirm_cols = st.columns([0.24, 0.2, 0.56])
-        with confirm_cols[0]:
-            if st.button("确认写入档案", type="primary", key=f"confirm_update_{project_id}", use_container_width=True):
-                try:
-                    commit_update_preview(project_id)
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"写入失败：{clean_text(exc, 140)}")
-        with confirm_cols[1]:
-            if st.button("取消预览", key=f"cancel_preview_{project_id}", use_container_width=True):
-                st.session_state.update_preview = None
-                st.rerun()
 
 
 def render_share_page(project: Dict[str, Any]) -> None:
@@ -1476,10 +1284,10 @@ def render_share_page(project: Dict[str, Any]) -> None:
 
     st.markdown(
         f"""
-        <div style="max-width:920px;margin:0 auto;">
-          <section class="archive-panel" style="padding:28px 30px;">
-            <div style="font-size:36px;font-weight:800;color:#0f172a;line-height:1.15;margin-bottom:12px;">{escape(project.get("title", ""))}</div>
-            <div style="font-size:18px;line-height:1.6;color:#1e293b;font-weight:600;margin-bottom:14px;">{escape(summary)}</div>
+        <div style="max-width:860px;margin:0 auto;">
+          <section style="background:#fff;border:1px solid #E2E8F0;border-radius:16px;padding:30px 32px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+            <div style="font-size:38px;font-weight:800;color:#0f172a;line-height:1.12;margin-bottom:12px;">{escape(project.get("title", ""))}</div>
+            <div style="font-size:19px;line-height:1.6;color:#1e293b;font-weight:600;margin-bottom:14px;">{escape(summary)}</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:{'14px' if latest else '0'};">
               <span class="status-chip status-{project.get('status_theme', 'blue')}">{stage_text}</span>
               <span class="status-chip status-slate">{form_text}</span>
@@ -1488,25 +1296,25 @@ def render_share_page(project: Dict[str, Any]) -> None:
             {"<div style='padding:10px 12px;border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;color:#334155;font-size:14px;'><strong>当前进展：</strong>" + escape(latest) + "</div>" if latest else ""}
           </section>
 
-          <section class="archive-panel" style="padding:22px 24px;margin-top:12px;">
+          <section style="margin-top:14px;background:#fff;border:1px solid #E2E8F0;border-radius:14px;padding:22px 24px;">
             <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Problem</div>
-            <div style="font-size:17px;line-height:1.7;color:#0f172a;font-weight:600;">{escape(problem_text)}</div>
+            <div style="font-size:18px;line-height:1.75;color:#0f172a;font-weight:600;">{escape(problem_text)}</div>
           </section>
 
-          <section class="archive-panel" style="padding:22px 24px;margin-top:12px;">
+          <section style="margin-top:12px;background:#fff;border:1px solid #E2E8F0;border-radius:14px;padding:22px 24px;">
             <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Solution</div>
-            <div style="font-size:17px;line-height:1.7;color:#0f172a;font-weight:600;">{escape(solution_text)}</div>
+            <div style="font-size:18px;line-height:1.75;color:#0f172a;font-weight:600;">{escape(solution_text)}</div>
           </section>
 
-          <section class="archive-panel" style="padding:22px 24px;margin-top:12px;">
-            <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Users & Use Cases</div>
-            <div style="font-size:15px;line-height:1.7;color:#334155;"><strong>目标用户：</strong>{escape(users_text)}</div>
-            <div style="font-size:15px;line-height:1.7;color:#334155;margin-top:8px;"><strong>典型场景：</strong>{escape(use_cases_text)}</div>
+          <section style="margin-top:12px;background:#fff;border:1px solid #E2E8F0;border-radius:14px;padding:22px 24px;">
+            <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Users</div>
+            <div style="font-size:15px;line-height:1.75;color:#334155;"><strong>目标用户：</strong>{escape(users_text)}</div>
+            <div style="font-size:15px;line-height:1.75;color:#334155;margin-top:8px;"><strong>使用场景：</strong>{escape(use_cases_text)}</div>
           </section>
 
-          <section class="archive-panel" style="padding:22px 24px;margin-top:12px;">
+          <section style="margin-top:12px;background:#fff;border:1px solid #E2E8F0;border-radius:14px;padding:22px 24px;">
             <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Current Status</div>
-            <div style="font-size:15px;line-height:1.7;color:#334155;">{escape(latest or "暂无最新进展")}</div>
+            <div style="font-size:15px;line-height:1.75;color:#334155;">{escape(latest or "暂无最新进展")}</div>
           </section>
         </div>
         """,
