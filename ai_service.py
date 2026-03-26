@@ -6,8 +6,6 @@ from html import unescape
 from typing import Any, Dict, List
 
 import streamlit as st
-from openai import OpenAI
-from pypdf import PdfReader
 
 from project_model import (
     get_export_payload,
@@ -32,6 +30,10 @@ def extract_text_from_uploaded_file(uploaded_file: Any) -> str:
 
     if name.endswith(".pdf"):
         try:
+            try:
+                from pypdf import PdfReader  # type: ignore
+            except Exception as exc:
+                raise ValueError(f"PDF 解析依赖不可用：{clean_text(exc, 80)}")
             reader = PdfReader(BytesIO(data))
             pages: List[str] = []
             for page in reader.pages:
@@ -79,7 +81,12 @@ def get_base_url() -> str:
     return str(base_url or "https://api.hunyuan.cloud.tencent.com/v1").strip()
 
 
-def get_client() -> OpenAI:
+def get_client() -> Any:
+    try:
+        from openai import OpenAI  # type: ignore
+    except Exception as exc:
+        raise ValueError(f"OpenAI 兼容 SDK 不可用：{clean_text(exc, 80)}")
+
     api_key = (
         os.getenv("HUNYUAN_API_KEY")
         or os.getenv("OPENAI_API_KEY")
