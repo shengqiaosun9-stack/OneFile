@@ -1166,15 +1166,6 @@ def _truncate_text(value: Any, limit: int) -> str:
     return text[: max(limit - 1, 1)].rstrip() + "…"
 
 
-def _progress_status_label(status: str) -> str:
-    safe = sanitize_text_strict(status, allow_empty=True, max_len=20).lower()
-    if safe == "advancing":
-        return "推进中"
-    if safe == "stalled":
-        return "卡住"
-    return "不确定"
-
-
 def _parse_display_dt(value: Any) -> Optional[datetime]:
     text = sanitize_text_strict(value, allow_empty=True, max_len=24)
     if not text:
@@ -1742,58 +1733,6 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
             st.query_params.clear()
             st.query_params["action"] = "create"
             st.rerun()
-
-
-def render_pending_actions_panel(projects: List[Dict[str, Any]]) -> None:
-    if not projects:
-        return
-    st.markdown(
-        """
-        <div class="archive-panel" style="margin-top: 14px; margin-bottom: 16px; padding: 16px 18px;">
-          <div style="font-size:12px;color:#2D7AFF;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">待推进项目</div>
-          <div style="font-size:14px;color:#475569;margin-top:4px;">以下项目存在未完成动作，建议先推进并记录结果。</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    for idx, project in enumerate(projects):
-        item = prepare_project_for_render(project)
-        next_action = item.get("next_action", {}) if isinstance(item.get("next_action", {}), dict) else {}
-        action_text = _truncate_text(next_action.get("text", ""), 92) or "待生成下一动作"
-        action_status = next_action_status_label(next_action.get("status", "open"))
-        progress_eval = item.get("progress_eval", {}) if isinstance(item.get("progress_eval", {}), dict) else {}
-        progress_status = _progress_status_label(progress_eval.get("status", "uncertain"))
-        try:
-            progress_score = int(progress_eval.get("score", 50))
-        except Exception:
-            progress_score = 50
-        progress_score = max(0, min(progress_score, 100))
-        intervention = item.get("intervention", {}) if isinstance(item.get("intervention", {}), dict) else {}
-        intervention_status = sanitize_text_strict(intervention.get("status", ""), allow_empty=True, max_len=20).lower()
-        intervention_hint = _truncate_text(intervention.get("message", ""), 70) if intervention_status == "active" else ""
-        cols = st.columns([0.62, 0.18, 0.2], gap="small")
-        with cols[0]:
-            st.markdown(
-                f"""
-                <div style="padding:10px 12px;border:1px solid #E2E8F0;border-radius:10px;background:#FFFFFF;">
-                  <div style="font-size:14px;font-weight:700;color:#0f172a;">{escape(item.get("title", ""))}</div>
-                  <div style="font-size:13px;color:#475569;margin-top:4px;"><strong>{escape(action_status)}：</strong>{escape(action_text)}</div>
-                  <div style="font-size:12px;color:#64748B;margin-top:4px;"><strong>推进评估：</strong>{escape(progress_status)} · {progress_score}分</div>
-                  {f'<div style="font-size:12px;color:#9A3412;margin-top:4px;"><strong>介入建议：</strong>{escape(intervention_hint)}</div>' if intervention_hint else ''}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        with cols[1]:
-            if st.button("查看档案", key=f"pending_view_{item.get('id','')}_{idx}", use_container_width=True):
-                st.query_params["project"] = item["id"]
-                st.query_params["view"] = "detail"
-                st.rerun()
-        with cols[2]:
-            if st.button("立即更新", key=f"pending_update_{item.get('id','')}_{idx}", type="primary", use_container_width=True):
-                st.session_state.selected_project_id = item["id"]
-                open_update_overlay(item["id"])
-                st.rerun()
 
 
 def render_filters(projects: List[Dict[str, Any]]) -> Dict[str, str]:
