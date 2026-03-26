@@ -27,10 +27,13 @@ from project_model import (
     validate_title_candidate,
 )
 from state_manager import (
+    append_event_safe,
     delete_project_by_id,
     get_current_user_id,
+    get_recent_project_events,
     get_project_by_id,
     insert_project_top,
+    rebuild_ops_signals_from_events,
     save_project_direct_edit,
     set_project_share_state,
     submit_overlay_update,
@@ -73,6 +76,16 @@ def export_enabled() -> bool:
     if not raw:
         try:
             raw = st.secrets.get("ONEFILE_ENABLE_EXPORT") or st.secrets.get("ONEFILE_SHOW_EXPORT")
+        except Exception:
+            raw = None
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def ops_debug_enabled() -> bool:
+    raw = os.getenv("ONEFILE_DEBUG_EVENTS") or os.getenv("ONEFILE_DEBUG_MODE")
+    if not raw:
+        try:
+            raw = st.secrets.get("ONEFILE_DEBUG_EVENTS") or st.secrets.get("ONEFILE_DEBUG_MODE")
         except Exception:
             raw = None
     return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -1469,6 +1482,26 @@ def render_project_detail_page(project: Dict[str, Any]) -> None:
                 st.rerun()
     render_archive_panel(project)
 
+    if ops_debug_enabled():
+        with st.expander("调试：事件账本（最近12条）", expanded=False):
+            if st.button("重建 ops_signals", key=f"rebuild_ops_{project_id}", use_container_width=False):
+                changed = rebuild_ops_signals_from_events(persist=True)
+                st.success("ops_signals 已重建。" if changed else "ops_signals 无需重建。")
+                st.rerun()
+            recent_events = get_recent_project_events(project_id, limit=12)
+            if not recent_events:
+                st.caption("暂无事件记录。")
+            for item in recent_events:
+                event_type = sanitize_text_strict(item.get("event_type", ""), allow_empty=True, max_len=32) or "-"
+                event_ts = sanitize_text_strict(item.get("ts", ""), allow_empty=True, max_len=24) or "-"
+                source = sanitize_text_strict(item.get("source", ""), allow_empty=True, max_len=24) or "-"
+                payload = item.get("payload", {})
+                payload_text = sanitize_text_strict(json.dumps(payload, ensure_ascii=False), allow_empty=True, max_len=220)
+                st.markdown(
+                    f"- `{event_ts}` · `{event_type}` · `{source}`  \n  {escape(payload_text)}",
+                    unsafe_allow_html=False,
+                )
+
 
 def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") -> None:
     del mode
@@ -1603,6 +1636,12 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
         cta_cols = st.columns([0.3, 0.7])
         with cta_cols[0]:
             if st.button("创建我的项目档案", type="primary", use_container_width=True, key="share_private_create_cta"):
+                append_event_safe(
+                    event_type="share_cta_clicked",
+                    source="share_page_private",
+                    project_id=clean_text(project.get("id", ""), 24, aggressive=True),
+                    payload={"access_granted": False},
+                )
                 st.query_params.clear()
                 st.query_params["action"] = "create"
                 st.rerun()
@@ -1659,6 +1698,12 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
     cta_cols = st.columns([0.3, 0.7])
     with cta_cols[0]:
         if st.button("创建我的项目档案", type="primary", use_container_width=True, key=f"share_create_cta_{project.get('id', '')}"):
+            append_event_safe(
+                event_type="share_cta_clicked",
+                source="share_page_public",
+                project_id=clean_text(project.get("id", ""), 24, aggressive=True),
+                payload={"access_granted": True},
+            )
             st.query_params.clear()
             st.query_params["action"] = "create"
             st.rerun()

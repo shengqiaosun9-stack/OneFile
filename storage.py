@@ -10,6 +10,7 @@ STORE_TEMPLATE: Dict[str, Any] = {
     "schema_version": SCHEMA_VERSION,
     "users": [],
     "projects": [],
+    "events": [],
 }
 
 
@@ -24,16 +25,19 @@ def _normalize_store(raw: Any) -> Dict[str, Any]:
             "schema_version": SCHEMA_VERSION,
             "users": [],
             "projects": [item for item in raw if isinstance(item, dict)],
+            "events": [],
         }
     if not isinstance(raw, dict):
         return dict(STORE_TEMPLATE)
 
     users = raw.get("users", [])
     projects = raw.get("projects", [])
+    events = raw.get("events", [])
     normalized: Dict[str, Any] = {
         "schema_version": int(raw.get("schema_version", SCHEMA_VERSION)),
         "users": [item for item in users if isinstance(item, dict)],
         "projects": [item for item in projects if isinstance(item, dict)],
+        "events": [item for item in events if isinstance(item, dict)],
     }
     return normalized
 
@@ -78,4 +82,14 @@ def load_users() -> List[Dict[str, Any]]:
 def save_users(users: List[Dict[str, Any]]) -> None:
     store = load_store()
     store["users"] = users if isinstance(users, list) else []
+    save_store(store)
+
+
+def load_events() -> List[Dict[str, Any]]:
+    return load_store().get("events", [])
+
+
+def save_events(events: List[Dict[str, Any]]) -> None:
+    store = load_store()
+    store["events"] = events if isinstance(events, list) else []
     save_store(store)

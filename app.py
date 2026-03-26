@@ -2,6 +2,8 @@ import streamlit as st
 
 from project_model import get_now_str, project_matches
 from state_manager import (
+    append_event_safe,
+    refresh_ops_signals_from_events,
     get_current_user_email,
     get_current_user_id,
     get_pending_projects,
@@ -59,6 +61,16 @@ if page_view == "share" and project_id:
         )
         share_state = target_project.get("share", {}) if isinstance(target_project.get("share", {}), dict) else {}
         can_view = bool(share_state.get("is_public", False) or owner_preview)
+        append_event_safe(
+            event_type="share_viewed" if can_view else "share_denied",
+            source="share_page",
+            project_id=str(target_project.get("id", "")),
+            payload={
+                "owner_preview": owner_preview,
+                "is_public": bool(share_state.get("is_public", False)),
+            },
+        )
+        refresh_ops_signals_from_events(project_ids=[str(target_project.get("id", ""))], persist=True)
         render_share_page(target_project, access_granted=can_view, owner_preview=owner_preview)
         st.stop()
     st.query_params.clear()

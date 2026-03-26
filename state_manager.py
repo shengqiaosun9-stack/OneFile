@@ -3,6 +3,7 @@ import hashlib
 import importlib
 import re
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -13,6 +14,7 @@ from ai_service import build_update_input, structure_project
 from project_model import (
     apply_rule_overrides,
     build_update_entry,
+    derive_ops_signals,
     evolve_action_loop,
     get_status_theme,
     get_export_payload,
@@ -31,7 +33,7 @@ from project_model import (
     validate_title_candidate,
 )
 try:
-    from storage import load_projects, load_store, load_users, save_projects, save_store, save_users
+    from storage import load_events, load_projects, load_store, load_users, save_events, save_projects, save_store, save_users
 except Exception:
     root_dir = str(Path(__file__).resolve().parent)
     if root_dir not in sys.path:
@@ -40,6 +42,8 @@ except Exception:
     load_projects = getattr(storage_module, "load_projects")
     load_store = getattr(storage_module, "load_store")
     load_users = getattr(storage_module, "load_users")
+    load_events = getattr(storage_module, "load_events")
+    save_events = getattr(storage_module, "save_events")
     save_projects = getattr(storage_module, "save_projects")
     save_store = getattr(storage_module, "save_store")
     save_users = getattr(storage_module, "save_users")
@@ -75,10 +79,185 @@ def _contains_legacy_markup_payload(project: Dict[str, Any]) -> bool:
 
 
 EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+EVENT_MAX_COUNT = 20000
+EVENT_TYPE_VALUES = {
+    "project_created",
+    "project_updated",
+    "next_action_completed",
+    "intervention_triggered",
+    "intervention_resolved",
+    "share_viewed",
+    "share_denied",
+    "share_cta_clicked",
+}
 
 
 def normalize_email(email: str) -> str:
     return sanitize_text_strict(email or "", allow_empty=True, max_len=120).strip().lower()
+
+
+def _sanitize_event_value(value: Any, depth: int = 0) -> Any:
+    if depth >= 3:
+        return sanitize_text_strict(value, allow_empty=True, max_len=120)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        if isinstance(value, str):
+            return sanitize_text_strict(value, allow_empty=True, max_len=240)
+        if isinstance(value, float):
+            return round(value, 4)
+        return value
+    if isinstance(value, list):
+        return [_sanitize_event_value(item, depth + 1) for item in value[:12]]
+    if isinstance(value, dict):
+        clean_payload: Dict[str, Any] = {}
+        for key, item in list(value.items())[:20]:
+            clean_key = sanitize_text_strict(key, allow_empty=True, max_len=40)
+            if clean_key:
+                clean_payload[clean_key] = _sanitize_event_value(item, depth + 1)
+        return clean_payload
+    return sanitize_text_strict(value, allow_empty=True, max_len=120)
+
+
+def _sanitize_event_type(event_type: str) -> str:
+    safe = sanitize_text_strict(event_type, allow_empty=True, max_len=40).lower()
+    return safe if safe in EVENT_TYPE_VALUES else ""
+
+
+def _sanitize_event_source(source: str) -> str:
+    return sanitize_text_strict(source, allow_empty=True, max_len=40).lower() or "system"
+
+
+def _get_event_ts(ts: str = "") -> str:
+    base = sanitize_text_strict(ts, allow_empty=True, max_len=24)
+    if base:
+        return base
+    return _now_ts()
+
+
+def _load_events_to_session() -> None:
+    if "events" not in st.session_state:
+        st.session_state.events = [item for item in load_events() if isinstance(item, dict)]
+
+
+def persist_events() -> None:
+    _load_events_to_session()
+    save_events(st.session_state.get("events", []))
+
+
+def append_event(
+    event_type: str,
+    source: str,
+    project_id: str = "",
+    payload: Optional[Dict[str, Any]] = None,
+    user_id: str = "",
+    ts: str = "",
+) -> Optional[Dict[str, Any]]:
+    _load_events_to_session()
+    safe_type = _sanitize_event_type(event_type)
+    if not safe_type:
+        return None
+    safe_source = _sanitize_event_source(source)
+    safe_project_id = sanitize_text_strict(project_id, allow_empty=True, max_len=24)
+    safe_user_id = sanitize_text_strict(user_id, allow_empty=True, max_len=40) or get_current_user_id()
+    clean_event_id = sanitize_text_strict(str(uuid.uuid4())[:12], allow_empty=False, max_len=20)
+    if not clean_event_id:
+        return None
+    event = {
+        "id": clean_event_id,
+        "ts": _get_event_ts(ts),
+        "user_id": safe_user_id,
+        "project_id": safe_project_id,
+        "event_type": safe_type,
+        "source": safe_source,
+        "payload": _sanitize_event_value(payload or {}, depth=0),
+    }
+    events = [item for item in st.session_state.get("events", []) if isinstance(item, dict)]
+    events.append(event)
+    if len(events) > EVENT_MAX_COUNT:
+        events = events[-EVENT_MAX_COUNT:]
+    st.session_state.events = events
+    persist_events()
+    return event
+
+
+def append_event_safe(
+    event_type: str,
+    source: str,
+    project_id: str = "",
+    payload: Optional[Dict[str, Any]] = None,
+    user_id: str = "",
+    ts: str = "",
+) -> Optional[Dict[str, Any]]:
+    try:
+        return append_event(
+            event_type=event_type,
+            source=source,
+            project_id=project_id,
+            payload=payload,
+            user_id=user_id,
+            ts=ts,
+        )
+    except Exception:
+        return None
+
+
+def get_recent_project_events(project_id: str, limit: int = 12) -> List[Dict[str, Any]]:
+    _load_events_to_session()
+    pid = sanitize_text_strict(project_id, allow_empty=True, max_len=24)
+    if not pid:
+        return []
+    rows = [item for item in st.session_state.get("events", []) if isinstance(item, dict) and sanitize_text_strict(item.get("project_id", ""), allow_empty=True, max_len=24) == pid]
+    rows = sorted(rows, key=lambda item: sanitize_text_strict(item.get("ts", ""), allow_empty=True, max_len=24), reverse=True)
+    return rows[: max(limit, 1)]
+
+
+def _emit_loop_transition_events(
+    previous_project: Dict[str, Any],
+    current_project: Dict[str, Any],
+    project_id: str,
+    source: str,
+    timestamp: str,
+) -> None:
+    prev_intervention = previous_project.get("intervention", {}) if isinstance(previous_project.get("intervention", {}), dict) else {}
+    curr_intervention = current_project.get("intervention", {}) if isinstance(current_project.get("intervention", {}), dict) else {}
+    prev_status = sanitize_text_strict(prev_intervention.get("status", ""), allow_empty=True, max_len=16).lower()
+    curr_status = sanitize_text_strict(curr_intervention.get("status", ""), allow_empty=True, max_len=16).lower()
+
+    if prev_status != "active" and curr_status == "active":
+        append_event_safe(
+            event_type="intervention_triggered",
+            source=source,
+            project_id=project_id,
+            ts=timestamp,
+            payload={
+                "type": curr_intervention.get("type", ""),
+                "message": curr_intervention.get("message", ""),
+            },
+        )
+    if prev_status == "active" and curr_status in {"resolved", "idle"}:
+        append_event_safe(
+            event_type="intervention_resolved",
+            source=source,
+            project_id=project_id,
+            ts=timestamp,
+            payload={
+                "type": prev_intervention.get("type", ""),
+                "effectiveness": current_project.get("last_intervention_effectiveness", "unknown"),
+            },
+        )
+
+    latest_update = (current_project.get("updates", []) or [None])[0]
+    if isinstance(latest_update, dict) and bool(latest_update.get("completion_signal", False)):
+        append_event_safe(
+            event_type="next_action_completed",
+            source=source,
+            project_id=project_id,
+            ts=timestamp,
+            payload={
+                "kind": latest_update.get("kind", ""),
+                "evidence_score": latest_update.get("evidence_score", 0),
+                "action_alignment": latest_update.get("action_alignment", 0),
+            },
+        )
 
 
 def _make_user_id(email: str) -> str:
@@ -157,6 +336,45 @@ def get_visible_projects() -> List[Dict[str, Any]]:
     return [item for item in projects if sanitize_text_strict(item.get("owner_user_id", ""), allow_empty=True, max_len=40) == current_user_id]
 
 
+def refresh_ops_signals_from_events(project_ids: Optional[List[str]] = None, persist: bool = False) -> bool:
+    _load_events_to_session()
+    events = st.session_state.get("events", [])
+    projects = st.session_state.get("projects", [])
+    if not isinstance(projects, list):
+        return False
+    target_ids = set()
+    if isinstance(project_ids, list) and project_ids:
+        target_ids = {
+            sanitize_text_strict(item, allow_empty=True, max_len=24)
+            for item in project_ids
+            if sanitize_text_strict(item, allow_empty=True, max_len=24)
+        }
+    changed = False
+    updated_projects: List[Dict[str, Any]] = []
+    now_ts = _now_ts()
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
+        pid = sanitize_text_strict(project.get("id", ""), allow_empty=True, max_len=24)
+        next_project = copy.deepcopy(project)
+        if not target_ids or pid in target_ids:
+            derived = derive_ops_signals(pid, events, now_ts=now_ts)
+            if next_project.get("ops_signals") != derived:
+                next_project["ops_signals"] = derived
+                changed = True
+        updated_projects.append(next_project)
+    if changed:
+        st.session_state.projects = updated_projects
+        _sort_projects_in_state()
+        if persist:
+            persist_projects()
+    return changed
+
+
+def rebuild_ops_signals_from_events(persist: bool = True) -> bool:
+    return refresh_ops_signals_from_events(project_ids=None, persist=persist)
+
+
 def get_pending_projects(limit: int = 4) -> List[Dict[str, Any]]:
     visible = get_visible_projects()
     pending: List[Dict[str, Any]] = []
@@ -179,6 +397,11 @@ def get_pending_projects(limit: int = 4) -> List[Dict[str, Any]]:
         intervention = item.get("intervention", {}) if isinstance(item.get("intervention", {}), dict) else {}
         intervention_status = sanitize_text_strict(intervention.get("status", ""), allow_empty=True, max_len=16).lower()
         intervention_type = sanitize_text_strict(intervention.get("type", ""), allow_empty=True, max_len=24).lower()
+        ops = item.get("ops_signals", {}) if isinstance(item.get("ops_signals", {}), dict) else {}
+        updates_7d = max(int(ops.get("updates_7d", 0) or 0), 0)
+        completed_14d = max(int(ops.get("completed_actions_14d", 0) or 0), 0)
+        intervention_rate = float(ops.get("intervention_trigger_rate_14d", 0.0) or 0.0)
+        intervention_rate = max(0.0, min(intervention_rate, 1.0))
 
         risk = 100 - progress_score
         if progress_status == "stalled":
@@ -193,6 +416,14 @@ def get_pending_projects(limit: int = 4) -> List[Dict[str, Any]]:
             risk += 15
             if intervention_type == "stuck_replan":
                 risk += 8
+        if updates_7d == 0:
+            risk += 10
+        if completed_14d == 0:
+            risk += 14
+        if intervention_rate > 0.6:
+            risk += 12
+        elif intervention_rate > 0.35:
+            risk += 6
         updated_at = _parse_updated_at(item.get("updated_at"))
         return (risk, -updated_at.timestamp() if updated_at != datetime.min else 0)
 
@@ -218,6 +449,7 @@ def init_state() -> None:
             sanitized_projects.append(hard_scrub_project_for_state(migrate_project_for_hygiene(project)))
         st.session_state.projects = sanitized_projects
         st.session_state.users = store.get("users", [])
+        st.session_state.events = [item for item in store.get("events", []) if isinstance(item, dict)]
         if st.session_state.projects:
             _sort_projects_in_state()
             persist_projects()
@@ -233,6 +465,8 @@ def init_state() -> None:
         _sort_projects_in_state()
         if "users" not in st.session_state:
             st.session_state.users = load_users()
+        if "events" not in st.session_state:
+            st.session_state.events = [item for item in load_events() if isinstance(item, dict)]
 
     if "last_generated_id" not in st.session_state:
         st.session_state.last_generated_id = None
@@ -240,6 +474,8 @@ def init_state() -> None:
         st.session_state.active_tab = "项目库"
     if "users" not in st.session_state:
         st.session_state.users = load_users()
+    if "events" not in st.session_state:
+        st.session_state.events = [item for item in load_events() if isinstance(item, dict)]
     if "current_user_id" not in st.session_state:
         st.session_state.current_user_id = ""
     if "current_user_email" not in st.session_state:
@@ -277,9 +513,12 @@ def init_state() -> None:
     if st.session_state.projects:
         st.session_state.projects = [hard_scrub_project_for_state(project) for project in st.session_state.projects]
         _sort_projects_in_state()
+        ops_changed = refresh_ops_signals_from_events(project_ids=None, persist=False)
         if not st.session_state.data_hygiene_v3_done:
             persist_projects()
             st.session_state.data_hygiene_v3_done = True
+        elif ops_changed:
+            persist_projects()
     if is_authenticated():
         _migrate_unowned_projects_to_current_user()
     ensure_selected_project()
@@ -353,6 +592,21 @@ def insert_project_top(project: Dict[str, Any]) -> None:
     st.session_state.projects.append(normalize_project(next_project))
     _sort_projects_in_state()
     persist_projects()
+    project_id = sanitize_text_strict(next_project.get("id", ""), allow_empty=True, max_len=24)
+    if project_id:
+        first_update = (next_project.get("updates", []) or [None])[0]
+        input_meta = first_update.get("input_meta", {}) if isinstance(first_update, dict) else {}
+        append_event_safe(
+            event_type="project_created",
+            source="create_overlay",
+            project_id=project_id,
+            payload={
+                "stage": next_project.get("stage", ""),
+                "has_file": bool(input_meta.get("has_file", False)),
+                "merged_chars": int(input_meta.get("merged_chars", 0) or 0),
+            },
+        )
+        refresh_ops_signals_from_events(project_ids=[project_id], persist=True)
 
 
 def persist_projects() -> None:
@@ -411,6 +665,7 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
     project = get_project_by_id(project_id)
     if not project:
         raise ValueError("目标项目不存在。")
+    previous_project = copy.deepcopy(project)
 
     cleaned_update = sanitize_text_strict(update_text, allow_empty=False, max_len=280)
     if not cleaned_update:
@@ -497,6 +752,28 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
     if not replace_project_by_id(project_id, normalized):
         raise ValueError("目标项目不存在。")
 
+    append_event_safe(
+        event_type="project_updated",
+        source="overlay_update",
+        project_id=project_id,
+        ts=timestamp,
+        payload={
+            "kind": new_update.get("kind", ""),
+            "evidence_score": new_update.get("evidence_score", 0),
+            "action_alignment": new_update.get("action_alignment", 0),
+            "completion_signal": bool(new_update.get("completion_signal", False)),
+            "has_file": bool(cleaned_supplemental),
+        },
+    )
+    _emit_loop_transition_events(
+        previous_project=previous_project,
+        current_project=normalized,
+        project_id=project_id,
+        source="overlay_update",
+        timestamp=timestamp,
+    )
+    refresh_ops_signals_from_events(project_ids=[project_id], persist=True)
+
     st.session_state.selected_project_id = project_id
     st.session_state.last_generated_id = project_id
     st.session_state.flash_message = "项目进展已更新，系统已评估推进状态并刷新下一步建议。"
@@ -506,6 +783,7 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
     current = get_project_by_id(project_id)
     if not current:
         raise ValueError("目标项目不存在。")
+    previous_project = copy.deepcopy(current)
 
     title = sanitize_text_strict(payload.get("title", ""), allow_empty=True, max_len=42)
     if not title or not validate_title_candidate(title):
@@ -577,6 +855,25 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
 
     if not replace_project_by_id(project_id, normalized):
         raise ValueError("目标项目不存在。")
+
+    append_event_safe(
+        event_type="project_updated",
+        source="direct_edit",
+        project_id=project_id,
+        ts=timestamp,
+        payload={
+            "kind": "direct_edit",
+            "completion_signal": bool((normalized.get("updates", []) or [{}])[0].get("completion_signal", False)),
+        },
+    )
+    _emit_loop_transition_events(
+        previous_project=previous_project,
+        current_project=normalized,
+        project_id=project_id,
+        source="direct_edit",
+        timestamp=timestamp,
+    )
+    refresh_ops_signals_from_events(project_ids=[project_id], persist=True)
 
     st.session_state.selected_project_id = project_id
     st.session_state.last_generated_id = project_id

@@ -54,6 +54,7 @@ SCHEMA_TEMPLATE: Dict[str, Any] = {
     "last_intervention_effectiveness": "unknown",
     "progress_eval": {},
     "intervention": {},
+    "ops_signals": {},
 }
 
 CN_NUM_MAP = {
@@ -317,6 +318,72 @@ def normalize_intervention_state(value: Any, fallback_timestamp: str) -> Dict[st
         "triggered_at": sanitize_version_date(raw.get("triggered_at", fallback_timestamp)),
         "status": status,
     }
+
+
+def normalize_ops_signals_state(value: Any, fallback_timestamp: str) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    return {
+        "updates_7d": max(int(raw.get("updates_7d", 0) or 0), 0),
+        "completed_actions_14d": max(int(raw.get("completed_actions_14d", 0) or 0), 0),
+        "intervention_trigger_rate_14d": round(_clamp01(raw.get("intervention_trigger_rate_14d", 0.0), default=0.0), 2),
+        "share_views_14d": max(int(raw.get("share_views_14d", 0) or 0), 0),
+        "last_activity_at": sanitize_version_date(raw.get("last_activity_at", fallback_timestamp)),
+    }
+
+
+def derive_ops_signals(project_id: Any, events: Any, now_ts: str = "") -> Dict[str, Any]:
+    pid = sanitize_text_strict(project_id, allow_empty=True, max_len=24)
+    safe_now = sanitize_version_date(now_ts or get_now_str())
+    now_dt = _parse_dt(safe_now) or datetime.now()
+    if not pid or not isinstance(events, list):
+        return normalize_ops_signals_state({}, safe_now)
+
+    updates_7d = 0
+    completed_actions_14d = 0
+    intervention_triggered_14d = 0
+    project_updates_14d = 0
+    share_views_14d = 0
+    last_activity_at = ""
+
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_pid = sanitize_text_strict(event.get("project_id", ""), allow_empty=True, max_len=24)
+        if event_pid != pid:
+            continue
+        event_ts = sanitize_version_date(event.get("ts", ""))
+        event_dt = _parse_dt(event_ts)
+        if event_dt is None:
+            continue
+        if not last_activity_at or event_dt > (_parse_dt(last_activity_at) or datetime.min):
+            last_activity_at = event_ts
+
+        age_days = max((now_dt.date() - event_dt.date()).days, 0)
+        event_type = sanitize_text_strict(event.get("event_type", ""), allow_empty=True, max_len=32).lower()
+        if event_type == "project_updated":
+            if age_days <= 7:
+                updates_7d += 1
+            if age_days <= 14:
+                project_updates_14d += 1
+        if event_type == "next_action_completed" and age_days <= 14:
+            completed_actions_14d += 1
+        if event_type == "intervention_triggered" and age_days <= 14:
+            intervention_triggered_14d += 1
+        if event_type == "share_viewed" and age_days <= 14:
+            share_views_14d += 1
+
+    denom = max(project_updates_14d, 1)
+    intervention_rate = intervention_triggered_14d / denom
+    return normalize_ops_signals_state(
+        {
+            "updates_7d": updates_7d,
+            "completed_actions_14d": completed_actions_14d,
+            "intervention_trigger_rate_14d": intervention_rate,
+            "share_views_14d": share_views_14d,
+            "last_activity_at": last_activity_at or safe_now,
+        },
+        safe_now,
+    )
 
 
 def infer_update_kind(text: Any) -> str:
@@ -1318,6 +1385,10 @@ def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
     )
     clean["intervention"] = normalize_intervention_state(
         data.get("intervention", {}),
+        fallback_timestamp=data.get("updated_at", get_now_str()),
+    )
+    clean["ops_signals"] = normalize_ops_signals_state(
+        data.get("ops_signals", {}),
         fallback_timestamp=data.get("updated_at", get_now_str()),
     )
 
