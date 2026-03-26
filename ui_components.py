@@ -15,8 +15,10 @@ from project_model import (
     MODEL_TYPE_VALUES,
     STAGE_LABELS,
     STAGE_VALUES,
+    build_update_entry,
     enrich_generated_project,
     get_export_payload,
+    get_now_str,
     model_type_label,
     prepare_project_for_render,
     sanitize_schema,
@@ -25,8 +27,11 @@ from project_model import (
 )
 from state_manager import (
     delete_project_by_id,
+    get_current_user_id,
+    get_project_by_id,
     insert_project_top,
     save_project_direct_edit,
+    set_project_share_state,
     submit_overlay_update,
 )
 from text_cleaning import clean_text, sanitize_text_strict
@@ -90,7 +95,7 @@ def _ensure_create_overlay_state() -> None:
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
-    if st.session_state.get("create_clear_requested"):
+    if st.session_state.get("create_clear_requested") and not st.session_state.get("create_dialog_open"):
         st.session_state.create_draft_title = ""
         st.session_state.create_draft_text = ""
         st.session_state.create_clear_requested = False
@@ -107,7 +112,8 @@ def open_create_overlay() -> None:
 
 
 def _reset_create_overlay_state(clear_draft: bool) -> None:
-    _ensure_create_overlay_state()
+    if "create_dialog_open" not in st.session_state:
+        _ensure_create_overlay_state()
     st.session_state.create_dialog_open = False
     st.session_state.create_status = "idle"
     st.session_state.create_error = None
@@ -275,6 +281,23 @@ def render_create_overlay() -> None:
                     schema = structure_project(composed_input, user_title=title_clean)
                     schema = sanitize_schema({**schema, "title": title_clean})
                     project = enrich_generated_project(schema)
+                    current_user_id = get_current_user_id()
+                    project["desc"] = composed_input
+                    project["owner_user_id"] = current_user_id
+                    project["updates"] = [
+                        build_update_entry(
+                            project_id=project.get("id", ""),
+                            author_user_id=current_user_id,
+                            content=project.get("latest_update", project.get("version_footprint", "")),
+                            source="create",
+                            created_at=project.get("updated_at", get_now_str()),
+                            input_meta={
+                                "has_text": bool(main_text),
+                                "has_file": bool(file_text and file_text.strip()),
+                                "merged_chars": len(composed_input),
+                            },
+                        )
+                    ]
                     insert_project_top(project)
 
                 st.session_state.last_generated_id = project["id"]
@@ -306,13 +329,14 @@ def _ensure_update_overlay_state() -> None:
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
-    if st.session_state.get("update_clear_requested"):
+    if st.session_state.get("update_clear_requested") and not st.session_state.get("update_dialog_open"):
         st.session_state.update_draft_text = ""
         st.session_state.update_clear_requested = False
 
 
 def _reset_update_overlay_state(clear_draft: bool) -> None:
-    _ensure_update_overlay_state()
+    if "update_dialog_open" not in st.session_state:
+        _ensure_update_overlay_state()
     st.session_state.update_dialog_open = False
     st.session_state.update_target_project_id = ""
     st.session_state.update_status = "idle"
@@ -357,8 +381,7 @@ def render_update_overlay() -> None:
     if not project_id:
         _reset_update_overlay_state(clear_draft=True)
         return
-    target_project = st.session_state.get("projects", [])
-    target = next((item for item in target_project if item.get("id") == project_id), None)
+    target = get_project_by_id(project_id)
     if not target:
         _reset_update_overlay_state(clear_draft=True)
         st.warning("目标项目不存在，无法更新。")
@@ -1287,6 +1310,24 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
         unsafe_allow_html=True,
     )
 
+    updates = project.get("updates", [])
+    if isinstance(updates, list) and updates:
+        with st.expander("演进轨迹", expanded=False):
+            for item in updates[:5]:
+                if not isinstance(item, dict):
+                    continue
+                update_date = sanitize_text_strict(item.get("created_at", ""), allow_empty=True, max_len=24) or "-"
+                update_content = sanitize_text_strict(item.get("content", ""), allow_empty=True, max_len=160) or "版本记录已更新"
+                st.markdown(
+                    f"""
+                    <div style="padding:10px 12px;border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;margin-bottom:8px;">
+                      <div style="font-size:12px;color:#94A3B8;font-weight:600;margin-bottom:4px;">{escape(update_date)}</div>
+                      <div style="font-size:14px;color:#1E293B;line-height:1.65;">{escape(update_content)}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
     if export_enabled():
         payload = get_export_payload(project)
         st.markdown("#### 结构化导出（内部）")
@@ -1300,8 +1341,11 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
         )
 
 def render_project_detail_page(project: Dict[str, Any]) -> None:
+    project = prepare_project_for_render(project)
     project_id = clean_text(project.get("id", ""), 24, aggressive=True)
     share_url = build_share_url(project_id)
+    share_state = project.get("share", {}) if isinstance(project.get("share", {}), dict) else {}
+    is_public = bool(share_state.get("is_public", False))
     header_cols = st.columns([0.16, 0.16, 0.68])
     with header_cols[0]:
         if st.button("← 项目库", key=f"back_list_{project_id}", use_container_width=True):
@@ -1315,6 +1359,13 @@ def render_project_detail_page(project: Dict[str, Any]) -> None:
             st.rerun()
     with header_cols[2]:
         with st.popover("⋯", use_container_width=False):
+            toggle_label = "设为私有" if is_public else "设为公开"
+            if st.button(toggle_label, key=f"toggle_share_{project_id}", use_container_width=True):
+                try:
+                    set_project_share_state(project_id, not is_public)
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"分享状态更新失败：{clean_text(exc, 120)}")
             if st.button("打开分享页", key=f"detail_share_{project_id}", use_container_width=True):
                 st.query_params["project"] = project_id
                 st.query_params["view"] = "share"
@@ -1323,6 +1374,9 @@ def render_project_detail_page(project: Dict[str, Any]) -> None:
             if st.button("删除项目", key=f"delete_project_{project_id}", use_container_width=True):
                 st.session_state.delete_confirm_id = project_id
                 st.rerun()
+
+    state_label = "公开" if is_public else "私有"
+    st.caption(f"分享状态：{state_label}")
 
     if st.session_state.get("delete_confirm_id") == project_id:
         st.warning("确认删除该项目档案？此操作不可恢复。")
@@ -1456,8 +1510,30 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
             st.error(f"保存失败：{clean_text(exc, 140)}")
 
 
-def render_share_page(project: Dict[str, Any]) -> None:
+def render_share_page(project: Dict[str, Any], access_granted: bool = True, owner_preview: bool = False) -> None:
     project = prepare_project_for_render(project)
+    if not access_granted:
+        st.markdown(
+            """
+            <div class="page-stack">
+              <section class="surface surface-hero">
+                <div style="font-size:32px;font-weight:800;color:#0f172a;line-height:1.2;">该项目暂未公开</div>
+                <div style="font-size:16px;line-height:1.7;color:#475569;margin-top:10px;">
+                  该分享链接当前处于私有状态。你可以返回 OneFile 创建并维护自己的项目档案。
+                </div>
+              </section>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        cta_cols = st.columns([0.3, 0.7])
+        with cta_cols[0]:
+            if st.button("创建我的项目档案", type="primary", use_container_width=True, key="share_private_create_cta"):
+                st.query_params.clear()
+                st.query_params["action"] = "create"
+                st.rerun()
+        return
+
     summary = sanitize_text_strict(project.get("summary", ""), allow_empty=True, max_len=140) or "项目定位待补充"
     stage_text = escape(project.get("stage_label", stage_label(project.get("stage", ""))))
     form_text = escape(project.get("form_type_label", ""))
@@ -1472,6 +1548,7 @@ def render_share_page(project: Dict[str, Any]) -> None:
         f"""
         <div class="page-stack">
           <section class="surface surface-hero">
+            {"<div style='display:inline-flex;padding:4px 10px;border-radius:999px;background:#FEF3C7;color:#92400E;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:12px;'>私有预览（仅你可见）</div>" if owner_preview and not project.get("share", {}).get("is_public", False) else ""}
             <div style="font-size:40px;font-weight:800;color:#0f172a;line-height:1.12;margin-bottom:12px;">{escape(project.get("title", ""))}</div>
             <div style="font-size:20px;line-height:1.65;color:#1e293b;font-weight:650;margin-bottom:14px;">{escape(summary)}</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -1505,6 +1582,12 @@ def render_share_page(project: Dict[str, Any]) -> None:
         """,
         unsafe_allow_html=True,
     )
+    cta_cols = st.columns([0.3, 0.7])
+    with cta_cols[0]:
+        if st.button("创建我的项目档案", type="primary", use_container_width=True, key=f"share_create_cta_{project.get('id', '')}"):
+            st.query_params.clear()
+            st.query_params["action"] = "create"
+            st.rerun()
 
 
 def render_filters(projects: List[Dict[str, Any]]) -> Dict[str, str]:

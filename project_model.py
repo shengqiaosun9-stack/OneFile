@@ -43,6 +43,9 @@ SCHEMA_TEMPLATE: Dict[str, Any] = {
     "version_footprint": "",
     "latest_update": "",
     "summary": "",
+    "owner_user_id": "",
+    "share": {},
+    "updates": [],
 }
 
 CN_NUM_MAP = {
@@ -125,6 +128,8 @@ MODEL_TYPE_LABELS = {
     "UNKNOWN": "未知模式",
 }
 
+UPDATE_SOURCE_VALUES = {"create", "overlay_update", "direct_edit", "system_migration"}
+
 
 def get_now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d")
@@ -168,6 +173,128 @@ def sanitize_version_date(value: Any) -> str:
     if not date:
         date = get_now_str()
     return date
+
+
+def _sanitize_owner_user_id(value: Any) -> str:
+    return clean_text(value, 40, aggressive=True)
+
+
+def normalize_share_state(value: Any, project_id: str) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    slug_seed = clean_text(raw.get("slug", f"onefile-{project_id}"), 60, aggressive=True) or f"onefile-{project_id}"
+    is_public = bool(raw.get("is_public", False))
+    published_at = sanitize_version_date(raw.get("published_at", "")) if is_public else ""
+    last_shared_at = sanitize_version_date(raw.get("last_shared_at", "")) if is_public else ""
+    return {
+        "is_public": is_public,
+        "slug": slug_seed,
+        "published_at": published_at,
+        "last_shared_at": last_shared_at,
+    }
+
+
+def normalize_input_meta(value: Any, merged_chars_fallback: int = 0) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    merged_chars = raw.get("merged_chars", merged_chars_fallback)
+    try:
+        merged_int = int(merged_chars)
+    except Exception:
+        merged_int = int(merged_chars_fallback or 0)
+    if merged_int < 0:
+        merged_int = 0
+    return {
+        "has_text": bool(raw.get("has_text", merged_int > 0)),
+        "has_file": bool(raw.get("has_file", False)),
+        "merged_chars": merged_int,
+    }
+
+
+def build_update_entry(
+    project_id: str,
+    author_user_id: str,
+    content: Any,
+    source: str,
+    created_at: str = "",
+    input_meta: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    safe_content = sanitize_version_event(content, allow_fallback=True)
+    safe_created_at = sanitize_version_date(created_at or get_now_str())
+    safe_source = source if source in UPDATE_SOURCE_VALUES else "overlay_update"
+    merged_chars = len(safe_content)
+    return {
+        "id": clean_text(str(uuid.uuid4())[:12], 20, aggressive=True),
+        "project_id": clean_text(project_id, 20, aggressive=True),
+        "author_user_id": _sanitize_owner_user_id(author_user_id),
+        "content": safe_content,
+        "created_at": safe_created_at,
+        "source": safe_source,
+        "input_meta": normalize_input_meta(input_meta or {}, merged_chars_fallback=merged_chars),
+    }
+
+
+def _update_sort_key(item: Dict[str, Any]) -> str:
+    return sanitize_version_date(item.get("created_at", ""))
+
+
+def normalize_updates_state(project: Dict[str, Any], project_id: str, owner_user_id: str) -> List[Dict[str, Any]]:
+    updates: List[Dict[str, Any]] = []
+    raw_updates = project.get("updates", [])
+    if isinstance(raw_updates, list):
+        for item in raw_updates:
+            if not isinstance(item, dict):
+                continue
+            entry = build_update_entry(
+                project_id=project_id,
+                author_user_id=item.get("author_user_id", owner_user_id),
+                content=item.get("content", item.get("event", item.get("update_text", ""))),
+                source=clean_text(item.get("source", "overlay_update"), 24, aggressive=True),
+                created_at=item.get("created_at", item.get("date", item.get("timestamp", get_now_str()))),
+                input_meta=item.get("input_meta", {}),
+            )
+            updates.append(entry)
+
+    if not updates:
+        # migrate from historical version fields
+        versions = project.get("versions", [])
+        if isinstance(versions, list):
+            for item in versions:
+                if not isinstance(item, dict):
+                    continue
+                event = sanitize_version_event(
+                    item.get("event", item.get("update_text", item.get("version_text", ""))),
+                    allow_fallback=False,
+                )
+                if not event:
+                    continue
+                updates.append(
+                    build_update_entry(
+                        project_id=project_id,
+                        author_user_id=owner_user_id,
+                        content=event,
+                        source="system_migration",
+                        created_at=item.get("date", item.get("timestamp", get_now_str())),
+                        input_meta={"has_text": True, "has_file": False, "merged_chars": len(event)},
+                    )
+                )
+
+    if not updates:
+        fallback = sanitize_latest_update(
+            project.get("latest_update", project.get("version_footprint", "")),
+            fallback=LATEST_UPDATE_FALLBACK,
+        )
+        updates = [
+            build_update_entry(
+                project_id=project_id,
+                author_user_id=owner_user_id,
+                content=fallback,
+                source="system_migration",
+                created_at=project.get("updated_at", get_now_str()),
+                input_meta={"has_text": True, "has_file": False, "merged_chars": len(fallback)},
+            )
+        ]
+
+    updates = sorted(updates, key=_update_sort_key, reverse=True)
+    return updates[:50]
 
 
 def normalize_stage_value(value: Any) -> str:
@@ -565,27 +692,16 @@ def normalize_project(project: Dict[str, Any]) -> Dict[str, Any]:
     ui["stage_metric"] = clean_text(project.get("stage_metric", ui["metrics"]["progress"]), 44)
     ui["share_slug"] = clean_text(project.get("share_slug", f"onefile-{ui['id']}"), 40)
     ui["summary"] = sanitize_text_strict(project.get("summary", ui["summary"]), allow_empty=False, max_len=78)
+    ui["owner_user_id"] = _sanitize_owner_user_id(project.get("owner_user_id", ""))
+    updates = normalize_updates_state(project, project_id=ui["id"], owner_user_id=ui["owner_user_id"])
+    ui["updates"] = updates
+    ui["share"] = normalize_share_state(project.get("share", {}), ui["id"])
+    ui["share_slug"] = ui["share"]["slug"]
 
-    versions: List[Dict[str, str]] = []
-    raw_versions = project.get("versions")
-    if isinstance(raw_versions, list):
-        for item in raw_versions:
-            if not isinstance(item, dict):
-                continue
-            event = sanitize_version_event(
-                item.get("event", item.get("update_text", item.get("version_text", ""))),
-                allow_fallback=False,
-            )
-            date = sanitize_version_date(item.get("date", item.get("timestamp", get_now_str())))
-            if not event:
-                continue
-            versions.append({"event": event, "date": date})
-
-    if not versions:
-        versions = build_versions_from_schema(schema)
-
-    ui["versions"] = versions[:1]
-    latest_event = sanitize_version_event(ui["versions"][0].get("event", ""), allow_fallback=True)
+    latest_update_entry = updates[0]
+    latest_event = sanitize_version_event(latest_update_entry.get("content", ""), allow_fallback=True)
+    latest_date = sanitize_version_date(latest_update_entry.get("created_at", get_now_str()))
+    ui["versions"] = [{"event": latest_event, "date": latest_date}]
     ui["version_footprint"] = latest_event
     ui["latest_update"] = sanitize_latest_update(
         project.get("latest_update", latest_event),
@@ -1004,6 +1120,17 @@ def enrich_generated_project(schema: Dict[str, Any]) -> Dict[str, Any]:
             "status_theme": get_status_theme(infer_status_tag(normalized_stage)),
             "generated": True,
             "versions": build_versions_from_schema(schema),
+            "updates": [
+                build_update_entry(
+                    project_id="",
+                    author_user_id="",
+                    content=latest_update,
+                    source="create",
+                    created_at=get_now_str(),
+                    input_meta={"has_text": True, "has_file": False, "merged_chars": len(latest_update)},
+                )
+            ],
+            "share": {"is_public": False},
         }
     )
     return project

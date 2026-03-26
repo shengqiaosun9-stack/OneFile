@@ -1,7 +1,16 @@
 import streamlit as st
 
 from project_model import get_now_str, project_matches
-from state_manager import get_project_by_id, init_state
+from state_manager import (
+    get_current_user_email,
+    get_current_user_id,
+    get_project_by_id,
+    get_project_by_id_any,
+    get_visible_projects,
+    init_state,
+    is_authenticated,
+    register_or_login_user,
+)
 from ui_components import (
     render_cards_grid,
     render_create_overlay,
@@ -27,6 +36,50 @@ init_state()
 project_id = st.query_params.get("project", "")
 page_view = str(st.query_params.get("view", "detail" if project_id else "")).strip().lower()
 page_mode = str(st.query_params.get("mode", "")).strip().lower()
+page_action = str(st.query_params.get("action", "")).strip().lower()
+
+if "pending_create_after_login" not in st.session_state:
+    st.session_state.pending_create_after_login = False
+
+if page_action == "create":
+    st.session_state.pending_create_after_login = True
+    st.query_params.clear()
+    st.rerun()
+
+if page_view == "share" and project_id:
+    target_project = get_project_by_id_any(str(project_id))
+    if target_project:
+        render_styles()
+        owner_preview = bool(
+            is_authenticated()
+            and get_current_user_id()
+            and target_project.get("owner_user_id") == get_current_user_id()
+        )
+        share_state = target_project.get("share", {}) if isinstance(target_project.get("share", {}), dict) else {}
+        can_view = bool(share_state.get("is_public", False) or owner_preview)
+        render_share_page(target_project, access_granted=can_view, owner_preview=owner_preview)
+        st.stop()
+    st.query_params.clear()
+    st.rerun()
+
+if not is_authenticated():
+    render_styles()
+    st.markdown("## 欢迎使用 OneFile")
+    st.markdown("请输入邮箱以进入你的项目空间。")
+    with st.form("email_entry_form", clear_on_submit=False):
+        email = st.text_input("邮箱", value=get_current_user_email(), placeholder="you@company.com")
+        submitted = st.form_submit_button("进入项目空间", type="primary")
+    if submitted:
+        try:
+            register_or_login_user(email)
+            st.session_state.flash_message = "已进入你的项目空间。"
+            if st.session_state.pending_create_after_login:
+                st.session_state.pending_create_after_login = False
+                open_create_overlay()
+            st.rerun()
+        except Exception as exc:
+            st.error(f"登录失败：{exc}")
+    st.stop()
 
 if page_view == "edit":
     if page_mode == "create":
@@ -54,14 +107,9 @@ if page_view == "edit":
 if project_id:
     target_project = get_project_by_id(str(project_id))
     if target_project:
-        if page_view == "share":
-            # 分享页是对外阅读页，不加载内部控制台导航壳层
-            render_styles()
-            render_share_page(target_project)
-        else:
-            render_styles()
-            render_nav(st.session_state.active_tab)
-            render_project_detail_page(target_project)
+        render_styles()
+        render_nav(st.session_state.active_tab)
+        render_project_detail_page(target_project)
         st.stop()
     st.query_params.clear()
 
@@ -71,8 +119,9 @@ render_nav(st.session_state.active_tab)
 top_left, top_right = st.columns([0.72, 0.28])
 with top_left:
     st.markdown('<div class="dashboard-title">OPC 项目展示库</div>', unsafe_allow_html=True)
+    visible_projects = get_visible_projects()
     st.markdown(
-        f'<div class="dashboard-sub">当前共有 {len(st.session_state.projects)} 个入库项目，包含最新投后进展追踪 (更新日期: {get_now_str()})</div>',
+        f'<div class="dashboard-sub">当前共有 {len(visible_projects)} 个入库项目，包含最新投后进展追踪 (更新日期: {get_now_str()})</div>',
         unsafe_allow_html=True,
     )
 with top_right:
@@ -87,7 +136,12 @@ if st.session_state.flash_message:
     st.success(st.session_state.flash_message)
     st.session_state.flash_message = None
 
-if not st.session_state.projects:
+if st.session_state.pending_create_after_login and not st.session_state.create_dialog_open:
+    st.session_state.pending_create_after_login = False
+    open_create_overlay()
+    st.rerun()
+
+if not visible_projects:
     st.markdown(
         """
         <div class="archive-panel" style="margin-top: 20px;">
@@ -105,10 +159,10 @@ if not st.session_state.projects:
             open_create_overlay()
             st.rerun()
 else:
-    filters = render_filters(st.session_state.projects)
+    filters = render_filters(visible_projects)
     filtered_projects = [
         project
-        for project in st.session_state.projects
+        for project in visible_projects
         if project_matches(project, filters["tech"], filters["stage"], filters["form"], filters["model"], filters["keyword"])
     ]
 

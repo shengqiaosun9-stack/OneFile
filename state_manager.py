@@ -1,15 +1,18 @@
 import copy
+import hashlib
 import importlib
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
 from ai_service import build_update_input, structure_project
 from project_model import (
     apply_rule_overrides,
+    build_update_entry,
     get_status_theme,
     get_export_payload,
     get_now_str,
@@ -19,20 +22,25 @@ from project_model import (
     normalize_form_type,
     normalize_model_type,
     normalize_project,
+    normalize_share_state,
     normalize_stage_value,
     parse_update_signals,
     sanitize_schema,
     validate_title_candidate,
 )
 try:
-    from storage import load_projects, save_projects
+    from storage import load_projects, load_store, load_users, save_projects, save_store, save_users
 except Exception:
     root_dir = str(Path(__file__).resolve().parent)
     if root_dir not in sys.path:
         sys.path.insert(0, root_dir)
     storage_module = importlib.import_module("storage")
     load_projects = getattr(storage_module, "load_projects")
+    load_store = getattr(storage_module, "load_store")
+    load_users = getattr(storage_module, "load_users")
     save_projects = getattr(storage_module, "save_projects")
+    save_store = getattr(storage_module, "save_store")
+    save_users = getattr(storage_module, "save_users")
 
 try:
     from text_cleaning import has_markup_contamination, is_timeline_leak_text, sanitize_text_strict
@@ -64,15 +72,107 @@ def _contains_legacy_markup_payload(project: Dict[str, Any]) -> bool:
     return has_markup_contamination(joined) or is_timeline_leak_text(joined)
 
 
+EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+
+def normalize_email(email: str) -> str:
+    return sanitize_text_strict(email or "", allow_empty=True, max_len=120).strip().lower()
+
+
+def _make_user_id(email: str) -> str:
+    digest = hashlib.sha1(email.encode("utf-8")).hexdigest()[:12]
+    return f"u_{digest}"
+
+
+def get_current_user_id() -> str:
+    return sanitize_text_strict(st.session_state.get("current_user_id", ""), allow_empty=True, max_len=40)
+
+
+def get_current_user_email() -> str:
+    return sanitize_text_strict(st.session_state.get("current_user_email", ""), allow_empty=True, max_len=120)
+
+
+def is_authenticated() -> bool:
+    return bool(get_current_user_id() and get_current_user_email())
+
+
+def _save_users_to_session_and_store(users: List[Dict[str, Any]]) -> None:
+    st.session_state.users = users
+    save_users(users)
+
+
+def register_or_login_user(email: str) -> Dict[str, Any]:
+    normalized_email = normalize_email(email)
+    if not normalized_email or not EMAIL_PATTERN.match(normalized_email):
+        raise ValueError("请输入有效邮箱地址。")
+
+    users = list(st.session_state.get("users", []))
+    now = _now_ts()
+    existing = next((u for u in users if normalize_email(u.get("email", "")) == normalized_email), None)
+    if existing:
+        existing["last_seen_at"] = now
+        existing["status"] = "active"
+        user = existing
+    else:
+        user = {
+            "id": _make_user_id(normalized_email),
+            "email": normalized_email,
+            "created_at": now,
+            "last_seen_at": now,
+            "status": "active",
+        }
+        users.append(user)
+    _save_users_to_session_and_store(users)
+    st.session_state.current_user_id = user["id"]
+    st.session_state.current_user_email = user["email"]
+    _migrate_unowned_projects_to_current_user()
+    ensure_selected_project()
+    return user
+
+
+def _migrate_unowned_projects_to_current_user() -> None:
+    current_user_id = get_current_user_id()
+    if not current_user_id:
+        return
+    changed = False
+    migrated = []
+    for project in st.session_state.get("projects", []):
+        next_project = copy.deepcopy(project)
+        if not sanitize_text_strict(next_project.get("owner_user_id", ""), allow_empty=True, max_len=40):
+            next_project["owner_user_id"] = current_user_id
+            changed = True
+        migrated.append(normalize_project(next_project))
+    if changed:
+        st.session_state.projects = migrated
+        persist_projects()
+
+
+def get_visible_projects() -> List[Dict[str, Any]]:
+    current_user_id = get_current_user_id()
+    if not current_user_id:
+        return []
+    projects = st.session_state.get("projects", [])
+    return [item for item in projects if sanitize_text_strict(item.get("owner_user_id", ""), allow_empty=True, max_len=40) == current_user_id]
+
+
+def get_project_by_id_any(project_id: str) -> Optional[Dict[str, Any]]:
+    target = sanitize_text_strict(project_id or "", allow_empty=True, max_len=24)
+    if not target:
+        return None
+    return next((project for project in st.session_state.get("projects", []) if project.get("id") == target), None)
+
+
 def init_state() -> None:
     if "projects" not in st.session_state:
-        loaded_projects = load_projects()
+        store = load_store()
+        loaded_projects = store.get("projects", [])
         sanitized_projects = []
         for project in loaded_projects:
             if _contains_legacy_markup_payload(project):
                 continue
             sanitized_projects.append(hard_scrub_project_for_state(migrate_project_for_hygiene(project)))
         st.session_state.projects = sanitized_projects
+        st.session_state.users = store.get("users", [])
         if st.session_state.projects:
             _sort_projects_in_state()
             persist_projects()
@@ -86,15 +186,24 @@ def init_state() -> None:
             sanitized_projects.append(hard_scrub_project_for_state(migrate_project_for_hygiene(project)))
         st.session_state.projects = sanitized_projects
         _sort_projects_in_state()
+        if "users" not in st.session_state:
+            st.session_state.users = load_users()
 
     if "last_generated_id" not in st.session_state:
         st.session_state.last_generated_id = None
     if "active_tab" not in st.session_state:
         st.session_state.active_tab = "项目库"
+    if "users" not in st.session_state:
+        st.session_state.users = load_users()
+    if "current_user_id" not in st.session_state:
+        st.session_state.current_user_id = ""
+    if "current_user_email" not in st.session_state:
+        st.session_state.current_user_email = ""
     if "show_creator" not in st.session_state:
         st.session_state.show_creator = False
     if "selected_project_id" not in st.session_state:
-        st.session_state.selected_project_id = st.session_state.projects[0]["id"] if st.session_state.projects else None
+        visible = get_visible_projects()
+        st.session_state.selected_project_id = visible[0]["id"] if visible else None
     if "flash_message" not in st.session_state:
         st.session_state.flash_message = None
     if "delete_confirm_id" not in st.session_state:
@@ -126,20 +235,34 @@ def init_state() -> None:
         if not st.session_state.data_hygiene_v3_done:
             persist_projects()
             st.session_state.data_hygiene_v3_done = True
+    if is_authenticated():
+        _migrate_unowned_projects_to_current_user()
     ensure_selected_project()
 
 
 def ensure_selected_project() -> None:
-    if not st.session_state.projects:
+    visible_projects = get_visible_projects()
+    if not visible_projects:
         st.session_state.selected_project_id = None
         return
-    valid_ids = {project.get("id") for project in st.session_state.projects}
+    valid_ids = {project.get("id") for project in visible_projects}
     if st.session_state.selected_project_id not in valid_ids:
-        st.session_state.selected_project_id = st.session_state.projects[0]["id"]
+        st.session_state.selected_project_id = visible_projects[0]["id"]
 
 
 def get_project_by_id(project_id: str) -> Optional[Dict[str, Any]]:
-    return next((project for project in st.session_state.projects if project.get("id") == project_id), None)
+    current_user_id = get_current_user_id()
+    if not current_user_id:
+        return None
+    return next(
+        (
+            project
+            for project in st.session_state.get("projects", [])
+            if project.get("id") == project_id
+            and sanitize_text_strict(project.get("owner_user_id", ""), allow_empty=True, max_len=40) == current_user_id
+        ),
+        None,
+    )
 
 
 def _parse_updated_at(value: Any) -> datetime:
@@ -177,13 +300,40 @@ def replace_project_by_id(project_id: str, project: Dict[str, Any]) -> bool:
 
 
 def insert_project_top(project: Dict[str, Any]) -> None:
-    st.session_state.projects.append(project)
+    current_user_id = get_current_user_id()
+    next_project = copy.deepcopy(project)
+    if current_user_id and not sanitize_text_strict(next_project.get("owner_user_id", ""), allow_empty=True, max_len=40):
+        next_project["owner_user_id"] = current_user_id
+    next_project["share"] = normalize_share_state(next_project.get("share", {}), next_project.get("id", ""))
+    st.session_state.projects.append(normalize_project(next_project))
     _sort_projects_in_state()
     persist_projects()
 
 
 def persist_projects() -> None:
     save_projects(st.session_state.projects)
+
+
+def set_project_share_state(project_id: str, is_public: bool) -> None:
+    project = get_project_by_id(project_id)
+    if not project:
+        raise ValueError("目标项目不存在。")
+    next_project = copy.deepcopy(project)
+    share = normalize_share_state(next_project.get("share", {}), next_project.get("id", project_id))
+    now = _now_ts()
+    share["is_public"] = bool(is_public)
+    if share["is_public"]:
+        if not share.get("published_at"):
+            share["published_at"] = now
+        share["last_shared_at"] = now
+    next_project["share"] = share
+    next_project["updated_at"] = now
+    normalized = normalize_project(next_project)
+    normalized["id"] = project_id
+    if not replace_project_by_id(project_id, normalized):
+        raise ValueError("目标项目不存在。")
+    st.session_state.selected_project_id = project_id
+    st.session_state.flash_message = "分享状态已更新。"
 
 
 def delete_project_by_id(project_id: str) -> None:
@@ -242,12 +392,29 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
 
     timestamp = _now_ts()
     next_project = copy.deepcopy(project)
+    current_user_id = get_current_user_id()
 
     # 必改字段：latest_update / updated_at
     next_project["latest_update"] = cleaned_update
     next_project["version_footprint"] = cleaned_update
-    next_project["versions"] = [{"event": cleaned_update, "date": get_now_str()}]
     next_project["updated_at"] = timestamp
+
+    existing_updates = next_project.get("updates", [])
+    if not isinstance(existing_updates, list):
+        existing_updates = []
+    new_update = build_update_entry(
+        project_id=project_id,
+        author_user_id=current_user_id or next_project.get("owner_user_id", ""),
+        content=cleaned_update,
+        source="overlay_update",
+        created_at=timestamp,
+        input_meta={
+            "has_text": True,
+            "has_file": bool(cleaned_supplemental),
+            "merged_chars": len(merged_input),
+        },
+    )
+    next_project["updates"] = [new_update] + [item for item in existing_updates if isinstance(item, dict)]
 
     # 局部可选更新字段（AI有效输出时才覆盖）
     stage_candidate = sanitize_text_strict(schema.get("stage", ""), allow_empty=True, max_len=36)
@@ -277,7 +444,6 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
     normalized["updated_at"] = timestamp
     normalized["latest_update"] = cleaned_update
     normalized["version_footprint"] = cleaned_update
-    normalized["versions"] = [{"event": cleaned_update, "date": get_now_str()}]
 
     if not replace_project_by_id(project_id, normalized):
         raise ValueError("目标项目不存在。")
@@ -317,6 +483,7 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
     )
 
     timestamp = _now_ts()
+    current_user_id = get_current_user_id()
     next_project = copy.deepcopy(current)
     next_project["title"] = title
     next_project["problem_statement"] = problem_statement
@@ -338,6 +505,18 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
     if latest_update:
         next_project["version_footprint"] = latest_update
         next_project["versions"] = [{"event": latest_update, "date": get_now_str()}]
+        existing_updates = next_project.get("updates", [])
+        if not isinstance(existing_updates, list):
+            existing_updates = []
+        new_update = build_update_entry(
+            project_id=project_id,
+            author_user_id=current_user_id or next_project.get("owner_user_id", ""),
+            content=latest_update,
+            source="direct_edit",
+            created_at=timestamp,
+            input_meta={"has_text": True, "has_file": False, "merged_chars": len(latest_update)},
+        )
+        next_project["updates"] = [new_update] + [item for item in existing_updates if isinstance(item, dict)]
 
     normalized = normalize_project(next_project)
     normalized["id"] = project_id
