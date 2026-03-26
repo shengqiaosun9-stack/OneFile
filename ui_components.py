@@ -977,6 +977,13 @@ def render_copy_link_button(project_id: str, share_url: str) -> None:
     )
 
 
+def _truncate_text(value: Any, limit: int) -> str:
+    text = sanitize_text_strict(value, allow_empty=True, max_len=max(limit * 2, limit))
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 1)].rstrip() + "…"
+
+
 def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     project = prepare_project_for_render(project)
     status_class = f"status-chip status-{project.get('status_theme', 'blue')}"
@@ -985,7 +992,18 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     shell_style = f"border:{border_style};"
     if box_shadow:
         shell_style += f"box-shadow:{box_shadow};"
+    summary_short = _truncate_text(project.get("summary", ""), 88) or "项目定位待补充"
+    latest_short = _truncate_text(project.get("latest_update", ""), 72) or "暂无最新进展"
 
+    share_url = build_share_url(project["id"])
+    top_actions = st.columns([0.84, 0.16])
+    with top_actions[1]:
+        with st.popover("⋯", use_container_width=True):
+            if st.button("打开分享页", key=f"open_share_{project['id']}", use_container_width=True):
+                st.query_params["project"] = project["id"]
+                st.query_params["view"] = "share"
+                st.rerun()
+            render_copy_link_button(project["id"], share_url)
     st.markdown(
         f"""
         <div class="card-shell" style="{shell_style}">
@@ -994,17 +1012,17 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
               <h2 class="card-title">{escape(project.get("title", ""))}</h2>
               <span class="{status_class}">{escape(project.get("status_tag", ""))}</span>
             </div>
+            <div style="font-size:14px;color:#334155;line-height:1.6;margin-top:4px;margin-bottom:8px;">{escape(summary_short)}</div>
             <div class="card-divider"></div>
             <div class="card-grid">
-              <div class="meta-line"><span>🧠</span><span><span style="color:#64748B;">技术栈:</span> <strong>{escape(', '.join(project.get("tech_stack", [])))}</strong></span></div>
               <div class="meta-line"><span>👥</span><span><span style="color:#64748B;">用户:</span> <strong>{escape(project.get("users", ""))}</strong></span></div>
               <div class="meta-line"><span>📦</span><span><span style="color:#64748B;">形态:</span> <strong>{escape(project.get("form_type_label", project.get("shape", "")))}</strong></span></div>
               <div class="meta-line"><span>💰</span><span><span style="color:#64748B;">模式:</span> <strong>{escape(project.get("model_desc", project.get("model", "")))}</strong></span></div>
+              <div class="meta-line"><span>🏷️</span><span><span style="color:#64748B;">阶段:</span> <strong>{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</strong></span></div>
             </div>
             <div class="metric-bar" style="display:block;">
               <div style="font-size:11px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">当前状态</div>
-              <div style="font-size:13px;color:#334155;margin-bottom:6px;"><strong>阶段：</strong>{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</div>
-              <div style="font-size:13px;color:#334155;"><strong>最新进展：</strong>{escape(project.get("latest_update", ""))}</div>
+              <div style="font-size:13px;color:#334155;"><strong>最新进展：</strong>{escape(latest_short)}</div>
             </div>
           </div>
         </div>
@@ -1012,8 +1030,7 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
         unsafe_allow_html=True,
     )
 
-    share_url = build_share_url(project["id"])
-    action_cols = st.columns([1.0, 1.0, 0.9, 0.9])
+    action_cols = st.columns([1.0, 1.0])
     with action_cols[0]:
         if st.button("查看完整档案", key=f"view_{project['id']}"):
             st.session_state.selected_project_id = project["id"]
@@ -1025,14 +1042,6 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
             st.session_state.selected_project_id = project["id"]
             open_update_overlay(project["id"])
             st.rerun()
-    with action_cols[2]:
-        render_copy_link_button(project["id"], share_url)
-    with action_cols[3]:
-        if st.button("打开分享页", key=f"open_share_{project['id']}"):
-            st.query_params["project"] = project["id"]
-            st.query_params["view"] = "share"
-            st.rerun()
-    st.caption(share_url if share_url.startswith("http") else f"当前应用链接：{share_url}")
 
 
 def render_cards_grid(projects: List[Dict[str, Any]], highlight_id: str) -> None:
@@ -1080,38 +1089,6 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("#### 项目名称维护")
-    rename_cols = st.columns([0.78, 0.22])
-    with rename_cols[0]:
-        edited_title = st.text_input(
-            "项目名称",
-            value=project.get("title", ""),
-            key=f"title_edit_{project_id}",
-            label_visibility="collapsed",
-            placeholder="输入项目名称",
-        )
-    with rename_cols[1]:
-        if st.button("保存名称", key=f"save_title_{project_id}", use_container_width=True):
-            try:
-                rename_project_title(project_id, edited_title)
-                st.rerun()
-            except Exception as exc:
-                st.error(f"保存失败：{clean_text(exc, 120)}")
-
-    st.markdown("#### Structured Metadata")
-    meta_cols = st.columns([0.33, 0.33, 0.34])
-    with meta_cols[0]:
-        st.markdown(f"**项目名称**\n\n{escape(project.get('title', ''))}")
-        st.markdown(f"**当前阶段**\n\n{escape(project.get('stage_label', stage_label(project.get('stage', ''))))}")
-    with meta_cols[1]:
-        st.markdown(f"**产品形态**\n\n{escape(project.get('form_type_label', ''))}")
-        st.markdown(f"**商业模式类型**\n\n{escape(project.get('model_type_label', model_type_label(project.get('model_type', ''))))}")
-    with meta_cols[2]:
-        model_desc = sanitize_text_strict(project.get("model_desc", project.get("model", "")), allow_empty=True, max_len=120)
-        pricing = sanitize_text_strict(project.get("pricing_strategy", ""), allow_empty=True, max_len=24) or "未设置"
-        st.markdown(f"**商业模式描述**\n\n{escape(model_desc or '待补充')}")
-        st.markdown(f"**定价策略**\n\n{escape(pricing)}")
-
     st.markdown("#### Problem & Solution")
     st.markdown(f"**问题定义**\n\n{escape(sanitize_text_strict(project.get('problem_statement', ''), allow_empty=True, max_len=220) or '待补充')}")
     st.markdown(f"**解决方案**\n\n{escape(sanitize_text_strict(project.get('solution_approach', ''), allow_empty=True, max_len=220) or '待补充')}")
@@ -1126,6 +1103,19 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
     latest_update = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=220) or "暂无最新进展"
     st.info(latest_update)
 
+    st.markdown("#### Structured Metadata")
+    meta_cols = st.columns([0.33, 0.33, 0.34])
+    with meta_cols[0]:
+        st.markdown(f"**项目名称**\n\n{escape(project.get('title', ''))}")
+        st.markdown(f"**当前阶段**\n\n{escape(project.get('stage_label', stage_label(project.get('stage', ''))))}")
+    with meta_cols[1]:
+        st.markdown(f"**产品形态**\n\n{escape(project.get('form_type_label', ''))}")
+        st.markdown(f"**商业模式类型**\n\n{escape(project.get('model_type_label', model_type_label(project.get('model_type', ''))))}")
+    with meta_cols[2]:
+        model_desc = sanitize_text_strict(project.get("model_desc", project.get("model", "")), allow_empty=True, max_len=120)
+        st.markdown(f"**商业模式描述**\n\n{escape(model_desc or '待补充')}")
+        st.markdown(f"**更新时间**\n\n{escape(project.get('updated_at', '-'))}")
+
     if export_enabled():
         payload = get_export_payload(project)
         st.markdown("#### 结构化导出（内部）")
@@ -1138,12 +1128,30 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
             use_container_width=True,
         )
 
-    st.markdown("#### 项目操作")
-    action_cols = st.columns([0.18, 0.82])
-    with action_cols[0]:
-        if st.button("删除项目", key=f"delete_project_{project_id}", use_container_width=True):
-            st.session_state.delete_confirm_id = project_id
+def render_project_detail_page(project: Dict[str, Any]) -> None:
+    project_id = clean_text(project.get("id", ""), 24, aggressive=True)
+    share_url = build_share_url(project_id)
+    header_cols = st.columns([0.18, 0.18, 0.64])
+    with header_cols[0]:
+        if st.button("返回项目库", key=f"back_list_{project_id}", use_container_width=True):
+            st.query_params.clear()
             st.rerun()
+    with header_cols[1]:
+        if st.button("编辑项目", key=f"detail_edit_{project_id}", use_container_width=True):
+            st.query_params["project"] = project_id
+            st.query_params["view"] = "edit"
+            st.query_params.pop("mode", None)
+            st.rerun()
+    with header_cols[2]:
+        with st.popover("更多操作（⋯）", use_container_width=True):
+            if st.button("打开分享页", key=f"detail_share_{project_id}", use_container_width=True):
+                st.query_params["project"] = project_id
+                st.query_params["view"] = "share"
+                st.rerun()
+            render_copy_link_button(project_id, share_url)
+            if st.button("删除项目", key=f"delete_project_{project_id}", use_container_width=True):
+                st.session_state.delete_confirm_id = project_id
+                st.rerun()
 
     if st.session_state.get("delete_confirm_id") == project_id:
         st.warning("确认删除该项目档案？此操作不可恢复。")
@@ -1152,6 +1160,7 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
             if st.button("确认删除", key=f"confirm_delete_{project_id}", type="primary", use_container_width=True):
                 try:
                     delete_project_by_id(project_id)
+                    st.query_params.clear()
                     st.rerun()
                 except Exception as exc:
                     st.error(f"删除失败：{clean_text(exc, 120)}")
@@ -1159,26 +1168,6 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
             if st.button("取消", key=f"cancel_delete_{project_id}", use_container_width=True):
                 st.session_state.delete_confirm_id = None
                 st.rerun()
-
-
-def render_project_detail_page(project: Dict[str, Any]) -> None:
-    project_id = clean_text(project.get("id", ""), 24, aggressive=True)
-    header_cols = st.columns([0.18, 0.18, 0.18, 0.46])
-    with header_cols[0]:
-        if st.button("返回项目库", key=f"back_list_{project_id}", use_container_width=True):
-            st.query_params.clear()
-            st.rerun()
-    with header_cols[1]:
-        if st.button("进入编辑态", key=f"detail_edit_{project_id}", use_container_width=True):
-            st.query_params["project"] = project_id
-            st.query_params["view"] = "edit"
-            st.query_params.pop("mode", None)
-            st.rerun()
-    with header_cols[2]:
-        if st.button("打开分享页", key=f"detail_share_{project_id}", use_container_width=True):
-            st.query_params["project"] = project_id
-            st.query_params["view"] = "share"
-            st.rerun()
     render_archive_panel(project)
 
 
@@ -1663,7 +1652,7 @@ def render_share_page(project: Dict[str, Any]) -> None:
     users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=120) or "目标用户待补充"
     use_cases_text = sanitize_text_strict(project.get("use_cases", ""), allow_empty=True, max_len=220) or "典型场景待补充"
 
-    st.markdown("# OneFile 项目分享")
+    st.markdown("# 项目介绍")
     st.caption(f"公开链接：{share_url}")
     st.markdown(
         f"""
