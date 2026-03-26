@@ -86,6 +86,7 @@ def _ensure_create_overlay_state() -> None:
         "create_status": "idle",
         "create_draft_title": "",
         "create_draft_text": "",
+        "create_clear_requested": False,
         "create_error": None,
         "create_file_error": None,
         "create_submit_nonce": None,
@@ -93,6 +94,10 @@ def _ensure_create_overlay_state() -> None:
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+    if st.session_state.get("create_clear_requested"):
+        st.session_state.create_draft_title = ""
+        st.session_state.create_draft_text = ""
+        st.session_state.create_clear_requested = False
 
 
 def open_create_overlay() -> None:
@@ -113,8 +118,8 @@ def _reset_create_overlay_state(clear_draft: bool) -> None:
     st.session_state.create_file_error = None
     st.session_state.create_submit_nonce = None
     if clear_draft:
-        st.session_state.create_draft_title = ""
-        st.session_state.create_draft_text = ""
+        # 避免在 widget 已实例化后直接写入同 key
+        st.session_state.create_clear_requested = True
 
 
 def _on_create_overlay_dismiss() -> None:
@@ -287,6 +292,7 @@ def _ensure_update_overlay_state() -> None:
         "update_dialog_open": False,
         "update_target_project_id": "",
         "update_draft_text": "",
+        "update_clear_requested": False,
         "update_status": "idle",
         "update_error": None,
         "update_file_error": None,
@@ -295,6 +301,9 @@ def _ensure_update_overlay_state() -> None:
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+    if st.session_state.get("update_clear_requested"):
+        st.session_state.update_draft_text = ""
+        st.session_state.update_clear_requested = False
 
 
 def _reset_update_overlay_state(clear_draft: bool) -> None:
@@ -306,7 +315,8 @@ def _reset_update_overlay_state(clear_draft: bool) -> None:
     st.session_state.update_file_error = None
     st.session_state.update_submit_nonce = None
     if clear_draft:
-        st.session_state.update_draft_text = ""
+        # 避免在 widget 已实例化后直接写入同 key
+        st.session_state.update_clear_requested = True
 
 
 def open_update_overlay(project_id: str) -> None:
