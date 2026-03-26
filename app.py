@@ -11,6 +11,7 @@ from ui_components import (
     render_project_detail_page,
     render_share_page,
     render_styles,
+    render_update_overlay,
 )
 try:
     from ui_components import render_edit_page
@@ -80,6 +81,7 @@ with top_right:
         st.toast("园区管理后台为下一阶段功能，目前保留交互入口。")
 
 render_create_overlay()
+render_update_overlay()
 
 if st.session_state.flash_message:
     st.success(st.session_state.flash_message)

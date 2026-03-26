@@ -30,6 +30,7 @@ from state_manager import (
     insert_project_top,
     rename_project_title,
     save_project_from_edit,
+    submit_overlay_update,
     undo_last_update,
 )
 from text_cleaning import clean_text, sanitize_text_strict
@@ -96,6 +97,8 @@ def _ensure_create_overlay_state() -> None:
 
 def open_create_overlay() -> None:
     _ensure_create_overlay_state()
+    _ensure_update_overlay_state()
+    st.session_state.update_dialog_open = False
     st.session_state.create_dialog_open = True
     if st.session_state.create_status != "submitting":
         st.session_state.create_status = "editing"
@@ -124,6 +127,9 @@ def _on_create_overlay_dismiss() -> None:
 
 def render_create_overlay() -> None:
     _ensure_create_overlay_state()
+    _ensure_update_overlay_state()
+    if st.session_state.update_dialog_open:
+        return
     if not st.session_state.create_dialog_open:
         return
 
@@ -271,6 +277,176 @@ def render_create_overlay() -> None:
                 st.session_state.create_status = "error"
                 st.session_state.create_error = f"创建失败：{clean_text(exc, 140)}"
                 st.session_state.create_submit_nonce = None
+                st.rerun()
+
+    _render_dialog()
+
+
+def _ensure_update_overlay_state() -> None:
+    defaults = {
+        "update_dialog_open": False,
+        "update_target_project_id": "",
+        "update_draft_text": "",
+        "update_status": "idle",
+        "update_error": None,
+        "update_file_error": None,
+        "update_submit_nonce": None,
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def _reset_update_overlay_state(clear_draft: bool) -> None:
+    _ensure_update_overlay_state()
+    st.session_state.update_dialog_open = False
+    st.session_state.update_target_project_id = ""
+    st.session_state.update_status = "idle"
+    st.session_state.update_error = None
+    st.session_state.update_file_error = None
+    st.session_state.update_submit_nonce = None
+    if clear_draft:
+        st.session_state.update_draft_text = ""
+
+
+def open_update_overlay(project_id: str) -> None:
+    _ensure_create_overlay_state()
+    _ensure_update_overlay_state()
+    # 互斥：创建与更新 Overlay 不并存
+    st.session_state.create_dialog_open = False
+    st.session_state.update_dialog_open = True
+    st.session_state.update_target_project_id = clean_text(project_id, 24, aggressive=True)
+    if st.session_state.update_status != "submitting":
+        st.session_state.update_status = "editing"
+    st.session_state.update_error = None
+    st.session_state.update_file_error = None
+
+
+def _on_update_overlay_dismiss() -> None:
+    _ensure_update_overlay_state()
+    if st.session_state.update_status == "submitting":
+        return
+    # ESC/遮罩关闭：清空草稿并关闭
+    _reset_update_overlay_state(clear_draft=True)
+
+
+def render_update_overlay() -> None:
+    _ensure_update_overlay_state()
+    _ensure_create_overlay_state()
+    if st.session_state.create_dialog_open:
+        return
+    if not st.session_state.update_dialog_open:
+        return
+
+    project_id = clean_text(st.session_state.get("update_target_project_id", ""), 24, aggressive=True)
+    if not project_id:
+        _reset_update_overlay_state(clear_draft=True)
+        return
+    target_project = st.session_state.get("projects", [])
+    target = next((item for item in target_project if item.get("id") == project_id), None)
+    if not target:
+        _reset_update_overlay_state(clear_draft=True)
+        st.warning("目标项目不存在，无法更新。")
+        return
+    target = prepare_project_for_render(target)
+
+    dismissible = st.session_state.update_status != "submitting"
+
+    @st.dialog("更新项目进展", width="large", dismissible=dismissible, on_dismiss=_on_update_overlay_dismiss)
+    def _render_dialog() -> None:
+        _ensure_update_overlay_state()
+        is_submitting = st.session_state.update_status == "submitting"
+
+        if st.session_state.get("update_error"):
+            st.error(clean_text(st.session_state.update_error, 180))
+        if st.session_state.get("update_file_error"):
+            st.warning(clean_text(st.session_state.update_file_error, 180))
+
+        st.caption(f"当前项目：{target.get('title', '')}")
+        st.text_area(
+            "最近变化",
+            key="update_draft_text",
+            height=220,
+            placeholder="描述最近的变化，例如：新增客户、开始收费、产品上线新功能…",
+            disabled=is_submitting,
+        )
+
+        uploaded_file = None
+        with st.expander("补充材料（可选）", expanded=False):
+            uploaded_file = st.file_uploader(
+                "上传文件（单文件，<=10MB）",
+                type=["pdf", "txt", "md"],
+                accept_multiple_files=False,
+                key="update_upload_file",
+                disabled=is_submitting,
+                help="文件用于补充上下文，主输入仍是更新文本。",
+            )
+
+        action_cols = st.columns([0.2, 0.18, 0.62])
+        with action_cols[0]:
+            submit_clicked = st.button(
+                "提交更新",
+                type="primary",
+                use_container_width=True,
+                disabled=is_submitting,
+                key="update_overlay_submit",
+            )
+        with action_cols[1]:
+            cancel_clicked = st.button(
+                "取消",
+                use_container_width=True,
+                disabled=is_submitting,
+                key="update_overlay_cancel",
+            )
+
+        if cancel_clicked:
+            _reset_update_overlay_state(clear_draft=True)
+            st.rerun()
+
+        if submit_clicked and not is_submitting:
+            update_text = sanitize_text_strict(
+                st.session_state.get("update_draft_text", ""),
+                allow_empty=False,
+                max_len=280,
+            )
+            if not update_text:
+                st.session_state.update_status = "error"
+                st.session_state.update_error = "请先输入本次更新内容。"
+                st.rerun()
+
+            st.session_state.update_status = "submitting"
+            st.session_state.update_submit_nonce = uuid.uuid4().hex
+            st.session_state.update_error = None
+            st.session_state.update_file_error = None
+            st.rerun()
+
+        update_nonce = st.session_state.get("update_submit_nonce")
+        if st.session_state.update_status == "submitting" and update_nonce:
+            try:
+                update_text = sanitize_text_strict(
+                    st.session_state.get("update_draft_text", ""),
+                    allow_empty=False,
+                    max_len=280,
+                )
+                supplemental_text = ""
+                if uploaded_file is not None:
+                    if getattr(uploaded_file, "size", 0) > CREATE_UPLOAD_MAX_BYTES:
+                        st.session_state.update_file_error = "上传文件超过 10MB，已忽略该文件。"
+                    else:
+                        try:
+                            supplemental_text = extract_text_from_uploaded_file(uploaded_file)
+                        except Exception as exc:
+                            st.session_state.update_file_error = f"文件解析失败，已仅使用文本更新：{clean_text(exc, 120)}"
+
+                with st.spinner("正在分析更新并刷新项目档案..."):
+                    submit_overlay_update(project_id, update_text, supplemental_text)
+
+                _reset_update_overlay_state(clear_draft=True)
+                st.rerun()
+            except Exception as exc:
+                st.session_state.update_status = "error"
+                st.session_state.update_error = f"更新失败：{clean_text(exc, 140)}"
+                st.session_state.update_submit_nonce = None
                 st.rerun()
 
     _render_dialog()
@@ -837,9 +1013,7 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     with action_cols[1]:
         if st.button("更新项目进展", key=f"update_{project['id']}"):
             st.session_state.selected_project_id = project["id"]
-            st.query_params["project"] = project["id"]
-            st.query_params["view"] = "edit"
-            st.query_params.pop("mode", None)
+            open_update_overlay(project["id"])
             st.rerun()
     with action_cols[2]:
         render_copy_link_button(project["id"], share_url)

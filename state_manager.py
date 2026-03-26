@@ -13,11 +13,15 @@ from project_model import (
     apply_schema_to_project,
     compare_field_value,
     enrich_generated_project,
+    get_status_theme,
     get_export_payload,
     get_now_str,
     hard_scrub_project_for_state,
+    infer_status_tag,
     migrate_project_for_hygiene,
+    normalize_model_type,
     normalize_project,
+    normalize_stage_value,
     parse_update_signals,
     sanitize_schema,
     validate_title_candidate,
@@ -109,6 +113,20 @@ def init_state() -> None:
         st.session_state.last_api_error = None
     if "data_hygiene_v3_done" not in st.session_state:
         st.session_state.data_hygiene_v3_done = False
+    if "update_dialog_open" not in st.session_state:
+        st.session_state.update_dialog_open = False
+    if "update_target_project_id" not in st.session_state:
+        st.session_state.update_target_project_id = ""
+    if "update_draft_text" not in st.session_state:
+        st.session_state.update_draft_text = ""
+    if "update_status" not in st.session_state:
+        st.session_state.update_status = "idle"
+    if "update_error" not in st.session_state:
+        st.session_state.update_error = None
+    if "update_file_error" not in st.session_state:
+        st.session_state.update_file_error = None
+    if "update_submit_nonce" not in st.session_state:
+        st.session_state.update_submit_nonce = None
 
     if st.session_state.projects:
         st.session_state.projects = [hard_scrub_project_for_state(project) for project in st.session_state.projects]
@@ -375,6 +393,14 @@ def delete_project_by_id(project_id: str) -> None:
         st.session_state.update_target_id = None
     if st.session_state.last_generated_id == project_id:
         st.session_state.last_generated_id = None
+    if st.session_state.get("update_target_project_id") == project_id:
+        st.session_state.update_target_project_id = ""
+        st.session_state.update_dialog_open = False
+        st.session_state.update_draft_text = ""
+        st.session_state.update_status = "idle"
+        st.session_state.update_error = None
+        st.session_state.update_file_error = None
+        st.session_state.update_submit_nonce = None
 
     ensure_selected_project()
     st.session_state.flash_message = "项目档案已删除。"
@@ -396,3 +422,78 @@ def rename_project_title(project_id: str, new_title: str) -> None:
     st.session_state.selected_project_id = project_id
     st.session_state.last_generated_id = project_id
     st.session_state.flash_message = "项目名称已更新。"
+
+
+def submit_overlay_update(project_id: str, update_text: str, supplemental_text: str = "") -> None:
+    project = get_project_by_id(project_id)
+    if not project:
+        raise ValueError("目标项目不存在。")
+
+    cleaned_update = sanitize_text_strict(update_text, allow_empty=False, max_len=280)
+    if not cleaned_update:
+        raise ValueError("请输入有效的更新内容。")
+
+    cleaned_supplemental = sanitize_text_strict(supplemental_text, allow_empty=True, max_len=12000)
+    merged_input = cleaned_update
+    if cleaned_supplemental:
+        merged_input = f"{cleaned_update}\n\n{cleaned_supplemental}"
+
+    signals = parse_update_signals(cleaned_update, project)
+    context_project = apply_rule_overrides(project, signals)
+    try:
+        schema = structure_project(build_update_input(context_project, merged_input))
+    except Exception:
+        schema = sanitize_schema(
+            {
+                **get_export_payload(context_project),
+                "latest_update": cleaned_update,
+                "version_footprint": cleaned_update,
+                "summary": context_project.get("summary", ""),
+            }
+        )
+
+    timestamp = _now_ts()
+    next_project = copy.deepcopy(project)
+
+    # 必改字段：latest_update / updated_at
+    next_project["latest_update"] = cleaned_update
+    next_project["version_footprint"] = cleaned_update
+    next_project["versions"] = [{"event": cleaned_update, "date": get_now_str()}]
+    next_project["updated_at"] = timestamp
+
+    # 局部可选更新字段（AI有效输出时才覆盖）
+    stage_candidate = sanitize_text_strict(schema.get("stage", ""), allow_empty=True, max_len=36)
+    if stage_candidate:
+        next_project["stage"] = normalize_stage_value(stage_candidate)
+    model_type_candidate = sanitize_text_strict(schema.get("model_type", ""), allow_empty=True, max_len=36)
+    if model_type_candidate:
+        next_project["model_type"] = normalize_model_type(
+            model_type_candidate,
+            model_desc=next_project.get("model_desc", next_project.get("model", "")),
+        )
+    users_candidate = sanitize_text_strict(schema.get("users", ""), allow_empty=True, max_len=44)
+    if users_candidate:
+        next_project["users"] = users_candidate
+    use_cases_candidate = sanitize_text_strict(schema.get("use_cases", ""), allow_empty=True, max_len=120)
+    if use_cases_candidate:
+        next_project["use_cases"] = use_cases_candidate
+
+    # 规则信号可更新阶段/进展标签，但不改 title/problem/solution
+    next_project = apply_rule_overrides(next_project, signals)
+    next_project["stage"] = normalize_stage_value(next_project.get("stage", ""))
+    next_project["status_tag"] = infer_status_tag(next_project["stage"])
+    next_project["status_theme"] = get_status_theme(next_project["status_tag"])
+
+    normalized = normalize_project(next_project)
+    normalized["id"] = project_id
+    normalized["updated_at"] = timestamp
+    normalized["latest_update"] = cleaned_update
+    normalized["version_footprint"] = cleaned_update
+    normalized["versions"] = [{"event": cleaned_update, "date": get_now_str()}]
+
+    if not replace_project_by_id(project_id, normalized):
+        raise ValueError("目标项目不存在。")
+
+    st.session_state.selected_project_id = project_id
+    st.session_state.last_generated_id = project_id
+    st.session_state.flash_message = "项目进展已更新。"
