@@ -20,6 +20,7 @@ from project_model import (
     get_export_payload,
     get_now_str,
     model_type_label,
+    next_action_status_label,
     prepare_project_for_render,
     sanitize_schema,
     stage_label,
@@ -302,7 +303,7 @@ def render_create_overlay() -> None:
 
                 st.session_state.last_generated_id = project["id"]
                 st.session_state.selected_project_id = project["id"]
-                st.session_state.flash_message = "项目档案已创建。可继续优化或查看完整档案。"
+                st.session_state.flash_message = "项目档案已创建，已生成下一动作。可继续推进。"
                 st.session_state.create_status = "success"
                 _reset_create_overlay_state(clear_draft=True)
                 st.rerun()
@@ -1160,6 +1161,9 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
         shell_style += f"box-shadow:{box_shadow};"
     summary_short = _truncate_text(project.get("summary", ""), 92) or "项目定位待补充"
     latest_short = _truncate_text(project.get("latest_update", ""), 78) or "暂无最新进展"
+    next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
+    next_action_text = _truncate_text(next_action.get("text", ""), 78) or "待生成下一动作"
+    next_action_status = next_action_status_label(next_action.get("status", "open"))
 
     share_url = build_share_url(project["id"])
     top_actions = st.columns([0.84, 0.16])
@@ -1201,6 +1205,7 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
             <div class="metric-bar" style="display:block;">
               <div style="font-size:11px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">当前状态</div>
               <div style="font-size:13px;color:#334155;" class="line-clamp-2"><strong>最新进展：</strong>{escape(latest_short)}</div>
+              <div style="font-size:13px;color:#334155;margin-top:6px;" class="line-clamp-2"><strong>下一动作（{escape(next_action_status)}）：</strong>{escape(next_action_text)}</div>
             </div>
           </div>
         </div>
@@ -1265,6 +1270,10 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
         unsafe_allow_html=True,
     )
     latest_update = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=280) or "暂无最新进展"
+    current_tension = sanitize_text_strict(project.get("current_tension", ""), allow_empty=True, max_len=180) or "当前张力待识别"
+    next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
+    next_action_text = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=180) or "待生成下一动作"
+    next_action_state = next_action_status_label(next_action.get("status", "open"))
     problem_text = sanitize_text_strict(project.get("problem_statement", ""), allow_empty=True, max_len=280) or "待补充"
     solution_text = sanitize_text_strict(project.get("solution_approach", ""), allow_empty=True, max_len=280) or "待补充"
     users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=140) or "待补充"
@@ -1275,6 +1284,8 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
         <div class="surface surface-section">
           <div class="section-kicker">当前状态</div>
           <div class="status-callout">{escape(latest_update)}</div>
+          <div class="status-callout" style="margin-top:8px;"><strong>当前张力：</strong>{escape(current_tension)}</div>
+          <div class="status-callout" style="margin-top:8px;"><strong>下一动作（{escape(next_action_state)}）：</strong>{escape(next_action_text)}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1318,10 +1329,17 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
                     continue
                 update_date = sanitize_text_strict(item.get("created_at", ""), allow_empty=True, max_len=24) or "-"
                 update_content = sanitize_text_strict(item.get("content", ""), allow_empty=True, max_len=160) or "版本记录已更新"
+                update_kind = sanitize_text_strict(item.get("kind", ""), allow_empty=True, max_len=20).lower()
+                update_kind_label = {
+                    "hypothesis": "假设",
+                    "action": "动作",
+                    "result": "结果",
+                    "note": "记录",
+                }.get(update_kind, "记录")
                 st.markdown(
                     f"""
                     <div style="padding:10px 12px;border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;margin-bottom:8px;">
-                      <div style="font-size:12px;color:#94A3B8;font-weight:600;margin-bottom:4px;">{escape(update_date)}</div>
+                      <div style="font-size:12px;color:#94A3B8;font-weight:600;margin-bottom:4px;">{escape(update_date)} · {escape(update_kind_label)}</div>
                       <div style="font-size:14px;color:#1E293B;line-height:1.65;">{escape(update_content)}</div>
                     </div>
                     """,
@@ -1588,6 +1606,46 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
             st.query_params.clear()
             st.query_params["action"] = "create"
             st.rerun()
+
+
+def render_pending_actions_panel(projects: List[Dict[str, Any]]) -> None:
+    if not projects:
+        return
+    st.markdown(
+        """
+        <div class="archive-panel" style="margin-top: 14px; margin-bottom: 16px; padding: 16px 18px;">
+          <div style="font-size:12px;color:#2D7AFF;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">待推进项目</div>
+          <div style="font-size:14px;color:#475569;margin-top:4px;">以下项目存在未完成动作，建议先推进并记录结果。</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    for idx, project in enumerate(projects):
+        item = prepare_project_for_render(project)
+        next_action = item.get("next_action", {}) if isinstance(item.get("next_action", {}), dict) else {}
+        action_text = _truncate_text(next_action.get("text", ""), 92) or "待生成下一动作"
+        action_status = next_action_status_label(next_action.get("status", "open"))
+        cols = st.columns([0.62, 0.18, 0.2], gap="small")
+        with cols[0]:
+            st.markdown(
+                f"""
+                <div style="padding:10px 12px;border:1px solid #E2E8F0;border-radius:10px;background:#FFFFFF;">
+                  <div style="font-size:14px;font-weight:700;color:#0f172a;">{escape(item.get("title", ""))}</div>
+                  <div style="font-size:13px;color:#475569;margin-top:4px;"><strong>{escape(action_status)}：</strong>{escape(action_text)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with cols[1]:
+            if st.button("查看档案", key=f"pending_view_{item.get('id','')}_{idx}", use_container_width=True):
+                st.query_params["project"] = item["id"]
+                st.query_params["view"] = "detail"
+                st.rerun()
+        with cols[2]:
+            if st.button("立即更新", key=f"pending_update_{item.get('id','')}_{idx}", type="primary", use_container_width=True):
+                st.session_state.selected_project_id = item["id"]
+                open_update_overlay(item["id"])
+                st.rerun()
 
 
 def render_filters(projects: List[Dict[str, Any]]) -> Dict[str, str]:

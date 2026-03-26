@@ -4,6 +4,7 @@ from project_model import get_now_str, project_matches
 from state_manager import (
     get_current_user_email,
     get_current_user_id,
+    get_pending_projects,
     get_project_by_id,
     get_project_by_id_any,
     get_visible_projects,
@@ -18,6 +19,7 @@ from ui_components import (
     render_nav,
     open_create_overlay,
     render_project_detail_page,
+    render_pending_actions_panel,
     render_share_page,
     render_styles,
     render_update_overlay,
@@ -140,6 +142,10 @@ if st.session_state.pending_create_after_login and not st.session_state.create_d
     st.session_state.pending_create_after_login = False
     open_create_overlay()
     st.rerun()
+
+pending_projects = get_pending_projects(limit=4)
+if pending_projects:
+    render_pending_actions_panel(pending_projects)
 
 if not visible_projects:
     st.markdown(

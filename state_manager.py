@@ -13,10 +13,12 @@ from ai_service import build_update_input, structure_project
 from project_model import (
     apply_rule_overrides,
     build_update_entry,
+    evolve_action_loop,
     get_status_theme,
     get_export_payload,
     get_now_str,
     hard_scrub_project_for_state,
+    infer_update_kind,
     infer_status_tag,
     migrate_project_for_hygiene,
     normalize_form_type,
@@ -153,6 +155,17 @@ def get_visible_projects() -> List[Dict[str, Any]]:
         return []
     projects = st.session_state.get("projects", [])
     return [item for item in projects if sanitize_text_strict(item.get("owner_user_id", ""), allow_empty=True, max_len=40) == current_user_id]
+
+
+def get_pending_projects(limit: int = 4) -> List[Dict[str, Any]]:
+    visible = get_visible_projects()
+    pending = []
+    for project in visible:
+        next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
+        status = sanitize_text_strict(next_action.get("status", ""), allow_empty=True, max_len=16).lower()
+        if status in {"open", "stale"}:
+            pending.append(project)
+    return pending[: max(limit, 1)]
 
 
 def get_project_by_id_any(project_id: str) -> Optional[Dict[str, Any]]:
@@ -393,6 +406,7 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
     timestamp = _now_ts()
     next_project = copy.deepcopy(project)
     current_user_id = get_current_user_id()
+    update_kind = infer_update_kind(cleaned_update)
 
     # 必改字段：latest_update / updated_at
     next_project["latest_update"] = cleaned_update
@@ -413,6 +427,7 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
             "has_file": bool(cleaned_supplemental),
             "merged_chars": len(merged_input),
         },
+        kind=update_kind,
     )
     next_project["updates"] = [new_update] + [item for item in existing_updates if isinstance(item, dict)]
 
@@ -438,6 +453,7 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
     next_project["stage"] = normalize_stage_value(next_project.get("stage", ""))
     next_project["status_tag"] = infer_status_tag(next_project["stage"])
     next_project["status_theme"] = get_status_theme(next_project["status_tag"])
+    next_project = evolve_action_loop(next_project, cleaned_update, timestamp)
 
     normalized = normalize_project(next_project)
     normalized["id"] = project_id
@@ -450,7 +466,7 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
 
     st.session_state.selected_project_id = project_id
     st.session_state.last_generated_id = project_id
-    st.session_state.flash_message = "项目进展已更新。"
+    st.session_state.flash_message = "项目进展已更新，下一动作已刷新。"
 
 
 def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
@@ -503,6 +519,7 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
     next_project["form_type"] = form_type
     next_project["updated_at"] = timestamp
     if latest_update:
+        update_kind = infer_update_kind(latest_update)
         next_project["version_footprint"] = latest_update
         next_project["versions"] = [{"event": latest_update, "date": get_now_str()}]
         existing_updates = next_project.get("updates", [])
@@ -515,8 +532,10 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
             source="direct_edit",
             created_at=timestamp,
             input_meta={"has_text": True, "has_file": False, "merged_chars": len(latest_update)},
+            kind=update_kind,
         )
         next_project["updates"] = [new_update] + [item for item in existing_updates if isinstance(item, dict)]
+    next_project = evolve_action_loop(next_project, latest_update or next_project.get("latest_update", ""), timestamp)
 
     normalized = normalize_project(next_project)
     normalized["id"] = project_id
@@ -527,4 +546,4 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
 
     st.session_state.selected_project_id = project_id
     st.session_state.last_generated_id = project_id
-    st.session_state.flash_message = "项目档案已保存。"
+    st.session_state.flash_message = "项目档案已保存，下一动作已同步。"

@@ -46,6 +46,9 @@ SCHEMA_TEMPLATE: Dict[str, Any] = {
     "owner_user_id": "",
     "share": {},
     "updates": [],
+    "current_state": "",
+    "current_tension": "",
+    "next_action": {},
 }
 
 CN_NUM_MAP = {
@@ -129,6 +132,18 @@ MODEL_TYPE_LABELS = {
 }
 
 UPDATE_SOURCE_VALUES = {"create", "overlay_update", "direct_edit", "system_migration"}
+UPDATE_KIND_VALUES = {"hypothesis", "action", "result", "note"}
+NEXT_ACTION_STATUS_VALUES = {"open", "completed", "stale"}
+
+STAGE_STATE_LABELS = {
+    "IDEA": "探索假设",
+    "BUILDING": "构建验证",
+    "MVP": "MVP验证",
+    "VALIDATION": "证据沉淀",
+    "EARLY_REVENUE": "收入爬坡",
+    "SCALING": "规模增长",
+    "MATURE": "稳定运营",
+}
 
 
 def get_now_str() -> str:
@@ -148,6 +163,15 @@ def form_type_label(form_type: Any) -> str:
 def model_type_label(model_type: Any) -> str:
     key = str(model_type or "").strip().upper()
     return MODEL_TYPE_LABELS.get(key, MODEL_TYPE_LABELS["UNKNOWN"])
+
+
+def next_action_status_label(status: Any) -> str:
+    key = sanitize_text_strict(status, allow_empty=True, max_len=20).lower()
+    if key == "completed":
+        return "已完成"
+    if key == "stale":
+        return "待重启"
+    return "待推进"
 
 
 def sanitize_version_event(value: Any, allow_fallback: bool = True) -> str:
@@ -209,6 +233,218 @@ def normalize_input_meta(value: Any, merged_chars_fallback: int = 0) -> Dict[str
     }
 
 
+def infer_update_kind(text: Any) -> str:
+    content = sanitize_text_strict(text, allow_empty=True, max_len=160).lower()
+    if not content:
+        return "note"
+    result_hits = ["完成", "上线", "发布", "签约", "新增", "达成", "提升", "增长", "收到", "交付", "实现"]
+    action_hits = ["执行", "推进", "开展", "接入", "改造", "优化", "测试", "联调", "部署", "修复"]
+    hypothesis_hits = ["假设", "预计", "计划", "打算", "准备", "尝试", "可能", "待验证"]
+    if any(hit in content for hit in result_hits):
+        return "result"
+    if any(hit in content for hit in action_hits):
+        return "action"
+    if any(hit in content for hit in hypothesis_hits):
+        return "hypothesis"
+    return "note"
+
+
+def _sanitize_next_action_status(value: Any) -> str:
+    status = sanitize_text_strict(value, allow_empty=True, max_len=20).lower()
+    if status in NEXT_ACTION_STATUS_VALUES:
+        return status
+    return "open"
+
+
+def infer_current_state(stage: Any) -> str:
+    normalized_stage = normalize_stage_value(stage)
+    return STAGE_STATE_LABELS.get(normalized_stage, STAGE_STATE_LABELS["BUILDING"])
+
+
+def infer_current_tension(stage: Any, latest_update: Any) -> str:
+    normalized_stage = normalize_stage_value(stage)
+    latest = sanitize_latest_update(latest_update, fallback="")
+    defaults = {
+        "IDEA": "尚未形成可验证的用户价值证据",
+        "BUILDING": "原型尚未获得稳定的用户反馈",
+        "MVP": "MVP已成型，但核心价值尚未被持续验证",
+        "VALIDATION": "有验证动作，但缺少可复用的结果证据",
+        "EARLY_REVENUE": "已有收入信号，但转化与复购还不稳定",
+        "SCALING": "增长正在发生，但扩张质量仍需验证",
+        "MATURE": "业务趋于稳定，仍需持续识别新增长点",
+    }
+    if latest and ("卡住" in latest or "阻塞" in latest or "风险" in latest or "不稳定" in latest):
+        return sanitize_text_strict(latest, allow_empty=True, max_len=90)
+    return defaults.get(normalized_stage, defaults["BUILDING"])
+
+
+def suggest_next_action_text(stage: Any, latest_update: Any, current_tension: Any) -> str:
+    normalized_stage = normalize_stage_value(stage)
+    latest = sanitize_text_strict(latest_update, allow_empty=True, max_len=120)
+    tension = sanitize_text_strict(current_tension, allow_empty=True, max_len=120)
+    if "客户" in latest or "签约" in latest or "试点" in latest:
+        return "将新增客户转化为稳定复购，并记录一条可复用的签约路径。"
+    if "上线" in latest or "发布" in latest:
+        return "跟踪上线后7天核心指标，并产出一条基于数据的优化动作。"
+    if "营收" in latest or "收入" in latest or "mrr" in latest.lower():
+        return "拆解收入来源并执行一次提效实验，验证可复制的增长动作。"
+    if normalized_stage in {"IDEA", "BUILDING"}:
+        return "在7天内完成一次真实用户验证，并记录关键反馈结论。"
+    if normalized_stage in {"MVP", "VALIDATION"}:
+        return "完成1-2个目标用户场景的闭环验证，沉淀可量化结果。"
+    if normalized_stage == "EARLY_REVENUE":
+        return "围绕转化或复购执行一次改进实验，并记录前后数据变化。"
+    if normalized_stage in {"SCALING", "MATURE"}:
+        return "围绕当前增长瓶颈执行本周行动，并输出结果复盘。"
+    if tension:
+        return f"针对当前张力推进：{tension}"
+    return "明确下一步可验证动作，并在本周内完成一次反馈闭环。"
+
+
+def normalize_next_action_state(value: Any, stage: Any, latest_update: Any) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    text = sanitize_text_strict(raw.get("text", ""), allow_empty=True, max_len=120)
+    generated_at = sanitize_version_date(raw.get("generated_at", ""))
+    status = _sanitize_next_action_status(raw.get("status", "open"))
+    completed_at = sanitize_version_date(raw.get("completed_at", "")) if status == "completed" else ""
+    confidence_raw = raw.get("confidence", 0.62)
+    try:
+        confidence = float(confidence_raw)
+    except Exception:
+        confidence = 0.62
+    confidence = max(0.0, min(confidence, 1.0))
+    if not text:
+        text = suggest_next_action_text(stage, latest_update, "")
+    return {
+        "text": text,
+        "status": status,
+        "generated_at": generated_at or get_now_str(),
+        "completed_at": completed_at,
+        "confidence": round(confidence, 2),
+    }
+
+
+def _action_tokens(text: str) -> List[str]:
+    safe = sanitize_text_strict(text, allow_empty=True, max_len=120).lower()
+    safe = re.sub(r"[，。；;,.!?！？\s]+", " ", safe).strip()
+    tokens = [tok for tok in safe.split(" ") if len(tok) >= 2]
+    if not tokens and safe:
+        tokens = [safe]
+    return tokens[:8]
+
+
+def evaluate_next_action_completion(next_action_text: Any, update_text: Any, update_kind: str) -> bool:
+    action_text = sanitize_text_strict(next_action_text, allow_empty=True, max_len=120)
+    update = sanitize_text_strict(update_text, allow_empty=True, max_len=160)
+    if not action_text or not update:
+        return False
+    update_lower = update.lower()
+    if "已完成下一步" in update or "完成下一动作" in update or "动作已完成" in update:
+        return True
+    if "未完成" in update or "还没" in update or "进行中" in update or "继续" in update:
+        return False
+    completion_keywords = ["完成", "已", "上线", "发布", "达成", "签约", "交付", "验证通过", "落地"]
+    has_completion_signal = any(k in update for k in completion_keywords) or update_kind == "result"
+    if not has_completion_signal:
+        return False
+
+    action_tokens = _action_tokens(action_text)
+    if any(tok and tok in update_lower for tok in action_tokens):
+        return True
+
+    semantic_pairs = [
+        ("上线", ["上线", "发布", "可用", "正式"]),
+        ("客户", ["客户", "签约", "试点"]),
+        ("收入", ["营收", "收入", "mrr", "回款", "收费"]),
+        ("验证", ["验证", "测试", "试点"]),
+        ("转化", ["转化", "付费", "复购"]),
+    ]
+    for needle, haystack in semantic_pairs:
+        if needle in action_text and any(hit in update_lower for hit in haystack):
+            return True
+    return False
+
+
+def evolve_action_loop(project: Dict[str, Any], latest_update: Any, timestamp: str = "") -> Dict[str, Any]:
+    evolved = copy.deepcopy(project)
+    ts = sanitize_version_date(timestamp or evolved.get("updated_at", get_now_str()))
+    stage_value = normalize_stage_value(evolved.get("stage", ""))
+    update_kind = infer_update_kind(latest_update)
+    current_tension = sanitize_text_strict(evolved.get("current_tension", ""), allow_empty=True, max_len=120)
+    current_state = sanitize_text_strict(evolved.get("current_state", ""), allow_empty=True, max_len=40) or infer_current_state(stage_value)
+    next_action = normalize_next_action_state(evolved.get("next_action", {}), stage_value, latest_update)
+
+    action_completed = False
+    if next_action.get("status") == "open":
+        action_completed = evaluate_next_action_completion(next_action.get("text", ""), latest_update, update_kind)
+
+    if action_completed:
+        next_action["status"] = "completed"
+        next_action["completed_at"] = ts
+        current_state = f"{infer_current_state(stage_value)} · 已完成上一动作"
+        base_tension = infer_current_tension(stage_value, latest_update)
+        current_tension = sanitize_text_strict(base_tension, allow_empty=True, max_len=120)
+        next_action = normalize_next_action_state(
+            {
+                "text": suggest_next_action_text(stage_value, latest_update, current_tension),
+                "status": "open",
+                "generated_at": ts,
+                "confidence": 0.66,
+            },
+            stage_value,
+            latest_update,
+        )
+    else:
+        if next_action.get("status") == "completed":
+            # 防止异常状态回流
+            next_action["status"] = "open"
+            next_action["completed_at"] = ""
+        if update_kind in {"note", "hypothesis"} and next_action.get("status") == "open":
+            next_action["status"] = "stale"
+        if next_action.get("status") == "stale":
+            next_action["text"] = suggest_next_action_text(stage_value, latest_update, current_tension)
+            next_action["generated_at"] = ts
+            next_action["confidence"] = 0.55
+        if not current_tension:
+            current_tension = infer_current_tension(stage_value, latest_update)
+
+    if next_action.get("status") in {"open", "stale"}:
+        current_tension = sanitize_text_strict(
+            current_tension or f"待解决：{next_action.get('text', '')}",
+            allow_empty=True,
+            max_len=120,
+        )
+    if not current_tension:
+        current_tension = infer_current_tension(stage_value, latest_update)
+
+    evolved["current_state"] = current_state
+    evolved["current_tension"] = current_tension
+    evolved["next_action"] = next_action
+    evolved["loop_has_open_action"] = next_action.get("status") in {"open", "stale"}
+    return evolved
+
+
+def ensure_action_loop_defaults(project: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = copy.deepcopy(project)
+    stage_value = normalize_stage_value(normalized.get("stage", ""))
+    latest = sanitize_latest_update(
+        normalized.get("latest_update", normalized.get("version_footprint", "")),
+        fallback=normalized.get("version_footprint", ""),
+    )
+    state = sanitize_text_strict(normalized.get("current_state", ""), allow_empty=True, max_len=40) or infer_current_state(stage_value)
+    tension = sanitize_text_strict(normalized.get("current_tension", ""), allow_empty=True, max_len=120)
+    next_action = normalize_next_action_state(normalized.get("next_action", {}), stage_value, latest)
+    if next_action.get("status") in {"open", "stale"} and not tension:
+        tension = infer_current_tension(stage_value, latest)
+    if not tension:
+        tension = infer_current_tension(stage_value, latest)
+    normalized["current_state"] = state
+    normalized["current_tension"] = tension
+    normalized["next_action"] = next_action
+    normalized["loop_has_open_action"] = next_action.get("status") in {"open", "stale"}
+    return normalized
+
+
 def build_update_entry(
     project_id: str,
     author_user_id: str,
@@ -216,10 +452,14 @@ def build_update_entry(
     source: str,
     created_at: str = "",
     input_meta: Optional[Dict[str, Any]] = None,
+    kind: str = "",
 ) -> Dict[str, Any]:
     safe_content = sanitize_version_event(content, allow_fallback=True)
     safe_created_at = sanitize_version_date(created_at or get_now_str())
     safe_source = source if source in UPDATE_SOURCE_VALUES else "overlay_update"
+    safe_kind = sanitize_text_strict(kind, allow_empty=True, max_len=16).lower()
+    if safe_kind not in UPDATE_KIND_VALUES:
+        safe_kind = infer_update_kind(safe_content)
     merged_chars = len(safe_content)
     return {
         "id": clean_text(str(uuid.uuid4())[:12], 20, aggressive=True),
@@ -228,6 +468,7 @@ def build_update_entry(
         "content": safe_content,
         "created_at": safe_created_at,
         "source": safe_source,
+        "kind": safe_kind,
         "input_meta": normalize_input_meta(input_meta or {}, merged_chars_fallback=merged_chars),
     }
 
@@ -250,6 +491,7 @@ def normalize_updates_state(project: Dict[str, Any], project_id: str, owner_user
                 source=clean_text(item.get("source", "overlay_update"), 24, aggressive=True),
                 created_at=item.get("created_at", item.get("date", item.get("timestamp", get_now_str()))),
                 input_meta=item.get("input_meta", {}),
+                kind=item.get("kind", ""),
             )
             updates.append(entry)
 
@@ -274,6 +516,7 @@ def normalize_updates_state(project: Dict[str, Any], project_id: str, owner_user
                         source="system_migration",
                         created_at=item.get("date", item.get("timestamp", get_now_str())),
                         input_meta={"has_text": True, "has_file": False, "merged_chars": len(event)},
+                        kind="result",
                     )
                 )
 
@@ -290,6 +533,7 @@ def normalize_updates_state(project: Dict[str, Any], project_id: str, owner_user
                 source="system_migration",
                 created_at=project.get("updated_at", get_now_str()),
                 input_meta={"has_text": True, "has_file": False, "merged_chars": len(fallback)},
+                kind="note",
             )
         ]
 
@@ -551,6 +795,13 @@ def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
         clean["team_text"] = team_text
     if stage_metric:
         clean["stage_metric"] = stage_metric
+    clean["current_state"] = sanitize_text_strict(data.get("current_state", ""), allow_empty=True, max_len=40)
+    clean["current_tension"] = sanitize_text_strict(data.get("current_tension", ""), allow_empty=True, max_len=120)
+    clean["next_action"] = normalize_next_action_state(
+        data.get("next_action", {}),
+        clean.get("stage", ""),
+        clean.get("latest_update", clean.get("version_footprint", "")),
+    )
 
     return clean
 
@@ -711,6 +962,7 @@ def normalize_project(project: Dict[str, Any]) -> Dict[str, Any]:
     ui["stage_label"] = stage_label(ui["stage"])
     ui["status_tag"] = infer_status_tag(ui["stage"])
     ui["status_theme"] = get_status_theme(ui["status_tag"])
+    ui = ensure_action_loop_defaults(ui)
     return ui
 
 
