@@ -79,8 +79,6 @@ with top_right:
     if st.button("创建项目档案", type="primary", use_container_width=True):
         open_create_overlay()
         st.rerun()
-    if st.button("园区后台", use_container_width=True):
-        st.toast("园区管理后台为下一阶段功能，目前保留交互入口。")
 
 render_create_overlay()
 render_update_overlay()

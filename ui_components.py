@@ -148,7 +148,16 @@ def render_create_overlay() -> None:
         if st.session_state.get("create_file_error"):
             st.warning(clean_text(st.session_state.create_file_error, 180))
 
-        st.caption("粘贴聊天记录、BP、会议纪要或零散描述，系统会自动完成结构化。")
+        st.markdown(
+            """
+            <div class="editor-shell" style="margin-bottom:12px;">
+              <div class="editor-kicker">Create</div>
+              <div class="editor-title">自然输入，自动结构化</div>
+              <div class="editor-sub">粘贴聊天记录、BP、会议纪要或零散描述，系统将自动生成项目档案。</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
         st.text_input(
             "项目名 / 公司名（必填）",
@@ -173,7 +182,7 @@ def render_create_overlay() -> None:
             st.warning("内容较少，生成结果可能不完整")
 
         uploaded_file = None
-        with st.expander("补充材料（可选）", expanded=False):
+        with st.expander("补充文件（可选）", expanded=False):
             uploaded_file = st.file_uploader(
                 "上传文件（单文件，<=10MB）",
                 type=["pdf", "txt", "md"],
@@ -368,7 +377,16 @@ def render_update_overlay() -> None:
         if st.session_state.get("update_file_error"):
             st.warning(clean_text(st.session_state.update_file_error, 180))
 
-        st.caption(f"当前项目：{target.get('title', '')}")
+        st.markdown(
+            f"""
+            <div class="editor-shell" style="margin-bottom:12px;">
+              <div class="editor-kicker">Update</div>
+              <div class="editor-title">{escape(target.get('title', ''))}</div>
+              <div class="editor-sub">只需描述发生了什么变化，系统会自动更新完整档案中的当前状态与相关结构字段。</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         st.text_area(
             "最近变化",
             key="update_draft_text",
@@ -378,7 +396,7 @@ def render_update_overlay() -> None:
         )
 
         uploaded_file = None
-        with st.expander("补充材料（可选）", expanded=False):
+        with st.expander("补充文件（可选）", expanded=False):
             uploaded_file = st.file_uploader(
                 "上传文件（单文件，<=10MB）",
                 type=["pdf", "txt", "md"],
@@ -660,6 +678,51 @@ def render_styles() -> None:
           font-size: 14px;
         }
 
+        .card-summary {
+          font-size: 14px;
+          color: #334155;
+          line-height: 1.65;
+          margin-top: 4px;
+          margin-bottom: 8px;
+        }
+
+        .card-kv-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px 12px;
+          margin-top: 4px;
+        }
+
+        .card-kv {
+          border: 1px solid #E2E8F0;
+          background: #F8FAFC;
+          border-radius: 8px;
+          padding: 9px 10px;
+        }
+
+        .card-kv-label {
+          color: #94A3B8;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          margin-bottom: 4px;
+        }
+
+        .card-kv-value {
+          color: #1E293B;
+          font-size: 13px;
+          font-weight: 600;
+          line-height: 1.5;
+        }
+
+        .line-clamp-2 {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+
         .meta-line {
           display: flex;
           align-items: center;
@@ -803,6 +866,90 @@ def render_styles() -> None:
           font-size: 16px;
           color: #0f172a;
           font-weight: 700;
+        }
+
+        .surface {
+          background: #fff;
+          border: 1px solid #E2E8F0;
+          border-radius: 14px;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+        }
+
+        .surface-hero {
+          padding: 26px 28px;
+        }
+
+        .surface-section {
+          padding: 22px 24px;
+        }
+
+        .section-kicker {
+          font-size: 12px;
+          color: #94A3B8;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          margin-bottom: 8px;
+        }
+
+        .section-value {
+          color: #1E293B;
+          font-size: 15px;
+          line-height: 1.75;
+        }
+
+        .section-strong {
+          color: #0f172a;
+          font-size: 17px;
+          line-height: 1.75;
+          font-weight: 650;
+        }
+
+        .status-callout {
+          margin-top: 12px;
+          padding: 12px 14px;
+          border: 1px solid #E2E8F0;
+          border-radius: 10px;
+          background: #F8FAFC;
+          color: #334155;
+          font-size: 14px;
+          line-height: 1.65;
+        }
+
+        .page-stack {
+          max-width: 920px;
+          margin: 0 auto;
+        }
+
+        .editor-shell {
+          background: #fff;
+          border: 1px solid #E2E8F0;
+          border-radius: 14px;
+          padding: 18px;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+        }
+
+        .editor-kicker {
+          font-size: 11px;
+          color: #94A3B8;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          margin-bottom: 6px;
+        }
+
+        .editor-title {
+          font-size: 22px;
+          font-weight: 700;
+          color: #0f172a;
+          line-height: 1.3;
+          margin-bottom: 6px;
+        }
+
+        .editor-sub {
+          color: #64748B;
+          font-size: 14px;
+          line-height: 1.6;
         }
 
         .stButton > button {
@@ -988,8 +1135,8 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     shell_style = f"border:{border_style};"
     if box_shadow:
         shell_style += f"box-shadow:{box_shadow};"
-    summary_short = _truncate_text(project.get("summary", ""), 88) or "项目定位待补充"
-    latest_short = _truncate_text(project.get("latest_update", ""), 72) or "暂无最新进展"
+    summary_short = _truncate_text(project.get("summary", ""), 92) or "项目定位待补充"
+    latest_short = _truncate_text(project.get("latest_update", ""), 78) or "暂无最新进展"
 
     share_url = build_share_url(project["id"])
     top_actions = st.columns([0.84, 0.16])
@@ -1008,17 +1155,29 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
               <h2 class="card-title">{escape(project.get("title", ""))}</h2>
               <span class="{status_class}">{escape(project.get("status_tag", ""))}</span>
             </div>
-            <div style="font-size:14px;color:#334155;line-height:1.6;margin-top:4px;margin-bottom:8px;">{escape(summary_short)}</div>
+            <div class="card-summary line-clamp-2">{escape(summary_short)}</div>
             <div class="card-divider"></div>
-            <div class="card-grid">
-              <div class="meta-line"><span>👥</span><span><span style="color:#64748B;">用户:</span> <strong>{escape(project.get("users", ""))}</strong></span></div>
-              <div class="meta-line"><span>📦</span><span><span style="color:#64748B;">形态:</span> <strong>{escape(project.get("form_type_label", project.get("shape", "")))}</strong></span></div>
-              <div class="meta-line"><span>💰</span><span><span style="color:#64748B;">模式:</span> <strong>{escape(project.get("model_desc", project.get("model", "")))}</strong></span></div>
-              <div class="meta-line"><span>🏷️</span><span><span style="color:#64748B;">阶段:</span> <strong>{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</strong></span></div>
+            <div class="card-kv-grid">
+              <div class="card-kv">
+                <div class="card-kv-label">用户</div>
+                <div class="card-kv-value line-clamp-2">{escape(project.get("users", ""))}</div>
+              </div>
+              <div class="card-kv">
+                <div class="card-kv-label">产品形态</div>
+                <div class="card-kv-value line-clamp-2">{escape(project.get("form_type_label", project.get("shape", "")))}</div>
+              </div>
+              <div class="card-kv">
+                <div class="card-kv-label">商业模式</div>
+                <div class="card-kv-value line-clamp-2">{escape(project.get("model_desc", project.get("model", "")))}</div>
+              </div>
+              <div class="card-kv">
+                <div class="card-kv-label">阶段</div>
+                <div class="card-kv-value">{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</div>
+              </div>
             </div>
             <div class="metric-bar" style="display:block;">
               <div style="font-size:11px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">当前状态</div>
-              <div style="font-size:13px;color:#334155;"><strong>最新进展：</strong>{escape(latest_short)}</div>
+              <div style="font-size:13px;color:#334155;" class="line-clamp-2"><strong>最新进展：</strong>{escape(latest_short)}</div>
             </div>
           </div>
         </div>
@@ -1028,7 +1187,7 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
 
     action_cols = st.columns([1.0, 1.0])
     with action_cols[0]:
-        if st.button("查看完整档案", key=f"view_{project['id']}"):
+        if st.button("查看完整档案", key=f"view_{project['id']}", type="primary"):
             st.session_state.selected_project_id = project["id"]
             st.query_params["project"] = project["id"]
             st.query_params["view"] = "detail"
@@ -1053,14 +1212,15 @@ def render_cards_grid(projects: List[Dict[str, Any]], highlight_id: str) -> None
 
 def render_archive_panel(project: Dict[str, Any]) -> None:
     project = prepare_project_for_render(project)
+    summary_text = sanitize_text_strict(project.get("summary", ""), allow_empty=True, max_len=180) or "项目定位待补充"
     st.markdown(
         f"""
-        <div class="archive-panel">
+        <div class="surface surface-hero">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;">
             <div>
-              <div style="font-size:12px;color:#2D7AFF;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">完整档案</div>
-              <div style="font-size:28px;font-weight:700;color:#0f172a;line-height:1.2;">{escape(project.get("title", ""))}</div>
-              <div style="margin-top:8px;color:#64748B;font-size:14px;">{escape(project.get("summary", ""))}</div>
+              <div class="section-kicker" style="color:#2D7AFF;">完整档案</div>
+              <div style="font-size:30px;font-weight:760;color:#0f172a;line-height:1.2;">{escape(project.get("title", ""))}</div>
+              <div style="margin-top:10px;color:#475569;font-size:15px;line-height:1.7;">{escape(summary_text)}</div>
             </div>
             <div>
               <span class="status-chip status-{project.get('status_theme', 'blue')}">{escape(project.get("status_tag", ""))}</span>
@@ -1081,19 +1241,51 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("#### 关键状态")
     latest_update = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=280) or "暂无最新进展"
-    st.info(latest_update)
+    problem_text = sanitize_text_strict(project.get("problem_statement", ""), allow_empty=True, max_len=280) or "待补充"
+    solution_text = sanitize_text_strict(project.get("solution_approach", ""), allow_empty=True, max_len=280) or "待补充"
+    users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=140) or "待补充"
+    use_cases_text = sanitize_text_strict(project.get("use_cases", ""), allow_empty=True, max_len=220) or "待补充"
 
-    st.markdown("#### Problem & Solution")
-    st.markdown(f"**问题定义**\n\n{escape(sanitize_text_strict(project.get('problem_statement', ''), allow_empty=True, max_len=220) or '待补充')}")
-    st.markdown(f"**解决方案**\n\n{escape(sanitize_text_strict(project.get('solution_approach', ''), allow_empty=True, max_len=220) or '待补充')}")
-
-    st.markdown("#### Users & Use Cases")
-    users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=120) or "待补充"
-    use_cases_text = sanitize_text_strict(project.get("use_cases", ""), allow_empty=True, max_len=180) or "待补充"
-    st.markdown(f"**目标用户**\n\n{escape(users_text)}")
-    st.markdown(f"**典型场景**\n\n{escape(use_cases_text)}")
+    st.markdown(
+        f"""
+        <div class="surface surface-section">
+          <div class="section-kicker">当前状态</div>
+          <div class="status-callout">{escape(latest_update)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="surface surface-section" style="margin-top:12px;">
+          <div class="section-kicker">Problem & Solution</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div>
+              <div style="font-size:12px;color:#64748B;font-weight:700;margin-bottom:6px;">问题定义</div>
+              <div class="section-value">{escape(problem_text)}</div>
+            </div>
+            <div>
+              <div style="font-size:12px;color:#64748B;font-weight:700;margin-bottom:6px;">解决方案</div>
+              <div class="section-value">{escape(solution_text)}</div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="surface surface-section" style="margin-top:12px;">
+          <div class="section-kicker">Users & Use Cases</div>
+          <div style="font-size:12px;color:#64748B;font-weight:700;margin-bottom:6px;">目标用户</div>
+          <div class="section-value">{escape(users_text)}</div>
+          <div style="font-size:12px;color:#64748B;font-weight:700;margin:12px 0 6px;">典型场景</div>
+          <div class="section-value">{escape(use_cases_text)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if export_enabled():
         payload = get_export_payload(project)
@@ -1110,19 +1302,19 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
 def render_project_detail_page(project: Dict[str, Any]) -> None:
     project_id = clean_text(project.get("id", ""), 24, aggressive=True)
     share_url = build_share_url(project_id)
-    header_cols = st.columns([0.18, 0.18, 0.64])
+    header_cols = st.columns([0.16, 0.16, 0.68])
     with header_cols[0]:
-        if st.button("返回项目库", key=f"back_list_{project_id}", use_container_width=True):
+        if st.button("← 项目库", key=f"back_list_{project_id}", use_container_width=True):
             st.query_params.clear()
             st.rerun()
     with header_cols[1]:
-        if st.button("编辑项目", key=f"detail_edit_{project_id}", use_container_width=True):
+        if st.button("编辑项目", key=f"detail_edit_{project_id}", type="primary", use_container_width=True):
             st.query_params["project"] = project_id
             st.query_params["view"] = "edit"
             st.query_params.pop("mode", None)
             st.rerun()
     with header_cols[2]:
-        with st.popover("更多操作（⋯）", use_container_width=True):
+        with st.popover("⋯", use_container_width=False):
             if st.button("打开分享页", key=f"detail_share_{project_id}", use_container_width=True):
                 st.query_params["project"] = project_id
                 st.query_params["view"] = "share"
@@ -1186,10 +1378,10 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
 
     st.markdown(
         f"""
-        <div class="creator-panel">
-          <div class="creator-kicker">Edit Project</div>
-          <div style="font-size:24px;font-weight:700;color:#0f172a;margin-bottom:6px;">{escape(target_project.get("title", ""))}</div>
-          <div style="color:#64748B;font-size:14px;">直接修改完整档案字段，保存后会同步到卡片、详情页与分享页。</div>
+        <div class="editor-shell" style="margin-bottom:14px;">
+          <div class="editor-kicker">Edit Project</div>
+          <div class="editor-title">{escape(target_project.get("title", ""))}</div>
+          <div class="editor-sub">人工精修完整档案字段，保存后会同步到卡片、详情页与分享页。</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1203,42 +1395,36 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
     with title_cols[2]:
         cancel_clicked = st.button("取消", use_container_width=True, key=f"cancel_direct_{state_suffix}")
 
-    st.markdown("#### Problem & Solution")
-    st.text_area("一句话定位（Summary）", key=f"direct_summary_{state_suffix}", height=120, placeholder="用一句话说明项目是什么。")
-    st.text_area("问题定义", key=f"direct_problem_{state_suffix}", height=170, placeholder="这个项目要解决什么问题？")
-    st.text_area("解决方案", key=f"direct_solution_{state_suffix}", height=170, placeholder="你如何解决这个问题？")
-
-    st.markdown("#### Users & Use Cases")
-    st.text_input("目标用户", key=f"direct_users_{state_suffix}", placeholder="核心用户是谁？")
-    st.text_area("典型场景", key=f"direct_use_cases_{state_suffix}", height=150, placeholder="用户在什么场景下使用？")
-
-    st.markdown("#### Current Status")
-    st.text_area("最新进展", key=f"direct_latest_{state_suffix}", height=150, placeholder="请描述当前最新进展。")
-
-    st.markdown("#### Structured Metadata")
-    meta_cols = st.columns(3)
-    with meta_cols[0]:
+    edit_cols = st.columns([0.7, 0.3], gap="large")
+    with edit_cols[0]:
+        st.markdown('<div class="editor-shell"><div class="editor-kicker">Core Narrative</div></div>', unsafe_allow_html=True)
+        st.text_area("一句话定位（Summary）", key=f"direct_summary_{state_suffix}", height=110, placeholder="用一句话说明项目是什么。")
+        st.text_area("问题定义", key=f"direct_problem_{state_suffix}", height=160, placeholder="这个项目要解决什么问题？")
+        st.text_area("解决方案", key=f"direct_solution_{state_suffix}", height=160, placeholder="你如何解决这个问题？")
+        st.text_input("目标用户", key=f"direct_users_{state_suffix}", placeholder="核心用户是谁？")
+        st.text_area("典型场景", key=f"direct_use_cases_{state_suffix}", height=130, placeholder="用户在什么场景下使用？")
+        st.text_area("最新进展", key=f"direct_latest_{state_suffix}", height=130, placeholder="请描述当前最新进展。")
+    with edit_cols[1]:
+        st.markdown('<div class="editor-shell"><div class="editor-kicker">Structured Metadata</div></div>', unsafe_allow_html=True)
         st.selectbox(
             "阶段",
             STAGE_VALUES,
             key=f"direct_stage_{state_suffix}",
             format_func=lambda x: STAGE_LABELS.get(x, x),
         )
-    with meta_cols[1]:
         st.selectbox(
             "商业模式类型",
             MODEL_TYPE_VALUES,
             key=f"direct_model_type_{state_suffix}",
             format_func=lambda x: MODEL_TYPE_LABELS.get(x, x),
         )
-    with meta_cols[2]:
         st.selectbox(
             "产品形态",
             FORM_TYPE_VALUES,
             key=f"direct_form_type_{state_suffix}",
             format_func=lambda x: FORM_TYPE_LABELS.get(x, x),
         )
-    st.text_area("商业模式描述", key=f"direct_model_desc_{state_suffix}", height=110, placeholder="补充对外可读的商业模式描述。")
+        st.text_area("商业模式描述", key=f"direct_model_desc_{state_suffix}", height=120, placeholder="补充对外可读的商业模式描述。")
 
     if cancel_clicked:
         st.query_params["project"] = project_id
@@ -1284,37 +1470,36 @@ def render_share_page(project: Dict[str, Any]) -> None:
 
     st.markdown(
         f"""
-        <div style="max-width:860px;margin:0 auto;">
-          <section style="background:#fff;border:1px solid #E2E8F0;border-radius:16px;padding:30px 32px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-            <div style="font-size:38px;font-weight:800;color:#0f172a;line-height:1.12;margin-bottom:12px;">{escape(project.get("title", ""))}</div>
-            <div style="font-size:19px;line-height:1.6;color:#1e293b;font-weight:600;margin-bottom:14px;">{escape(summary)}</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:{'14px' if latest else '0'};">
+        <div class="page-stack">
+          <section class="surface surface-hero">
+            <div style="font-size:40px;font-weight:800;color:#0f172a;line-height:1.12;margin-bottom:12px;">{escape(project.get("title", ""))}</div>
+            <div style="font-size:20px;line-height:1.65;color:#1e293b;font-weight:650;margin-bottom:14px;">{escape(summary)}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <span class="status-chip status-{project.get('status_theme', 'blue')}">{stage_text}</span>
               <span class="status-chip status-slate">{form_text}</span>
               <span class="status-chip status-slate">{model_text}</span>
             </div>
-            {"<div style='padding:10px 12px;border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;color:#334155;font-size:14px;'><strong>当前进展：</strong>" + escape(latest) + "</div>" if latest else ""}
           </section>
 
-          <section style="margin-top:14px;background:#fff;border:1px solid #E2E8F0;border-radius:14px;padding:22px 24px;">
-            <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Problem</div>
-            <div style="font-size:18px;line-height:1.75;color:#0f172a;font-weight:600;">{escape(problem_text)}</div>
+          <section class="surface surface-section" style="margin-top:14px;">
+            <div class="section-kicker">Problem</div>
+            <div class="section-strong">{escape(problem_text)}</div>
           </section>
 
-          <section style="margin-top:12px;background:#fff;border:1px solid #E2E8F0;border-radius:14px;padding:22px 24px;">
-            <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Solution</div>
-            <div style="font-size:18px;line-height:1.75;color:#0f172a;font-weight:600;">{escape(solution_text)}</div>
+          <section class="surface surface-section" style="margin-top:12px;">
+            <div class="section-kicker">Solution</div>
+            <div class="section-strong">{escape(solution_text)}</div>
           </section>
 
-          <section style="margin-top:12px;background:#fff;border:1px solid #E2E8F0;border-radius:14px;padding:22px 24px;">
-            <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Users</div>
-            <div style="font-size:15px;line-height:1.75;color:#334155;"><strong>目标用户：</strong>{escape(users_text)}</div>
-            <div style="font-size:15px;line-height:1.75;color:#334155;margin-top:8px;"><strong>使用场景：</strong>{escape(use_cases_text)}</div>
+          <section class="surface surface-section" style="margin-top:12px;">
+            <div class="section-kicker">Users & Use Cases</div>
+            <div class="section-value"><strong>目标用户：</strong>{escape(users_text)}</div>
+            <div class="section-value" style="margin-top:8px;"><strong>使用场景：</strong>{escape(use_cases_text)}</div>
           </section>
 
-          <section style="margin-top:12px;background:#fff;border:1px solid #E2E8F0;border-radius:14px;padding:22px 24px;">
-            <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Current Status</div>
-            <div style="font-size:15px;line-height:1.75;color:#334155;">{escape(latest or "暂无最新进展")}</div>
+          <section class="surface surface-section" style="margin-top:12px;">
+            <div class="section-kicker">Current Status</div>
+            <div class="status-callout">{escape(latest or "暂无最新进展")}</div>
           </section>
         </div>
         """,
