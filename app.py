@@ -93,6 +93,13 @@ if not st.session_state.projects:
         """,
         unsafe_allow_html=True,
     )
+    empty_cta_cols = st.columns([0.26, 0.74])
+    with empty_cta_cols[0]:
+        if st.button("创建项目档案", key="empty_state_create", type="primary", use_container_width=True):
+            st.query_params.clear()
+            st.query_params["view"] = "edit"
+            st.query_params["mode"] = "create"
+            st.rerun()
 else:
     filters = render_filters(st.session_state.projects)
     filtered_projects = [
