@@ -800,14 +800,14 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
     is_create = mode == "create" or not project
     target_project = prepare_project_for_render(project) if project else {}
     project_id = clean_text(target_project.get("id", ""), 24, aggressive=True)
+    state_suffix = project_id or "new"
+
     default_title = sanitize_text_strict(target_project.get("title", ""), allow_empty=True, max_len=42)
-    default_desc = sanitize_text_strict(target_project.get("desc", ""), allow_empty=True, max_len=6000)
-    if not default_desc and project:
-        default_desc = sanitize_text_strict(
-            f"项目摘要：{target_project.get('summary', '')}\n目标用户：{target_project.get('users', '')}\n商业模式：{target_project.get('model_desc', target_project.get('model', ''))}",
-            allow_empty=True,
-            max_len=6000,
-        )
+    default_summary = sanitize_text_strict(target_project.get("summary", ""), allow_empty=True, max_len=78)
+    default_problem = sanitize_text_strict(target_project.get("problem_statement", ""), allow_empty=True, max_len=220)
+    default_solution = sanitize_text_strict(target_project.get("solution_approach", ""), allow_empty=True, max_len=220)
+    default_users = sanitize_text_strict(target_project.get("users", ""), allow_empty=True, max_len=120)
+    default_use_cases = sanitize_text_strict(target_project.get("use_cases", ""), allow_empty=True, max_len=220)
     default_latest = sanitize_text_strict(target_project.get("latest_update", ""), allow_empty=True, max_len=280)
 
     title_for_header = default_title or "新建项目"
@@ -817,84 +817,154 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
           <div class="creator-kicker">Edit Mode</div>
           <div style="font-size:24px;font-weight:700;color:#0f172a;margin-bottom:6px;">{escape(title_for_header)}</div>
           <div style="color:#64748B;font-size:14px;">
-            {'创建项目档案：填写最小信息即可创建，后续继续维护。' if is_create else '更新项目档案：左侧编辑，右侧查看当前档案，保存后会同步到卡片与分享页。'}
+            {'创建模式：按结构从上到下构建项目，可先完成基础信息。' if is_create else '更新模式：默认聚焦当前状态，同时可切换其他模块继续完善。'}
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    module_labels = {
+        "base": "1) 基础信息",
+        "essence": "2) 项目本质",
+        "users": "3) 用户与场景",
+        "status": "4) 当前状态",
+    }
+    module_order = ["base", "essence", "users", "status"]
+    focus_key = f"edit_focus_{state_suffix}"
+    if focus_key not in st.session_state:
+        st.session_state[focus_key] = "base" if is_create else "status"
+    if st.session_state[focus_key] not in module_labels:
+        st.session_state[focus_key] = "base" if is_create else "status"
+
+    selected_label = st.radio(
+        "当前编辑模块",
+        [module_labels[k] for k in module_order],
+        horizontal=True,
+        index=module_order.index(st.session_state[focus_key]),
+        key=f"edit_focus_label_{state_suffix}",
+    )
+    active_module = next((k for k, label in module_labels.items() if label == selected_label), "base")
+    st.session_state[focus_key] = active_module
+
+    default_values = {
+        f"title_{state_suffix}": default_title,
+        f"summary_{state_suffix}": default_summary,
+        f"problem_{state_suffix}": default_problem,
+        f"solution_{state_suffix}": default_solution,
+        f"users_{state_suffix}": default_users,
+        f"use_cases_{state_suffix}": default_use_cases,
+        f"latest_{state_suffix}": default_latest,
+    }
+    for key, value in default_values.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
     main_cols = st.columns([0.62, 0.38])
     with main_cols[0]:
-        st.markdown("#### 编辑内容")
-        with st.form(f"edit_form_{project_id or 'new'}", clear_on_submit=False):
-            title_input = st.text_input(
+        st.markdown("#### 结构化编辑")
+        with st.expander("基础信息（title + summary）", expanded=active_module == "base"):
+            st.text_input(
                 "项目名称（必填）",
-                value=default_title if not is_create else "",
+                key=f"title_{state_suffix}",
                 placeholder="例如：星火计划",
             )
-            desc_input = st.text_area(
-                "项目描述（必填）",
-                value=default_desc,
-                height=260,
-                placeholder="输入项目背景、目标用户、产品方案、商业模式等信息。",
+            st.text_area(
+                "一句话定位（summary）",
+                key=f"summary_{state_suffix}",
+                height=90,
+                placeholder="用一句话说明项目核心价值。",
             )
-            latest_update_input = st.text_area(
-                "当前状态（可选）",
-                value=default_latest,
-                height=120,
+
+        with st.expander("项目本质（problem + solution）", expanded=active_module == "essence"):
+            st.text_area(
+                "问题定义（problem_statement）",
+                key=f"problem_{state_suffix}",
+                height=110,
+                placeholder="这个项目正在解决什么问题？",
+            )
+            st.text_area(
+                "解决方案（solution_approach）",
+                key=f"solution_{state_suffix}",
+                height=110,
+                placeholder="你如何解决这个问题？",
+            )
+
+        with st.expander("用户与场景（users + use_cases）", expanded=active_module == "users"):
+            st.text_area(
+                "目标用户（users）",
+                key=f"users_{state_suffix}",
+                height=90,
+                placeholder="谁是核心用户？",
+            )
+            st.text_area(
+                "典型场景（use_cases）",
+                key=f"use_cases_{state_suffix}",
+                height=110,
+                placeholder="用户在什么场景下使用这个项目？",
+            )
+
+        with st.expander("当前状态（latest_update）", expanded=active_module == "status"):
+            st.text_area(
+                "最新进展（latest_update）",
+                key=f"latest_{state_suffix}",
+                height=130,
                 placeholder="例如：产品已上线并新增3个客户。",
             )
-            st.caption("保存时会先清洗文本，再进入同一套 AI 结构化流程。")
 
-            action_cols = st.columns([0.26, 0.18, 0.56])
-            with action_cols[0]:
-                submit = st.form_submit_button(
-                    "创建项目档案" if is_create else "保存项目档案",
-                    type="primary",
-                    use_container_width=True,
-                )
-            with action_cols[1]:
-                cancel = st.form_submit_button("取消", use_container_width=True)
+        st.caption("保存时会将四个模块拼装为结构化输入并进入既有 AI 结构化流程。")
+        action_cols = st.columns([0.26, 0.18, 0.56])
+        with action_cols[0]:
+            submit = st.button(
+                "创建项目档案" if is_create else "保存项目档案",
+                type="primary",
+                use_container_width=True,
+                key=f"save_edit_{state_suffix}",
+            )
+        with action_cols[1]:
+            cancel = st.button("取消", use_container_width=True, key=f"cancel_edit_{state_suffix}")
 
     with main_cols[1]:
-        st.markdown("#### 当前档案视图")
-        if is_create:
+        st.markdown("#### 结构反馈")
+        feedback_data = {
+            "base": (
+                f"项目名称：{sanitize_text_strict(st.session_state.get(f'title_{state_suffix}', ''), allow_empty=True, max_len=42) or '（待填写）'}"
+                f"\n一句话定位：{sanitize_text_strict(st.session_state.get(f'summary_{state_suffix}', ''), allow_empty=True, max_len=78) or '（待填写）'}"
+            ),
+            "essence": (
+                f"问题：{sanitize_text_strict(st.session_state.get(f'problem_{state_suffix}', ''), allow_empty=True, max_len=140) or '（待填写）'}"
+                f"\n方案：{sanitize_text_strict(st.session_state.get(f'solution_{state_suffix}', ''), allow_empty=True, max_len=140) or '（待填写）'}"
+            ),
+            "users": (
+                f"目标用户：{sanitize_text_strict(st.session_state.get(f'users_{state_suffix}', ''), allow_empty=True, max_len=120) or '（待填写）'}"
+                f"\n典型场景：{sanitize_text_strict(st.session_state.get(f'use_cases_{state_suffix}', ''), allow_empty=True, max_len=140) or '（待填写）'}"
+            ),
+            "status": sanitize_text_strict(st.session_state.get(f"latest_{state_suffix}", ""), allow_empty=True, max_len=160) or "（待填写）",
+        }
+        for module_key in module_order:
+            is_active = module_key == active_module
+            border_color = "#2D7AFF" if is_active else "#E2E8F0"
+            background = "#EFF6FF" if is_active else "#FFFFFF"
+            section_title = module_labels[module_key]
+            content_html = escape(feedback_data[module_key]).replace("\n", "<br>")
             st.markdown(
-                """
-                - **Structured Metadata**：项目名称、阶段、形态、商业模式  
-                - **Problem & Solution**：问题定义与解决方案  
-                - **Users & Use Cases**：目标用户与典型场景  
-                - **Current Status**：当前阶段最新进展
-                """
+                f"""
+                <div style="border:1px solid {border_color};background:{background};border-radius:10px;padding:12px;margin-bottom:10px;">
+                  <div style="font-size:12px;color:{'#1d4ed8' if is_active else '#64748B'};font-weight:700;margin-bottom:6px;">{escape(section_title)}{'（当前编辑）' if is_active else ''}</div>
+                  <div style="font-size:13px;color:#334155;line-height:1.5;">{content_html}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
-            st.caption("创建后会生成完整档案，你可以继续进入编辑态完善。")
-        else:
-            st.markdown(f"**项目名称**：{escape(target_project.get('title', ''))}")
-            st.markdown(f"**当前阶段**：{escape(target_project.get('stage_label', stage_label(target_project.get('stage', ''))))}")
-            st.markdown(f"**产品形态**：{escape(target_project.get('form_type_label', ''))}")
-            st.markdown(f"**商业模式**：{escape(target_project.get('model_desc', target_project.get('model', '')))}")
-            st.markdown("---")
-            st.markdown("**问题定义**")
-            st.markdown(escape(sanitize_text_strict(target_project.get("problem_statement", ""), allow_empty=True, max_len=180) or "待补充"))
-            st.markdown("**解决方案**")
-            st.markdown(escape(sanitize_text_strict(target_project.get("solution_approach", ""), allow_empty=True, max_len=180) or "待补充"))
-            st.markdown("---")
-            st.markdown("**目标用户**")
-            st.markdown(escape(sanitize_text_strict(target_project.get("users", ""), allow_empty=True, max_len=100) or "待补充"))
-            st.markdown("**典型场景**")
-            st.markdown(escape(sanitize_text_strict(target_project.get("use_cases", ""), allow_empty=True, max_len=180) or "待补充"))
-            st.markdown("---")
-            st.markdown("**当前状态**")
-            st.info(sanitize_text_strict(target_project.get("latest_update", ""), allow_empty=True, max_len=160) or "暂无最新进展")
-            if project and project_id in st.session_state.undo_snapshots:
-                if st.button("撤销最近一次编辑", key=f"undo_edit_{project_id}", use_container_width=True):
-                    try:
-                        undo_last_update(project_id)
-                        st.query_params["project"] = project_id
-                        st.query_params["view"] = "detail"
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"撤销失败：{clean_text(exc, 120)}")
+        if project and project_id in st.session_state.undo_snapshots and not is_create:
+            if st.button("撤销最近一次编辑", key=f"undo_edit_{project_id}", use_container_width=True):
+                try:
+                    undo_last_update(project_id)
+                    st.query_params["project"] = project_id
+                    st.query_params["view"] = "detail"
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"撤销失败：{clean_text(exc, 120)}")
 
     if cancel:
         if is_create:
@@ -905,6 +975,31 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
         st.rerun()
 
     if submit:
+        title_input = sanitize_text_strict(st.session_state.get(f"title_{state_suffix}", ""), allow_empty=True, max_len=42)
+        summary_input = sanitize_text_strict(st.session_state.get(f"summary_{state_suffix}", ""), allow_empty=True, max_len=120)
+        problem_input = sanitize_text_strict(st.session_state.get(f"problem_{state_suffix}", ""), allow_empty=True, max_len=220)
+        solution_input = sanitize_text_strict(st.session_state.get(f"solution_{state_suffix}", ""), allow_empty=True, max_len=220)
+        users_input = sanitize_text_strict(st.session_state.get(f"users_{state_suffix}", ""), allow_empty=True, max_len=140)
+        use_cases_input = sanitize_text_strict(st.session_state.get(f"use_cases_{state_suffix}", ""), allow_empty=True, max_len=220)
+        latest_update_input = sanitize_text_strict(st.session_state.get(f"latest_{state_suffix}", ""), allow_empty=True, max_len=280)
+
+        desc_blocks = [
+            "【基础信息】",
+            f"项目名称：{title_input}",
+            f"一句话定位：{summary_input}",
+            "",
+            "【项目本质】",
+            f"问题定义：{problem_input}",
+            f"解决方案：{solution_input}",
+            "",
+            "【用户与场景】",
+            f"目标用户：{users_input}",
+            f"典型场景：{use_cases_input}",
+            "",
+            "【当前状态】",
+            f"最新进展：{latest_update_input}",
+        ]
+        desc_input = sanitize_text_strict("\n".join(desc_blocks), allow_empty=False, max_len=6000)
         try:
             with st.spinner("正在结构化并保存档案..."):
                 saved_id = save_project_from_edit(
