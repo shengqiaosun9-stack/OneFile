@@ -402,32 +402,61 @@ def get_pending_projects(limit: int = 4) -> List[Dict[str, Any]]:
         completed_14d = max(int(ops.get("completed_actions_14d", 0) or 0), 0)
         intervention_rate = float(ops.get("intervention_trigger_rate_14d", 0.0) or 0.0)
         intervention_rate = max(0.0, min(intervention_rate, 1.0))
+        last_activity_raw = sanitize_text_strict(ops.get("last_activity_at", ""), allow_empty=True, max_len=24)
+        last_activity_dt = _parse_updated_at(last_activity_raw) if last_activity_raw else datetime.max
 
-        risk = 100 - progress_score
-        if progress_status == "stalled":
-            risk += 45
-        elif progress_status == "uncertain":
-            risk += 20
-        if next_status == "stale":
-            risk += 22
-        elif next_status == "open":
-            risk += 10
-        if intervention_status == "active":
-            risk += 15
-            if intervention_type == "stuck_replan":
-                risk += 8
+        # Primary driver: evidence risk (events/ops_signals)
+        evidence_risk = 0
         if updates_7d == 0:
-            risk += 10
+            evidence_risk += 26
+        elif updates_7d == 1:
+            evidence_risk += 14
         if completed_14d == 0:
-            risk += 14
+            evidence_risk += 34
+        elif completed_14d == 1:
+            evidence_risk += 10
+        if last_activity_dt != datetime.max:
+            inactive_days = max((datetime.now().date() - last_activity_dt.date()).days, 0)
+            if inactive_days >= 7:
+                evidence_risk += 28
+            elif inactive_days >= 3:
+                evidence_risk += 14
         if intervention_rate > 0.6:
-            risk += 12
+            evidence_risk += 16
         elif intervention_rate > 0.35:
-            risk += 6
-        updated_at = _parse_updated_at(item.get("updated_at"))
-        return (risk, -updated_at.timestamp() if updated_at != datetime.min else 0)
+            evidence_risk += 8
 
-    pending = sorted(pending, key=_risk_key, reverse=True)
+        # Secondary: current inferred state
+        secondary_risk = 100 - progress_score
+        if progress_status == "stalled":
+            secondary_risk += 24
+        elif progress_status == "uncertain":
+            secondary_risk += 10
+        if next_status == "stale":
+            secondary_risk += 12
+        elif next_status == "open":
+            secondary_risk += 6
+
+        # Tertiary: active intervention
+        tertiary_risk = 0
+        if intervention_status == "active":
+            tertiary_risk += 8
+            if intervention_type == "stuck_replan":
+                tertiary_risk += 4
+
+        total_risk = evidence_risk + secondary_risk + tertiary_risk
+        updated_at = _parse_updated_at(item.get("updated_at"))
+        stale_rank = 0 if next_status == "stale" else 1
+        project_id = sanitize_text_strict(item.get("id", ""), allow_empty=True, max_len=24)
+        return (
+            -total_risk,  # risk desc
+            stale_rank,  # stale before open
+            last_activity_dt,  # last_activity asc
+            updated_at,  # updated_at asc
+            project_id,  # deterministic fallback
+        )
+
+    pending = sorted(pending, key=_risk_key)
     return pending[: max(limit, 1)]
 
 

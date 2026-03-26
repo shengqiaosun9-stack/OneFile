@@ -458,6 +458,52 @@ def _normalize_update_signals(value: Any, content: Any, kind: str, next_action_t
     }
 
 
+def _build_evidence_snapshot(project: Dict[str, Any], safe_ts: str, recent_updates: List[Dict[str, Any]]) -> Dict[str, Any]:
+    raw_ops = project.get("ops_signals", {})
+    ops_missing = not isinstance(raw_ops, dict) or not raw_ops
+    ops = normalize_ops_signals_state(raw_ops if isinstance(raw_ops, dict) else {}, safe_ts)
+
+    fallback_updates_7d = 0
+    fallback_completed_14d = 0
+    fallback_last_activity = ""
+    now_dt = _parse_dt(safe_ts) or datetime.now()
+    for item in recent_updates:
+        if not isinstance(item, dict):
+            continue
+        created_at = sanitize_version_date(item.get("created_at", ""))
+        created_dt = _parse_dt(created_at)
+        if created_dt is None:
+            continue
+        age_days = max((now_dt.date() - created_dt.date()).days, 0)
+        if age_days <= 7:
+            fallback_updates_7d += 1
+        if age_days <= 14 and bool(item.get("completion_signal", False)):
+            fallback_completed_14d += 1
+        if not fallback_last_activity or created_dt > (_parse_dt(fallback_last_activity) or datetime.min):
+            fallback_last_activity = created_at
+
+    if ops_missing:
+        updates_7d = fallback_updates_7d
+        completed_actions_14d = fallback_completed_14d
+        last_activity_at = fallback_last_activity or sanitize_version_date(project.get("updated_at", safe_ts))
+    else:
+        updates_7d = max(int(ops.get("updates_7d", 0) or 0), 0)
+        completed_actions_14d = max(int(ops.get("completed_actions_14d", 0) or 0), 0)
+        last_activity_at = sanitize_version_date(ops.get("last_activity_at", project.get("updated_at", safe_ts)))
+
+    intervention_rate_14d = _clamp01(ops.get("intervention_trigger_rate_14d", 0.0), default=0.0)
+    share_views_14d = max(int(ops.get("share_views_14d", 0) or 0), 0)
+    return {
+        "ops_missing": ops_missing,
+        "updates_7d": updates_7d,
+        "completed_actions_14d": completed_actions_14d,
+        "last_activity_at": last_activity_at,
+        "days_since_last_activity": _days_since(last_activity_at, safe_ts),
+        "intervention_trigger_rate_14d": round(intervention_rate_14d, 2),
+        "share_views_14d": share_views_14d,
+    }
+
+
 def evaluate_progress_state(project: Dict[str, Any], timestamp: str, window: int = 5) -> Dict[str, Any]:
     safe_ts = sanitize_version_date(timestamp or project.get("updated_at", get_now_str()))
     updates = project.get("updates", [])
@@ -465,27 +511,18 @@ def evaluate_progress_state(project: Dict[str, Any], timestamp: str, window: int
         updates = []
     recent: List[Dict[str, Any]] = [item for item in updates if isinstance(item, dict)][: max(window, 1)]
 
-    if not recent:
-        return {
-            "progress_eval": {
-                "status": "stalled",
-                "score": 18,
-                "reason_codes": ["no_updates"],
-                "evaluated_at": safe_ts,
-            },
-            "system_confidence": 0.42,
-        }
-
     next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
     next_action_text = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=120)
+    next_action_status = sanitize_text_strict(next_action.get("status", ""), allow_empty=True, max_len=16).lower()
+    evidence_snapshot = _build_evidence_snapshot(project, safe_ts, recent)
+    updates_7d = evidence_snapshot["updates_7d"]
+    completed_14d = evidence_snapshot["completed_actions_14d"]
+    days_since_last = evidence_snapshot["days_since_last_activity"]
 
     evidence_values: List[float] = []
     alignment_values: List[float] = []
     completion_hits = 0
     note_like = 0
-    result_like = 0
-    low_evidence_streak = 0
-    streak_active = True
     confused_hits = 0
     reason_codes: List[str] = []
 
@@ -507,71 +544,112 @@ def evaluate_progress_state(project: Dict[str, Any], timestamp: str, window: int
             completion_hits += 1
         if kind in {"note", "hypothesis"}:
             note_like += 1
-        if kind == "result":
-            result_like += 1
-
-        if streak_active and (evidence < 0.35 or kind in {"note", "hypothesis"}):
-            low_evidence_streak += 1
-        else:
-            streak_active = False
         if any(token in content for token in ["不知道", "随便", "先这样", "再说", "哈哈", "嗯嗯", "可能"]):
             confused_hits += 1
 
-    total = len(recent)
-    evidence_avg = sum(evidence_values) / total
-    alignment_avg = sum(alignment_values) / total
+    total = max(len(recent), 1)
+    evidence_avg = (sum(evidence_values) / len(evidence_values)) if evidence_values else 0.0
+    alignment_avg = (sum(alignment_values) / len(alignment_values)) if alignment_values else 0.0
     note_ratio = note_like / total
-    result_ratio = result_like / total
 
-    score = (
-        evidence_avg * 44
-        + alignment_avg * 24
-        + (min(completion_hits, 2) / 2) * 18
-        + result_ratio * 16
+    # Primary evidence contribution (~70%)
+    updates_component = (min(updates_7d, 4) / 4.0) * 20
+    completion_component = (min(completed_14d, 3) / 3.0) * 34
+    if days_since_last is None:
+        activity_component = 6
+    elif days_since_last <= 1:
+        activity_component = 16
+    elif days_since_last <= 3:
+        activity_component = 12
+    elif days_since_last <= 6:
+        activity_component = 8
+    elif days_since_last <= 10:
+        activity_component = 3
+    else:
+        activity_component = 0
+    primary_score = updates_component + completion_component + activity_component
+
+    # Secondary inferred contribution (~30%)
+    secondary_score = (
+        evidence_avg * 12
+        + alignment_avg * 10
+        + (min(completion_hits, 2) / 2.0) * 8
     )
+
+    score = primary_score + secondary_score
+    if completed_14d > 0 and updates_7d > 0:
+        score += 8
+        if days_since_last is not None and days_since_last <= 3:
+            score += 4
+    if next_action_status == "stale":
+        score -= 6
+        reason_codes.append("ev_next_action_stale")
     if note_ratio >= 0.6:
-        score -= 12
-        reason_codes.append("low_evidence_updates")
-    if low_evidence_streak >= 2:
-        score -= 10
-        reason_codes.append("low_evidence_streak")
+        score -= 4
+        reason_codes.append("inf_low_evidence_updates")
     if confused_hits >= max(1, total // 2):
         score -= 5
-        reason_codes.append("confused_input_pattern")
+        reason_codes.append("inf_confused_inputs")
 
-    next_action_status = sanitize_text_strict(next_action.get("status", ""), allow_empty=True, max_len=16).lower()
-    if next_action_status == "stale":
-        score -= 9
-        reason_codes.append("next_action_stale")
+    if updates_7d == 0:
+        reason_codes.append("ev_updates_zero")
+    elif updates_7d <= 1:
+        reason_codes.append("ev_updates_low")
+    else:
+        reason_codes.append("ev_updates_positive")
 
-    days_since_last = _days_since(recent[0].get("created_at", ""), safe_ts)
+    if completed_14d == 0:
+        reason_codes.append("ev_completion_zero")
+    else:
+        reason_codes.append("ev_completion_positive")
+
     if days_since_last is not None:
         if days_since_last >= 7:
-            score -= 18
-            reason_codes.append("inactive_7d")
+            reason_codes.append("ev_inactive_7d")
         elif days_since_last >= 3:
-            score -= 8
-            reason_codes.append("inactive_3d")
+            reason_codes.append("ev_inactive_3d")
+        else:
+            reason_codes.append("ev_recent_activity")
 
-    score_int = _clamp_score(score, default=40)
-    if score_int >= 68 and (completion_hits > 0 or result_ratio >= 0.4):
+    if updates_7d >= 2 and completed_14d == 0:
+        reason_codes.append("ev_update_without_completion")
+    if completion_hits > 0:
+        reason_codes.append("inf_completion_signal")
+    if evidence_snapshot["ops_missing"]:
+        reason_codes.append("ev_ops_fallback_updates")
+
+    score_int = _clamp_score(score, default=38)
+    if score_int >= 66 and completed_14d > 0:
         status = "advancing"
-    elif score_int < 45 or low_evidence_streak >= 2 or (days_since_last is not None and days_since_last >= 7):
+    elif score_int < 45 or (updates_7d >= 2 and completed_14d == 0) or (days_since_last is not None and days_since_last >= 7):
         status = "stalled"
     else:
         status = "uncertain"
-    if status == "stalled" and "confused_input_pattern" in reason_codes and low_evidence_streak < 2:
+    if status == "stalled" and "inf_confused_inputs" in reason_codes and completed_14d > 0:
         status = "uncertain"
     if status == "advancing":
-        reason_codes.append("evidence_positive")
-    if status == "stalled" and "stuck_risk" not in reason_codes:
-        reason_codes.append("stuck_risk")
+        reason_codes.append("ev_progress_advancing")
+    elif status == "stalled":
+        reason_codes.append("ev_progress_stalled")
 
-    confidence = 0.44 + min(total, 5) * 0.08
-    if completion_hits:
-        confidence += 0.1
+    confidence = 0.46
+    if not evidence_snapshot["ops_missing"]:
+        confidence += 0.20
+    if updates_7d > 0:
+        confidence += 0.10
+    if completed_14d > 0:
+        confidence += 0.12
+    if days_since_last is not None:
+        if days_since_last <= 3:
+            confidence += 0.08
+        elif days_since_last >= 7:
+            confidence -= 0.08
     if note_ratio > 0.7:
-        confidence -= 0.08
+        confidence -= 0.04
+    if confused_hits >= max(1, total // 2):
+        confidence -= 0.03
+    if total >= 3:
+        confidence += 0.05
     confidence = round(_clamp01(confidence, default=0.55), 2)
 
     return {
@@ -606,26 +684,59 @@ def derive_intervention_state(project: Dict[str, Any], timestamp: str) -> Dict[s
     progress = normalize_progress_eval_state(project.get("progress_eval", {}), safe_ts)
     previous = normalize_intervention_state(project.get("intervention", {}), safe_ts)
     next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
+    updates = project.get("updates", [])
+    if not isinstance(updates, list):
+        updates = []
+    recent_updates = [item for item in updates if isinstance(item, dict)][:5]
+    evidence_snapshot = _build_evidence_snapshot(project, safe_ts, recent_updates)
 
     score = _clamp_score(progress.get("score", 50), default=50)
     status = sanitize_text_strict(progress.get("status", ""), allow_empty=True, max_len=16).lower()
     reason_codes = set(_safe_reason_codes(progress.get("reason_codes", [])))
     next_action_status = sanitize_text_strict(next_action.get("status", ""), allow_empty=True, max_len=16).lower()
-    confused_pattern = "confused_input_pattern" in reason_codes
-    high_risk = status == "stalled" or score < 45 or "low_evidence_streak" in reason_codes
+    has_open_action = next_action_status in {"open", "stale"}
+    updates_7d = evidence_snapshot["updates_7d"]
+    completed_14d = evidence_snapshot["completed_actions_14d"]
+    days_since_last = evidence_snapshot["days_since_last_activity"]
+    intervention_rate = evidence_snapshot["intervention_trigger_rate_14d"]
 
-    if high_risk and next_action_status in {"open", "stale"}:
-        severe = (score < 35 or "inactive_7d" in reason_codes) and not confused_pattern
-        intervention_type = "stuck_replan" if severe else "nudge"
+    pattern_inactive = has_open_action and days_since_last is not None and days_since_last >= 7
+    pattern_updates_without_completion = has_open_action and updates_7d >= 2 and completed_14d == 0
+    pattern_repeat_trigger = has_open_action and intervention_rate >= 0.6 and updates_7d >= 1
+    pattern_low_evidence = has_open_action and updates_7d >= 1 and completed_14d == 0 and (
+        "inf_low_evidence_updates" in reason_codes
+        or "inf_confused_inputs" in reason_codes
+        or "ev_update_without_completion" in reason_codes
+    )
+    pattern_recovered = completed_14d > 0 and status == "advancing" and score >= 65
+
+    if pattern_inactive or pattern_updates_without_completion or pattern_repeat_trigger:
         base_action = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=140)
         recommended = _compress_next_action_text(base_action, conservative=True)
-        if confused_pattern:
-            message = "最近输入较模糊，请先定义一个可执行且可验证的具体动作。"
+        if pattern_inactive:
+            message = "超过7天未出现有效推进，请先完成一个48小时内可验证动作。"
+        elif pattern_repeat_trigger:
+            message = "近期多次触发介入仍缺少完成证据，请将动作拆小并在48小时内拿到结果。"
         else:
-            message = "项目推进信号偏弱，请先完成一个短周期可验证动作。" if severe else "建议收敛下一步动作，优先拿到可验证结果。"
+            message = "近期有更新但没有完成证据，请先完成当前动作并记录结果。"
         triggered_at = previous.get("triggered_at", safe_ts) if previous.get("status") == "active" else safe_ts
         return {
-            "type": intervention_type,
+            "type": "stuck_replan",
+            "message": message,
+            "recommended_next_action": recommended,
+            "triggered_at": triggered_at,
+            "status": "active",
+        }
+
+    if pattern_low_evidence or (has_open_action and status in {"uncertain", "stalled"} and score < 60 and updates_7d > 0):
+        base_action = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=140)
+        recommended = _compress_next_action_text(base_action, conservative=True)
+        message = "最近更新偏记录性，请补充一条可验证结果或明确完成信号。"
+        if "inf_confused_inputs" in reason_codes:
+            message = "最近输入较模糊，请先定义一个可执行且可验证的具体动作。"
+        triggered_at = previous.get("triggered_at", safe_ts) if previous.get("status") == "active" else safe_ts
+        return {
+            "type": "nudge",
             "message": message,
             "recommended_next_action": recommended,
             "triggered_at": triggered_at,
@@ -633,8 +744,14 @@ def derive_intervention_state(project: Dict[str, Any], timestamp: str) -> Dict[s
         }
 
     if previous.get("status") == "active":
-        previous["status"] = "resolved"
-        previous["message"] = "最近进展已恢复，继续按下一动作推进。"
+        if pattern_recovered or not has_open_action:
+            previous["status"] = "resolved"
+            previous["message"] = "最近进展已恢复，继续按下一动作推进。"
+        else:
+            previous["status"] = "idle"
+            previous["type"] = "none"
+            previous["message"] = ""
+            previous["recommended_next_action"] = ""
     elif previous.get("type") == "none":
         previous["status"] = "idle"
     return previous
