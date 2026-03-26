@@ -1653,33 +1653,56 @@ def render_update_panel(project: Dict[str, Any]) -> None:
 def render_share_page(project: Dict[str, Any]) -> None:
     project = prepare_project_for_render(project)
     share_url = build_share_url(project["id"])
-    st.markdown("# OneFile 项目档案")
+    summary = sanitize_text_strict(project.get("summary", ""), allow_empty=True, max_len=140) or "项目定位待补充"
+    stage_text = escape(project.get("stage_label", stage_label(project.get("stage", ""))))
+    form_text = escape(project.get("form_type_label", ""))
+    model_text = escape(project.get("model_type_label", model_type_label(project.get("model_type", ""))))
+    latest = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=180)
+    problem_text = sanitize_text_strict(project.get("problem_statement", ""), allow_empty=True, max_len=220) or "问题定义待补充"
+    solution_text = sanitize_text_strict(project.get("solution_approach", ""), allow_empty=True, max_len=220) or "解决方案待补充"
+    users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=120) or "目标用户待补充"
+    use_cases_text = sanitize_text_strict(project.get("use_cases", ""), allow_empty=True, max_len=220) or "典型场景待补充"
+
+    st.markdown("# OneFile 项目分享")
     st.caption(f"公开链接：{share_url}")
     st.markdown(
         f"""
-        <div class="archive-panel">
-          <div style="font-size:30px;font-weight:700;color:#0f172a;line-height:1.2;margin-bottom:8px;">{escape(project.get("title", ""))}</div>
-          <div style="color:#64748B;font-size:14px;margin-bottom:18px;">{escape(project.get("summary", ""))}</div>
-          <div class="archive-kpis">
-            <div class="archive-kpi"><div class="archive-kpi-label">技术栈</div><div class="archive-kpi-value">{escape(', '.join(project.get("tech_stack", [])))}</div></div>
-            <div class="archive-kpi"><div class="archive-kpi-label">目标用户</div><div class="archive-kpi-value">{escape(project.get("users", ""))}</div></div>
-            <div class="archive-kpi"><div class="archive-kpi-label">商业模式</div><div class="archive-kpi-value">{escape(project.get("model_desc", project.get("model", "")))}</div></div>
-            <div class="archive-kpi"><div class="archive-kpi-label">当前阶段</div><div class="archive-kpi-value">{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</div></div>
-            <div class="archive-kpi"><div class="archive-kpi-label">产品形态</div><div class="archive-kpi-value">{escape(project.get("form_type_label", ""))}</div></div>
-            <div class="archive-kpi"><div class="archive-kpi-label">最新进展</div><div class="archive-kpi-value">{escape(project.get("latest_update", ""))}</div></div>
-          </div>
+        <div style="max-width:920px;margin:0 auto;">
+          <section class="archive-panel" style="padding:28px 30px;">
+            <div style="font-size:36px;font-weight:800;color:#0f172a;line-height:1.15;margin-bottom:12px;">{escape(project.get("title", ""))}</div>
+            <div style="font-size:18px;line-height:1.6;color:#1e293b;font-weight:600;margin-bottom:14px;">{escape(summary)}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:{'14px' if latest else '0'};">
+              <span class="status-chip status-{project.get('status_theme', 'blue')}">{stage_text}</span>
+              <span class="status-chip status-slate">{form_text}</span>
+              <span class="status-chip status-slate">{model_text}</span>
+            </div>
+            {"<div style='padding:10px 12px;border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;color:#334155;font-size:14px;'><strong>当前进展：</strong>" + escape(latest) + "</div>" if latest else ""}
+          </section>
+
+          <section class="archive-panel" style="padding:22px 24px;margin-top:12px;">
+            <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Problem</div>
+            <div style="font-size:17px;line-height:1.7;color:#0f172a;font-weight:600;">{escape(problem_text)}</div>
+          </section>
+
+          <section class="archive-panel" style="padding:22px 24px;margin-top:12px;">
+            <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Solution</div>
+            <div style="font-size:17px;line-height:1.7;color:#0f172a;font-weight:600;">{escape(solution_text)}</div>
+          </section>
+
+          <section class="archive-panel" style="padding:22px 24px;margin-top:12px;">
+            <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Users & Use Cases</div>
+            <div style="font-size:15px;line-height:1.7;color:#334155;"><strong>目标用户：</strong>{escape(users_text)}</div>
+            <div style="font-size:15px;line-height:1.7;color:#334155;margin-top:8px;"><strong>典型场景：</strong>{escape(use_cases_text)}</div>
+          </section>
+
+          <section class="archive-panel" style="padding:22px 24px;margin-top:12px;">
+            <div style="font-size:12px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">Current Status</div>
+            <div style="font-size:15px;line-height:1.7;color:#334155;">{escape(latest or "暂无最新进展")}</div>
+          </section>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("### 问题与解决方案")
-    st.markdown(f"**问题定义**：{escape(sanitize_text_strict(project.get('problem_statement', ''), allow_empty=True, max_len=180) or '待补充')}")
-    st.markdown(f"**解决方案**：{escape(sanitize_text_strict(project.get('solution_approach', ''), allow_empty=True, max_len=180) or '待补充')}")
-    st.markdown("### 用户与场景")
-    st.markdown(f"**目标用户**：{escape(sanitize_text_strict(project.get('users', ''), allow_empty=True, max_len=100) or '待补充')}")
-    st.markdown(f"**典型场景**：{escape(sanitize_text_strict(project.get('use_cases', ''), allow_empty=True, max_len=180) or '待补充')}")
-    st.markdown("### 当前状态")
-    st.info(sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=180) or "暂无最新进展")
     if st.button("返回项目库"):
         st.query_params.clear()
         st.rerun()
