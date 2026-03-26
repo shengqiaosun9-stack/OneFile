@@ -1056,8 +1056,6 @@ def render_cards_grid(projects: List[Dict[str, Any]], highlight_id: str) -> None
 
 def render_archive_panel(project: Dict[str, Any]) -> None:
     project = prepare_project_for_render(project)
-    project_id = project.get("id", "")
-    share_url = build_share_url(project_id)
     st.markdown(
         f"""
         <div class="archive-panel">
@@ -1081,9 +1079,7 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
           <div class="archive-kpi"><div class="archive-kpi-label">当前阶段</div><div class="archive-kpi-value">{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</div></div>
           <div class="archive-kpi"><div class="archive-kpi-label">产品形态</div><div class="archive-kpi-value">{escape(project.get("form_type_label", ""))}</div></div>
           <div class="archive-kpi"><div class="archive-kpi-label">商业模式类型</div><div class="archive-kpi-value">{escape(project.get("model_type_label", model_type_label(project.get("model_type", ""))))}</div></div>
-          <div class="archive-kpi"><div class="archive-kpi-label">分享链接</div><div class="archive-kpi-value">{escape(share_url)}</div></div>
           <div class="archive-kpi"><div class="archive-kpi-label">更新时间</div><div class="archive-kpi-value">{escape(project.get("updated_at", "-"))}</div></div>
-          <div class="archive-kpi"><div class="archive-kpi-label">最新进展</div><div class="archive-kpi-value">{escape(project.get("latest_update", ""))}</div></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1468,7 +1464,6 @@ def render_update_panel(project: Dict[str, Any]) -> None:
 
 def render_share_page(project: Dict[str, Any]) -> None:
     project = prepare_project_for_render(project)
-    share_url = build_share_url(project["id"])
     summary = sanitize_text_strict(project.get("summary", ""), allow_empty=True, max_len=140) or "项目定位待补充"
     stage_text = escape(project.get("stage_label", stage_label(project.get("stage", ""))))
     form_text = escape(project.get("form_type_label", ""))
@@ -1479,8 +1474,6 @@ def render_share_page(project: Dict[str, Any]) -> None:
     users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=120) or "目标用户待补充"
     use_cases_text = sanitize_text_strict(project.get("use_cases", ""), allow_empty=True, max_len=220) or "典型场景待补充"
 
-    st.markdown("# 项目介绍")
-    st.caption(f"公开链接：{share_url}")
     st.markdown(
         f"""
         <div style="max-width:920px;margin:0 auto;">
@@ -1519,9 +1512,6 @@ def render_share_page(project: Dict[str, Any]) -> None:
         """,
         unsafe_allow_html=True,
     )
-    if st.button("返回项目库"):
-        st.query_params.clear()
-        st.rerun()
 
 
 def render_filters(projects: List[Dict[str, Any]]) -> Dict[str, str]:

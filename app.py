@@ -25,7 +25,7 @@ st.set_page_config(page_title="OneFile · 一人档", page_icon="🧬", layout="
 init_state()
 
 project_id = st.query_params.get("project", "")
-page_view = str(st.query_params.get("view", "share" if project_id else "")).strip().lower()
+page_view = str(st.query_params.get("view", "detail" if project_id else "")).strip().lower()
 page_mode = str(st.query_params.get("mode", "")).strip().lower()
 
 if page_view == "edit":
@@ -54,12 +54,14 @@ if page_view == "edit":
 if project_id:
     target_project = get_project_by_id(str(project_id))
     if target_project:
-        render_styles()
-        render_nav(st.session_state.active_tab)
-        if page_view == "detail":
-            render_project_detail_page(target_project)
-        else:
+        if page_view == "share":
+            # 分享页是对外阅读页，不加载内部控制台导航壳层
+            render_styles()
             render_share_page(target_project)
+        else:
+            render_styles()
+            render_nav(st.session_state.active_tab)
+            render_project_detail_page(target_project)
         st.stop()
     st.query_params.clear()
 
