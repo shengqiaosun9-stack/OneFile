@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from html import escape
 from typing import Any, Dict, List, Optional
 
@@ -72,6 +73,207 @@ def export_enabled() -> bool:
         except Exception:
             raw = None
     return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+CREATE_TEXT_WARNING_THRESHOLD = 50
+CREATE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+
+
+def _ensure_create_overlay_state() -> None:
+    defaults = {
+        "create_dialog_open": False,
+        "create_status": "idle",
+        "create_draft_title": "",
+        "create_draft_text": "",
+        "create_error": None,
+        "create_file_error": None,
+        "create_submit_nonce": None,
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def open_create_overlay() -> None:
+    _ensure_create_overlay_state()
+    st.session_state.create_dialog_open = True
+    if st.session_state.create_status != "submitting":
+        st.session_state.create_status = "editing"
+    st.session_state.create_error = None
+
+
+def _reset_create_overlay_state(clear_draft: bool) -> None:
+    _ensure_create_overlay_state()
+    st.session_state.create_dialog_open = False
+    st.session_state.create_status = "idle"
+    st.session_state.create_error = None
+    st.session_state.create_file_error = None
+    st.session_state.create_submit_nonce = None
+    if clear_draft:
+        st.session_state.create_draft_title = ""
+        st.session_state.create_draft_text = ""
+
+
+def _on_create_overlay_dismiss() -> None:
+    _ensure_create_overlay_state()
+    if st.session_state.create_status == "submitting":
+        return
+    # ESC / 遮罩关闭：关闭创建态但保留草稿
+    _reset_create_overlay_state(clear_draft=False)
+
+
+def render_create_overlay() -> None:
+    _ensure_create_overlay_state()
+    if not st.session_state.create_dialog_open:
+        return
+
+    dismissible = st.session_state.create_status != "submitting"
+
+    @st.dialog("创建项目档案", width="large", dismissible=dismissible, on_dismiss=_on_create_overlay_dismiss)
+    def _render_dialog() -> None:
+        _ensure_create_overlay_state()
+
+        status = str(st.session_state.get("create_status", "editing"))
+        is_submitting = status == "submitting"
+
+        if st.session_state.get("create_error"):
+            st.error(clean_text(st.session_state.create_error, 180))
+        if st.session_state.get("create_file_error"):
+            st.warning(clean_text(st.session_state.create_file_error, 180))
+
+        st.caption("粘贴聊天记录、BP、会议纪要或零散描述，系统会自动完成结构化。")
+
+        st.text_input(
+            "项目名 / 公司名（必填）",
+            key="create_draft_title",
+            placeholder="例如：星火计划",
+            disabled=is_submitting,
+        )
+        st.text_area(
+            "项目描述（核心输入）",
+            key="create_draft_text",
+            height=240,
+            placeholder="可直接粘贴：聊天记录 / BP 文本 / 口述整理 / 零散要点。无需先整理结构。",
+            disabled=is_submitting,
+        )
+
+        text_clean = sanitize_text_strict(
+            st.session_state.get("create_draft_text", ""),
+            allow_empty=True,
+            max_len=12000,
+        )
+        if text_clean and len("".join(text_clean.split())) < CREATE_TEXT_WARNING_THRESHOLD:
+            st.warning("内容较少，生成结果可能不完整")
+
+        uploaded_file = None
+        with st.expander("补充材料（可选）", expanded=False):
+            uploaded_file = st.file_uploader(
+                "上传文件（单文件，<=10MB）",
+                type=["pdf", "txt", "md"],
+                accept_multiple_files=False,
+                key="create_upload_file",
+                disabled=is_submitting,
+                help="文件为补充输入，主文本仍是创建主输入。",
+            )
+
+        action_cols = st.columns([0.2, 0.2, 0.6])
+        with action_cols[0]:
+            submit_clicked = st.button(
+                "创建项目档案",
+                type="primary",
+                use_container_width=True,
+                disabled=is_submitting,
+                key="create_overlay_submit",
+            )
+        with action_cols[1]:
+            cancel_clicked = st.button(
+                "取消",
+                use_container_width=True,
+                disabled=is_submitting,
+                key="create_overlay_cancel",
+            )
+
+        if cancel_clicked:
+            _reset_create_overlay_state(clear_draft=True)
+            st.rerun()
+
+        if submit_clicked and not is_submitting:
+            title_clean = sanitize_text_strict(
+                st.session_state.get("create_draft_title", ""),
+                allow_empty=True,
+                max_len=42,
+            )
+            if not title_clean:
+                st.session_state.create_status = "error"
+                st.session_state.create_error = "请先填写项目名/公司名。"
+                st.rerun()
+            if not validate_title_candidate(title_clean):
+                st.session_state.create_status = "error"
+                st.session_state.create_error = "项目名称格式无效，请使用简短清晰的名称。"
+                st.rerun()
+            if not text_clean:
+                st.session_state.create_status = "error"
+                st.session_state.create_error = "请先输入项目描述。"
+                st.rerun()
+
+            st.session_state.create_status = "submitting"
+            st.session_state.create_submit_nonce = uuid.uuid4().hex
+            st.session_state.create_error = None
+            st.session_state.create_file_error = None
+            st.rerun()
+
+        submit_nonce = st.session_state.get("create_submit_nonce")
+        if st.session_state.create_status == "submitting" and submit_nonce:
+            try:
+                title_clean = sanitize_text_strict(
+                    st.session_state.get("create_draft_title", ""),
+                    allow_empty=True,
+                    max_len=42,
+                )
+                main_text = sanitize_text_strict(
+                    st.session_state.get("create_draft_text", ""),
+                    allow_empty=True,
+                    max_len=12000,
+                )
+
+                file_text = ""
+                if uploaded_file is not None:
+                    if getattr(uploaded_file, "size", 0) > CREATE_UPLOAD_MAX_BYTES:
+                        st.session_state.create_file_error = "上传文件超过 10MB，已忽略该文件。"
+                    else:
+                        try:
+                            file_text = extract_text_from_uploaded_file(uploaded_file)
+                        except Exception as exc:
+                            st.session_state.create_file_error = f"文件解析失败，已仅使用文本创建：{clean_text(exc, 120)}"
+
+                # 固定顺序合并：主文本在前，文件文本在后
+                parts = [main_text.strip()]
+                if file_text and file_text.strip():
+                    parts.append(file_text.strip())
+                composed_input = "\n\n".join(parts).strip()
+
+                if not composed_input:
+                    raise ValueError("请输入项目描述后再创建。")
+
+                with st.spinner("正在结构化并创建项目档案..."):
+                    schema = structure_project(composed_input, user_title=title_clean)
+                    schema = sanitize_schema({**schema, "title": title_clean})
+                    project = enrich_generated_project(schema)
+                    insert_project_top(project)
+
+                st.session_state.last_generated_id = project["id"]
+                st.session_state.selected_project_id = project["id"]
+                st.session_state.flash_message = "项目档案已创建。可继续优化或查看完整档案。"
+                st.session_state.create_status = "success"
+                _reset_create_overlay_state(clear_draft=True)
+                st.rerun()
+            except Exception as exc:
+                st.session_state.create_status = "error"
+                st.session_state.create_error = f"创建失败：{clean_text(exc, 140)}"
+                st.session_state.create_submit_nonce = None
+                st.rerun()
+
+    _render_dialog()
 
 
 def render_styles() -> None:

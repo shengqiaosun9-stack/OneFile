@@ -4,8 +4,10 @@ from project_model import get_now_str, project_matches
 from state_manager import get_project_by_id, init_state
 from ui_components import (
     render_cards_grid,
+    render_create_overlay,
     render_filters,
     render_nav,
+    open_create_overlay,
     render_project_detail_page,
     render_share_page,
     render_styles,
@@ -26,6 +28,10 @@ page_view = str(st.query_params.get("view", "share" if project_id else "")).stri
 page_mode = str(st.query_params.get("mode", "")).strip().lower()
 
 if page_view == "edit":
+    if page_mode == "create":
+        st.query_params.clear()
+        open_create_overlay()
+        st.rerun()
     render_styles()
     render_nav(st.session_state.active_tab)
     if render_edit_page is None:
@@ -33,8 +39,6 @@ if page_view == "edit":
         if st.button("返回项目库", type="primary"):
             st.query_params.clear()
             st.rerun()
-    elif page_mode == "create":
-        render_edit_page(None, mode="create")
     else:
         target_project = get_project_by_id(str(project_id)) if project_id else None
         if target_project:
@@ -70,12 +74,12 @@ with top_left:
     )
 with top_right:
     if st.button("创建项目档案", type="primary", use_container_width=True):
-        st.query_params.clear()
-        st.query_params["view"] = "edit"
-        st.query_params["mode"] = "create"
+        open_create_overlay()
         st.rerun()
     if st.button("园区后台", use_container_width=True):
         st.toast("园区管理后台为下一阶段功能，目前保留交互入口。")
+
+render_create_overlay()
 
 if st.session_state.flash_message:
     st.success(st.session_state.flash_message)
@@ -96,9 +100,7 @@ if not st.session_state.projects:
     empty_cta_cols = st.columns([0.26, 0.74])
     with empty_cta_cols[0]:
         if st.button("创建项目档案", key="empty_state_create", type="primary", use_container_width=True):
-            st.query_params.clear()
-            st.query_params["view"] = "edit"
-            st.query_params["mode"] = "create"
+            open_create_overlay()
             st.rerun()
 else:
     filters = render_filters(st.session_state.projects)
