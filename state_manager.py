@@ -159,12 +159,44 @@ def get_visible_projects() -> List[Dict[str, Any]]:
 
 def get_pending_projects(limit: int = 4) -> List[Dict[str, Any]]:
     visible = get_visible_projects()
-    pending = []
+    pending: List[Dict[str, Any]] = []
     for project in visible:
         next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
         status = sanitize_text_strict(next_action.get("status", ""), allow_empty=True, max_len=16).lower()
         if status in {"open", "stale"}:
             pending.append(project)
+
+    def _risk_key(item: Dict[str, Any]) -> tuple:
+        progress = item.get("progress_eval", {}) if isinstance(item.get("progress_eval", {}), dict) else {}
+        progress_status = sanitize_text_strict(progress.get("status", ""), allow_empty=True, max_len=16).lower()
+        try:
+            progress_score = int(progress.get("score", 50))
+        except Exception:
+            progress_score = 50
+        progress_score = max(0, min(progress_score, 100))
+        next_action = item.get("next_action", {}) if isinstance(item.get("next_action", {}), dict) else {}
+        next_status = sanitize_text_strict(next_action.get("status", ""), allow_empty=True, max_len=16).lower()
+        intervention = item.get("intervention", {}) if isinstance(item.get("intervention", {}), dict) else {}
+        intervention_status = sanitize_text_strict(intervention.get("status", ""), allow_empty=True, max_len=16).lower()
+        intervention_type = sanitize_text_strict(intervention.get("type", ""), allow_empty=True, max_len=24).lower()
+
+        risk = 100 - progress_score
+        if progress_status == "stalled":
+            risk += 45
+        elif progress_status == "uncertain":
+            risk += 20
+        if next_status == "stale":
+            risk += 22
+        elif next_status == "open":
+            risk += 10
+        if intervention_status == "active":
+            risk += 15
+            if intervention_type == "stuck_replan":
+                risk += 8
+        updated_at = _parse_updated_at(item.get("updated_at"))
+        return (risk, -updated_at.timestamp() if updated_at != datetime.min else 0)
+
+    pending = sorted(pending, key=_risk_key, reverse=True)
     return pending[: max(limit, 1)]
 
 
@@ -428,6 +460,7 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
             "merged_chars": len(merged_input),
         },
         kind=update_kind,
+        next_action_text=(next_project.get("next_action", {}) or {}).get("text", ""),
     )
     next_project["updates"] = [new_update] + [item for item in existing_updates if isinstance(item, dict)]
 
@@ -466,7 +499,7 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
 
     st.session_state.selected_project_id = project_id
     st.session_state.last_generated_id = project_id
-    st.session_state.flash_message = "项目进展已更新，下一动作已刷新。"
+    st.session_state.flash_message = "项目进展已更新，系统已评估推进状态并刷新下一步建议。"
 
 
 def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
@@ -533,6 +566,7 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
             created_at=timestamp,
             input_meta={"has_text": True, "has_file": False, "merged_chars": len(latest_update)},
             kind=update_kind,
+            next_action_text=(next_project.get("next_action", {}) or {}).get("text", ""),
         )
         next_project["updates"] = [new_update] + [item for item in existing_updates if isinstance(item, dict)]
     next_project = evolve_action_loop(next_project, latest_update or next_project.get("latest_update", ""), timestamp)
@@ -546,4 +580,4 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
 
     st.session_state.selected_project_id = project_id
     st.session_state.last_generated_id = project_id
-    st.session_state.flash_message = "项目档案已保存，下一动作已同步。"
+    st.session_state.flash_message = "项目档案已保存，系统已重新评估项目推进状态。"

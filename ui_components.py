@@ -297,13 +297,14 @@ def render_create_overlay() -> None:
                                 "has_file": bool(file_text and file_text.strip()),
                                 "merged_chars": len(composed_input),
                             },
+                            next_action_text=(project.get("next_action", {}) or {}).get("text", ""),
                         )
                     ]
                     insert_project_top(project)
 
                 st.session_state.last_generated_id = project["id"]
                 st.session_state.selected_project_id = project["id"]
-                st.session_state.flash_message = "项目档案已创建，已生成下一动作。可继续推进。"
+                st.session_state.flash_message = "项目档案已创建，系统已生成并评估下一步动作。"
                 st.session_state.create_status = "success"
                 _reset_create_overlay_state(clear_draft=True)
                 st.rerun()
@@ -1151,6 +1152,15 @@ def _truncate_text(value: Any, limit: int) -> str:
     return text[: max(limit - 1, 1)].rstrip() + "…"
 
 
+def _progress_status_label(status: str) -> str:
+    safe = sanitize_text_strict(status, allow_empty=True, max_len=20).lower()
+    if safe == "advancing":
+        return "推进中"
+    if safe == "stalled":
+        return "卡住"
+    return "不确定"
+
+
 def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     project = prepare_project_for_render(project)
     status_class = f"status-chip status-{project.get('status_theme', 'blue')}"
@@ -1164,6 +1174,16 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
     next_action_text = _truncate_text(next_action.get("text", ""), 78) or "待生成下一动作"
     next_action_status = next_action_status_label(next_action.get("status", "open"))
+    progress_eval = project.get("progress_eval", {}) if isinstance(project.get("progress_eval", {}), dict) else {}
+    try:
+        progress_score = int(progress_eval.get("score", 50))
+    except Exception:
+        progress_score = 50
+    progress_score = max(0, min(progress_score, 100))
+    progress_status = _progress_status_label(progress_eval.get("status", "uncertain"))
+    intervention = project.get("intervention", {}) if isinstance(project.get("intervention", {}), dict) else {}
+    intervention_status = sanitize_text_strict(intervention.get("status", ""), allow_empty=True, max_len=20).lower()
+    intervention_text = _truncate_text(intervention.get("message", ""), 82) if intervention_status == "active" else ""
 
     share_url = build_share_url(project["id"])
     top_actions = st.columns([0.84, 0.16])
@@ -1206,6 +1226,8 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
               <div style="font-size:11px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">当前状态</div>
               <div style="font-size:13px;color:#334155;" class="line-clamp-2"><strong>最新进展：</strong>{escape(latest_short)}</div>
               <div style="font-size:13px;color:#334155;margin-top:6px;" class="line-clamp-2"><strong>下一动作（{escape(next_action_status)}）：</strong>{escape(next_action_text)}</div>
+              <div style="font-size:12px;color:#475569;margin-top:6px;"><strong>推进评估：</strong>{escape(progress_status)} · {progress_score}分</div>
+              {f'<div style="font-size:12px;color:#9A3412;margin-top:6px;" class="line-clamp-2"><strong>系统介入：</strong>{escape(intervention_text)}</div>' if intervention_text else ''}
             </div>
           </div>
         </div>
@@ -1274,6 +1296,36 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
     next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
     next_action_text = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=180) or "待生成下一动作"
     next_action_state = next_action_status_label(next_action.get("status", "open"))
+    progress_eval = project.get("progress_eval", {}) if isinstance(project.get("progress_eval", {}), dict) else {}
+    progress_status = _progress_status_label(progress_eval.get("status", "uncertain"))
+    try:
+        progress_score = int(progress_eval.get("score", 50))
+    except Exception:
+        progress_score = 50
+    progress_score = max(0, min(progress_score, 100))
+    try:
+        decision_quality = float(project.get("decision_quality_score", 0.55) or 0.55)
+    except Exception:
+        decision_quality = 0.55
+    try:
+        system_conf = float(project.get("system_confidence", 0.62) or 0.62)
+    except Exception:
+        system_conf = 0.62
+    intervention = project.get("intervention", {}) if isinstance(project.get("intervention", {}), dict) else {}
+    intervention_status = sanitize_text_strict(intervention.get("status", ""), allow_empty=True, max_len=20).lower()
+    intervention_message = sanitize_text_strict(intervention.get("message", ""), allow_empty=True, max_len=180)
+    recommended_action = sanitize_text_strict(intervention.get("recommended_next_action", ""), allow_empty=True, max_len=160)
+    intervention_effectiveness = sanitize_text_strict(
+        project.get("last_intervention_effectiveness", "unknown"),
+        allow_empty=True,
+        max_len=16,
+    ).lower()
+    intervention_effect_label = {
+        "positive": "正向",
+        "neutral": "中性",
+        "negative": "负向",
+        "unknown": "待评估",
+    }.get(intervention_effectiveness, "待评估")
     problem_text = sanitize_text_strict(project.get("problem_statement", ""), allow_empty=True, max_len=280) or "待补充"
     solution_text = sanitize_text_strict(project.get("solution_approach", ""), allow_empty=True, max_len=280) or "待补充"
     users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=140) or "待补充"
@@ -1286,6 +1338,10 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
           <div class="status-callout">{escape(latest_update)}</div>
           <div class="status-callout" style="margin-top:8px;"><strong>当前张力：</strong>{escape(current_tension)}</div>
           <div class="status-callout" style="margin-top:8px;"><strong>下一动作（{escape(next_action_state)}）：</strong>{escape(next_action_text)}</div>
+          <div class="status-callout" style="margin-top:8px;"><strong>推进评估：</strong>{escape(progress_status)} · {progress_score}分（系统置信度 {round(system_conf * 100)}%）</div>
+          <div class="status-callout" style="margin-top:8px;"><strong>决策质量：</strong>{round(decision_quality * 100)}%</div>
+          <div class="status-callout" style="margin-top:8px;"><strong>上次介入效果：</strong>{escape(intervention_effect_label)}</div>
+          {f'<div class="status-callout" style="margin-top:8px;background:#FFF7ED;border:1px solid #FDBA74;"><strong>系统介入：</strong>{escape(intervention_message)}{"<br/><strong>建议动作：</strong>"+escape(recommended_action) if recommended_action else ""}</div>' if intervention_status == 'active' and intervention_message else ''}
         </div>
         """,
         unsafe_allow_html=True,
@@ -1625,6 +1681,16 @@ def render_pending_actions_panel(projects: List[Dict[str, Any]]) -> None:
         next_action = item.get("next_action", {}) if isinstance(item.get("next_action", {}), dict) else {}
         action_text = _truncate_text(next_action.get("text", ""), 92) or "待生成下一动作"
         action_status = next_action_status_label(next_action.get("status", "open"))
+        progress_eval = item.get("progress_eval", {}) if isinstance(item.get("progress_eval", {}), dict) else {}
+        progress_status = _progress_status_label(progress_eval.get("status", "uncertain"))
+        try:
+            progress_score = int(progress_eval.get("score", 50))
+        except Exception:
+            progress_score = 50
+        progress_score = max(0, min(progress_score, 100))
+        intervention = item.get("intervention", {}) if isinstance(item.get("intervention", {}), dict) else {}
+        intervention_status = sanitize_text_strict(intervention.get("status", ""), allow_empty=True, max_len=20).lower()
+        intervention_hint = _truncate_text(intervention.get("message", ""), 70) if intervention_status == "active" else ""
         cols = st.columns([0.62, 0.18, 0.2], gap="small")
         with cols[0]:
             st.markdown(
@@ -1632,6 +1698,8 @@ def render_pending_actions_panel(projects: List[Dict[str, Any]]) -> None:
                 <div style="padding:10px 12px;border:1px solid #E2E8F0;border-radius:10px;background:#FFFFFF;">
                   <div style="font-size:14px;font-weight:700;color:#0f172a;">{escape(item.get("title", ""))}</div>
                   <div style="font-size:13px;color:#475569;margin-top:4px;"><strong>{escape(action_status)}：</strong>{escape(action_text)}</div>
+                  <div style="font-size:12px;color:#64748B;margin-top:4px;"><strong>推进评估：</strong>{escape(progress_status)} · {progress_score}分</div>
+                  {f'<div style="font-size:12px;color:#9A3412;margin-top:4px;"><strong>介入建议：</strong>{escape(intervention_hint)}</div>' if intervention_hint else ''}
                 </div>
                 """,
                 unsafe_allow_html=True,

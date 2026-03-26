@@ -49,6 +49,11 @@ SCHEMA_TEMPLATE: Dict[str, Any] = {
     "current_state": "",
     "current_tension": "",
     "next_action": {},
+    "system_confidence": 0.62,
+    "decision_quality_score": 0.55,
+    "last_intervention_effectiveness": "unknown",
+    "progress_eval": {},
+    "intervention": {},
 }
 
 CN_NUM_MAP = {
@@ -134,6 +139,10 @@ MODEL_TYPE_LABELS = {
 UPDATE_SOURCE_VALUES = {"create", "overlay_update", "direct_edit", "system_migration"}
 UPDATE_KIND_VALUES = {"hypothesis", "action", "result", "note"}
 NEXT_ACTION_STATUS_VALUES = {"open", "completed", "stale"}
+PROGRESS_STATUS_VALUES = {"advancing", "stalled", "uncertain"}
+INTERVENTION_TYPE_VALUES = {"none", "nudge", "stuck_replan"}
+INTERVENTION_STATUS_VALUES = {"idle", "active", "resolved"}
+INTERVENTION_EFFECTIVENESS_VALUES = {"unknown", "positive", "neutral", "negative"}
 
 STAGE_STATE_LABELS = {
     "IDEA": "探索假设",
@@ -233,6 +242,83 @@ def normalize_input_meta(value: Any, merged_chars_fallback: int = 0) -> Dict[str
     }
 
 
+def _clamp01(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except Exception:
+        parsed = default
+    return max(0.0, min(parsed, 1.0))
+
+
+def _clamp_score(value: Any, default: int = 0) -> int:
+    try:
+        parsed = int(round(float(value)))
+    except Exception:
+        parsed = default
+    return max(0, min(parsed, 100))
+
+
+def _parse_dt(value: Any) -> Optional[datetime]:
+    raw = sanitize_text_strict(value, allow_empty=True, max_len=24)
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _days_since(value: Any, now_value: str) -> Optional[int]:
+    now_dt = _parse_dt(now_value)
+    target_dt = _parse_dt(value)
+    if not now_dt or not target_dt:
+        return None
+    return max((now_dt.date() - target_dt.date()).days, 0)
+
+
+def _safe_reason_codes(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    result: List[str] = []
+    for item in value:
+        code = sanitize_text_strict(item, allow_empty=True, max_len=40)
+        if code:
+            result.append(code)
+    return result[:8]
+
+
+def normalize_progress_eval_state(value: Any, fallback_timestamp: str) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    status = sanitize_text_strict(raw.get("status", ""), allow_empty=True, max_len=16).lower()
+    if status not in PROGRESS_STATUS_VALUES:
+        status = "uncertain"
+    return {
+        "status": status,
+        "score": _clamp_score(raw.get("score", 50), default=50),
+        "reason_codes": _safe_reason_codes(raw.get("reason_codes", [])),
+        "evaluated_at": sanitize_version_date(raw.get("evaluated_at", fallback_timestamp)),
+    }
+
+
+def normalize_intervention_state(value: Any, fallback_timestamp: str) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    intervention_type = sanitize_text_strict(raw.get("type", ""), allow_empty=True, max_len=24).lower()
+    if intervention_type not in INTERVENTION_TYPE_VALUES:
+        intervention_type = "none"
+    status = sanitize_text_strict(raw.get("status", ""), allow_empty=True, max_len=20).lower()
+    if status not in INTERVENTION_STATUS_VALUES:
+        status = "idle" if intervention_type == "none" else "active"
+    return {
+        "type": intervention_type,
+        "message": sanitize_text_strict(raw.get("message", ""), allow_empty=True, max_len=180),
+        "recommended_next_action": sanitize_text_strict(raw.get("recommended_next_action", ""), allow_empty=True, max_len=140),
+        "triggered_at": sanitize_version_date(raw.get("triggered_at", fallback_timestamp)),
+        "status": status,
+    }
+
+
 def infer_update_kind(text: Any) -> str:
     content = sanitize_text_strict(text, allow_empty=True, max_len=160).lower()
     if not content:
@@ -247,6 +333,284 @@ def infer_update_kind(text: Any) -> str:
     if any(hit in content for hit in hypothesis_hits):
         return "hypothesis"
     return "note"
+
+
+def build_update_signals(content: Any, kind: str, next_action_text: Any = "") -> Dict[str, Any]:
+    safe_content = sanitize_text_strict(content, allow_empty=True, max_len=180)
+    normalized_kind = sanitize_text_strict(kind, allow_empty=True, max_len=16).lower()
+    if normalized_kind not in UPDATE_KIND_VALUES:
+        normalized_kind = infer_update_kind(safe_content)
+    completion_signal = evaluate_next_action_completion(next_action_text, safe_content, normalized_kind)
+
+    evidence = 0.38
+    if normalized_kind == "result":
+        evidence = 0.82
+    elif normalized_kind == "action":
+        evidence = 0.66
+    elif normalized_kind == "hypothesis":
+        evidence = 0.34
+    elif normalized_kind == "note":
+        evidence = 0.22
+    if completion_signal:
+        evidence = max(evidence, 0.84)
+
+    has_metric = bool(re.search(r"\d", safe_content))
+    if has_metric:
+        evidence = min(1.0, evidence + 0.08)
+    confused_pattern = any(token in safe_content for token in ["不知道", "随便", "先这样", "再说", "哈哈", "嗯嗯", "可能"])
+    if confused_pattern:
+        evidence = min(evidence, 0.26)
+
+    action_tokens = _action_tokens(next_action_text)
+    lower_text = safe_content.lower()
+    alignment = 0.22
+    if action_tokens:
+        token_hits = sum(1 for token in action_tokens if token and token in lower_text)
+        alignment = min(1.0, 0.2 + 0.18 * token_hits)
+    if completion_signal:
+        alignment = max(alignment, 0.75)
+    if normalized_kind in {"note", "hypothesis"} and not completion_signal:
+        alignment = min(alignment, 0.35)
+    if confused_pattern:
+        alignment = min(alignment, 0.22)
+    alignment = _clamp01(alignment, default=0.22)
+    return {
+        "evidence_score": round(_clamp01(evidence, default=0.3), 2),
+        "action_alignment": round(alignment, 2),
+        "completion_signal": bool(completion_signal),
+    }
+
+
+def _normalize_update_signals(value: Any, content: Any, kind: str, next_action_text: Any = "") -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    generated = build_update_signals(content=content, kind=kind, next_action_text=next_action_text)
+    return {
+        "evidence_score": round(_clamp01(raw.get("evidence_score", generated["evidence_score"]), default=generated["evidence_score"]), 2),
+        "action_alignment": round(_clamp01(raw.get("action_alignment", generated["action_alignment"]), default=generated["action_alignment"]), 2),
+        "completion_signal": bool(raw.get("completion_signal", generated["completion_signal"])),
+    }
+
+
+def evaluate_progress_state(project: Dict[str, Any], timestamp: str, window: int = 5) -> Dict[str, Any]:
+    safe_ts = sanitize_version_date(timestamp or project.get("updated_at", get_now_str()))
+    updates = project.get("updates", [])
+    if not isinstance(updates, list):
+        updates = []
+    recent: List[Dict[str, Any]] = [item for item in updates if isinstance(item, dict)][: max(window, 1)]
+
+    if not recent:
+        return {
+            "progress_eval": {
+                "status": "stalled",
+                "score": 18,
+                "reason_codes": ["no_updates"],
+                "evaluated_at": safe_ts,
+            },
+            "system_confidence": 0.42,
+        }
+
+    next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
+    next_action_text = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=120)
+
+    evidence_values: List[float] = []
+    alignment_values: List[float] = []
+    completion_hits = 0
+    note_like = 0
+    result_like = 0
+    low_evidence_streak = 0
+    streak_active = True
+    confused_hits = 0
+    reason_codes: List[str] = []
+
+    for item in recent:
+        content = sanitize_text_strict(item.get("content", ""), allow_empty=True, max_len=180)
+        kind = sanitize_text_strict(item.get("kind", ""), allow_empty=True, max_len=16).lower()
+        if kind not in UPDATE_KIND_VALUES:
+            kind = infer_update_kind(content)
+        signals = _normalize_update_signals(item, content=content, kind=kind, next_action_text=next_action_text)
+
+        evidence = signals["evidence_score"]
+        alignment = signals["action_alignment"]
+        completion = bool(signals["completion_signal"])
+
+        evidence_values.append(evidence)
+        alignment_values.append(alignment)
+
+        if completion:
+            completion_hits += 1
+        if kind in {"note", "hypothesis"}:
+            note_like += 1
+        if kind == "result":
+            result_like += 1
+
+        if streak_active and (evidence < 0.35 or kind in {"note", "hypothesis"}):
+            low_evidence_streak += 1
+        else:
+            streak_active = False
+        if any(token in content for token in ["不知道", "随便", "先这样", "再说", "哈哈", "嗯嗯", "可能"]):
+            confused_hits += 1
+
+    total = len(recent)
+    evidence_avg = sum(evidence_values) / total
+    alignment_avg = sum(alignment_values) / total
+    note_ratio = note_like / total
+    result_ratio = result_like / total
+
+    score = (
+        evidence_avg * 44
+        + alignment_avg * 24
+        + (min(completion_hits, 2) / 2) * 18
+        + result_ratio * 16
+    )
+    if note_ratio >= 0.6:
+        score -= 12
+        reason_codes.append("low_evidence_updates")
+    if low_evidence_streak >= 2:
+        score -= 10
+        reason_codes.append("low_evidence_streak")
+    if confused_hits >= max(1, total // 2):
+        score -= 5
+        reason_codes.append("confused_input_pattern")
+
+    next_action_status = sanitize_text_strict(next_action.get("status", ""), allow_empty=True, max_len=16).lower()
+    if next_action_status == "stale":
+        score -= 9
+        reason_codes.append("next_action_stale")
+
+    days_since_last = _days_since(recent[0].get("created_at", ""), safe_ts)
+    if days_since_last is not None:
+        if days_since_last >= 7:
+            score -= 18
+            reason_codes.append("inactive_7d")
+        elif days_since_last >= 3:
+            score -= 8
+            reason_codes.append("inactive_3d")
+
+    score_int = _clamp_score(score, default=40)
+    if score_int >= 68 and (completion_hits > 0 or result_ratio >= 0.4):
+        status = "advancing"
+    elif score_int < 45 or low_evidence_streak >= 2 or (days_since_last is not None and days_since_last >= 7):
+        status = "stalled"
+    else:
+        status = "uncertain"
+    if status == "stalled" and "confused_input_pattern" in reason_codes and low_evidence_streak < 2:
+        status = "uncertain"
+    if status == "advancing":
+        reason_codes.append("evidence_positive")
+    if status == "stalled" and "stuck_risk" not in reason_codes:
+        reason_codes.append("stuck_risk")
+
+    confidence = 0.44 + min(total, 5) * 0.08
+    if completion_hits:
+        confidence += 0.1
+    if note_ratio > 0.7:
+        confidence -= 0.08
+    confidence = round(_clamp01(confidence, default=0.55), 2)
+
+    return {
+        "progress_eval": {
+            "status": status,
+            "score": score_int,
+            "reason_codes": sorted(set(reason_codes)),
+            "evaluated_at": safe_ts,
+        },
+        "system_confidence": confidence,
+    }
+
+
+def _compress_next_action_text(text: Any, conservative: bool) -> str:
+    safe = sanitize_text_strict(text, allow_empty=True, max_len=140)
+    if not safe:
+        safe = "完成一个可验证动作并记录结果证据。"
+    if not conservative:
+        return safe
+    while safe.startswith("48小时内完成："):
+        safe = sanitize_text_strict(safe[len("48小时内完成：") :], allow_empty=True, max_len=140)
+    safe = safe.replace("；并记录1条可验证结果。", "").strip()
+    head = re.split(r"[。；;]", safe)[0].strip()
+    if not head:
+        head = safe
+    compact = sanitize_text_strict(head, allow_empty=True, max_len=60)
+    return f"48小时内完成：{compact}；并记录1条可验证结果。"
+
+
+def derive_intervention_state(project: Dict[str, Any], timestamp: str) -> Dict[str, Any]:
+    safe_ts = sanitize_version_date(timestamp or project.get("updated_at", get_now_str()))
+    progress = normalize_progress_eval_state(project.get("progress_eval", {}), safe_ts)
+    previous = normalize_intervention_state(project.get("intervention", {}), safe_ts)
+    next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
+
+    score = _clamp_score(progress.get("score", 50), default=50)
+    status = sanitize_text_strict(progress.get("status", ""), allow_empty=True, max_len=16).lower()
+    reason_codes = set(_safe_reason_codes(progress.get("reason_codes", [])))
+    next_action_status = sanitize_text_strict(next_action.get("status", ""), allow_empty=True, max_len=16).lower()
+    confused_pattern = "confused_input_pattern" in reason_codes
+    high_risk = status == "stalled" or score < 45 or "low_evidence_streak" in reason_codes
+
+    if high_risk and next_action_status in {"open", "stale"}:
+        severe = (score < 35 or "inactive_7d" in reason_codes) and not confused_pattern
+        intervention_type = "stuck_replan" if severe else "nudge"
+        base_action = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=140)
+        recommended = _compress_next_action_text(base_action, conservative=True)
+        if confused_pattern:
+            message = "最近输入较模糊，请先定义一个可执行且可验证的具体动作。"
+        else:
+            message = "项目推进信号偏弱，请先完成一个短周期可验证动作。" if severe else "建议收敛下一步动作，优先拿到可验证结果。"
+        triggered_at = previous.get("triggered_at", safe_ts) if previous.get("status") == "active" else safe_ts
+        return {
+            "type": intervention_type,
+            "message": message,
+            "recommended_next_action": recommended,
+            "triggered_at": triggered_at,
+            "status": "active",
+        }
+
+    if previous.get("status") == "active":
+        previous["status"] = "resolved"
+        previous["message"] = "最近进展已恢复，继续按下一动作推进。"
+    elif previous.get("type") == "none":
+        previous["status"] = "idle"
+    return previous
+
+
+def assess_intervention_effectiveness(
+    previous_intervention: Dict[str, Any],
+    previous_progress: Dict[str, Any],
+    current_progress: Dict[str, Any],
+    latest_update_signals: Optional[Dict[str, Any]],
+) -> str:
+    prev_status = sanitize_text_strict(previous_intervention.get("status", ""), allow_empty=True, max_len=20).lower()
+    prev_type = sanitize_text_strict(previous_intervention.get("type", ""), allow_empty=True, max_len=24).lower()
+    if prev_status != "active" or prev_type == "none":
+        return "unknown"
+
+    previous_score = _clamp_score(previous_progress.get("score", 50), default=50)
+    current_score = _clamp_score(current_progress.get("score", 50), default=50)
+    score_delta = current_score - previous_score
+    completion_signal = bool((latest_update_signals or {}).get("completion_signal", False))
+    evidence_score = _clamp01((latest_update_signals or {}).get("evidence_score", 0.0))
+    current_status = sanitize_text_strict(current_progress.get("status", ""), allow_empty=True, max_len=16).lower()
+
+    if completion_signal or score_delta >= 12 or (current_status == "advancing" and evidence_score >= 0.6):
+        return "positive"
+    if current_status == "stalled" and score_delta <= 2 and evidence_score < 0.45:
+        return "negative"
+    return "neutral"
+
+
+def update_decision_quality_score(previous_score: Any, effectiveness: str, current_progress_score: Any) -> float:
+    prev = _clamp01(previous_score, default=0.55)
+    current_score = _clamp_score(current_progress_score, default=50)
+    effect = sanitize_text_strict(effectiveness, allow_empty=True, max_len=16).lower()
+    target_map = {
+        "positive": 0.82,
+        "neutral": 0.60,
+        "negative": 0.35,
+        "unknown": max(0.38, min(0.88, 0.36 + current_score / 130)),
+    }
+    target = target_map.get(effect, target_map["unknown"])
+    blended = prev * 0.72 + target * 0.28
+    return round(_clamp01(blended, default=0.55), 2)
 
 
 def _sanitize_next_action_status(value: Any) -> str:
@@ -278,27 +642,27 @@ def infer_current_tension(stage: Any, latest_update: Any) -> str:
     return defaults.get(normalized_stage, defaults["BUILDING"])
 
 
-def suggest_next_action_text(stage: Any, latest_update: Any, current_tension: Any) -> str:
+def suggest_next_action_text(stage: Any, latest_update: Any, current_tension: Any, conservative: bool = False) -> str:
     normalized_stage = normalize_stage_value(stage)
     latest = sanitize_text_strict(latest_update, allow_empty=True, max_len=120)
     tension = sanitize_text_strict(current_tension, allow_empty=True, max_len=120)
     if "客户" in latest or "签约" in latest or "试点" in latest:
-        return "将新增客户转化为稳定复购，并记录一条可复用的签约路径。"
+        return _compress_next_action_text("将新增客户转化为稳定复购，并记录一条可复用的签约路径。", conservative)
     if "上线" in latest or "发布" in latest:
-        return "跟踪上线后7天核心指标，并产出一条基于数据的优化动作。"
+        return _compress_next_action_text("跟踪上线后7天核心指标，并产出一条基于数据的优化动作。", conservative)
     if "营收" in latest or "收入" in latest or "mrr" in latest.lower():
-        return "拆解收入来源并执行一次提效实验，验证可复制的增长动作。"
+        return _compress_next_action_text("拆解收入来源并执行一次提效实验，验证可复制的增长动作。", conservative)
     if normalized_stage in {"IDEA", "BUILDING"}:
-        return "在7天内完成一次真实用户验证，并记录关键反馈结论。"
+        return _compress_next_action_text("在7天内完成一次真实用户验证，并记录关键反馈结论。", conservative)
     if normalized_stage in {"MVP", "VALIDATION"}:
-        return "完成1-2个目标用户场景的闭环验证，沉淀可量化结果。"
+        return _compress_next_action_text("完成1-2个目标用户场景的闭环验证，沉淀可量化结果。", conservative)
     if normalized_stage == "EARLY_REVENUE":
-        return "围绕转化或复购执行一次改进实验，并记录前后数据变化。"
+        return _compress_next_action_text("围绕转化或复购执行一次改进实验，并记录前后数据变化。", conservative)
     if normalized_stage in {"SCALING", "MATURE"}:
-        return "围绕当前增长瓶颈执行本周行动，并输出结果复盘。"
+        return _compress_next_action_text("围绕当前增长瓶颈执行本周行动，并输出结果复盘。", conservative)
     if tension:
-        return f"针对当前张力推进：{tension}"
-    return "明确下一步可验证动作，并在本周内完成一次反馈闭环。"
+        return _compress_next_action_text(f"针对当前张力推进：{tension}", conservative)
+    return _compress_next_action_text("明确下一步可验证动作，并在本周内完成一次反馈闭环。", conservative)
 
 
 def normalize_next_action_state(value: Any, stage: Any, latest_update: Any) -> Dict[str, Any]:
@@ -370,13 +734,24 @@ def evolve_action_loop(project: Dict[str, Any], latest_update: Any, timestamp: s
     ts = sanitize_version_date(timestamp or evolved.get("updated_at", get_now_str()))
     stage_value = normalize_stage_value(evolved.get("stage", ""))
     update_kind = infer_update_kind(latest_update)
+    previous_progress = normalize_progress_eval_state(evolved.get("progress_eval", {}), ts)
+    previous_intervention = normalize_intervention_state(evolved.get("intervention", {}), ts)
+    previous_quality = _clamp01(evolved.get("decision_quality_score", 0.55), default=0.55)
+    previous_confidence = _clamp01(evolved.get("system_confidence", 0.62), default=0.62)
+    conservative_mode = previous_quality < 0.45 or previous_confidence < 0.5
+
     current_tension = sanitize_text_strict(evolved.get("current_tension", ""), allow_empty=True, max_len=120)
     current_state = sanitize_text_strict(evolved.get("current_state", ""), allow_empty=True, max_len=40) or infer_current_state(stage_value)
     next_action = normalize_next_action_state(evolved.get("next_action", {}), stage_value, latest_update)
+    newest_update_signals = build_update_signals(latest_update, update_kind, next_action.get("text", ""))
 
     action_completed = False
     if next_action.get("status") == "open":
-        action_completed = evaluate_next_action_completion(next_action.get("text", ""), latest_update, update_kind)
+        action_completed = newest_update_signals["completion_signal"] or evaluate_next_action_completion(
+            next_action.get("text", ""),
+            latest_update,
+            update_kind,
+        )
 
     if action_completed:
         next_action["status"] = "completed"
@@ -386,10 +761,10 @@ def evolve_action_loop(project: Dict[str, Any], latest_update: Any, timestamp: s
         current_tension = sanitize_text_strict(base_tension, allow_empty=True, max_len=120)
         next_action = normalize_next_action_state(
             {
-                "text": suggest_next_action_text(stage_value, latest_update, current_tension),
+                "text": suggest_next_action_text(stage_value, latest_update, current_tension, conservative=conservative_mode),
                 "status": "open",
                 "generated_at": ts,
-                "confidence": 0.66,
+                "confidence": 0.66 if not conservative_mode else 0.58,
             },
             stage_value,
             latest_update,
@@ -402,9 +777,9 @@ def evolve_action_loop(project: Dict[str, Any], latest_update: Any, timestamp: s
         if update_kind in {"note", "hypothesis"} and next_action.get("status") == "open":
             next_action["status"] = "stale"
         if next_action.get("status") == "stale":
-            next_action["text"] = suggest_next_action_text(stage_value, latest_update, current_tension)
+            next_action["text"] = suggest_next_action_text(stage_value, latest_update, current_tension, conservative=True)
             next_action["generated_at"] = ts
-            next_action["confidence"] = 0.55
+            next_action["confidence"] = 0.52
         if not current_tension:
             current_tension = infer_current_tension(stage_value, latest_update)
 
@@ -420,6 +795,62 @@ def evolve_action_loop(project: Dict[str, Any], latest_update: Any, timestamp: s
     evolved["current_state"] = current_state
     evolved["current_tension"] = current_tension
     evolved["next_action"] = next_action
+    updates = evolved.get("updates", [])
+    if isinstance(updates, list) and updates:
+        normalized_updates: List[Dict[str, Any]] = []
+        for idx, item in enumerate(updates):
+            if not isinstance(item, dict):
+                continue
+            item_copy = copy.deepcopy(item)
+            content = sanitize_text_strict(item_copy.get("content", ""), allow_empty=True, max_len=180)
+            item_kind = sanitize_text_strict(item_copy.get("kind", ""), allow_empty=True, max_len=16).lower()
+            if item_kind not in UPDATE_KIND_VALUES:
+                item_kind = infer_update_kind(content)
+            signal = _normalize_update_signals(
+                {
+                    "evidence_score": item_copy.get("evidence_score"),
+                    "action_alignment": item_copy.get("action_alignment"),
+                    "completion_signal": item_copy.get("completion_signal"),
+                },
+                content=content,
+                kind=item_kind,
+                next_action_text=next_action.get("text", ""),
+            )
+            item_copy["kind"] = item_kind
+            item_copy["evidence_score"] = signal["evidence_score"]
+            item_copy["action_alignment"] = signal["action_alignment"]
+            item_copy["completion_signal"] = signal["completion_signal"]
+            normalized_updates.append(item_copy)
+            if idx == 0:
+                newest_update_signals = signal
+        evolved["updates"] = normalized_updates
+
+    evaluation = evaluate_progress_state(evolved, ts, window=5)
+    evolved["progress_eval"] = evaluation["progress_eval"]
+    evolved["system_confidence"] = evaluation["system_confidence"]
+
+    intervention = derive_intervention_state(evolved, ts)
+    if intervention.get("status") == "active" and intervention.get("recommended_next_action"):
+        next_action["text"] = _compress_next_action_text(intervention["recommended_next_action"], conservative=True)
+        next_action["status"] = "open"
+        next_action["generated_at"] = ts
+        next_action["confidence"] = 0.54 if intervention.get("type") == "stuck_replan" else 0.60
+        evolved["next_action"] = next_action
+    evolved["intervention"] = intervention
+
+    current_progress = normalize_progress_eval_state(evolved.get("progress_eval", {}), ts)
+    effectiveness = assess_intervention_effectiveness(
+        previous_intervention=previous_intervention,
+        previous_progress=previous_progress,
+        current_progress=current_progress,
+        latest_update_signals=newest_update_signals,
+    )
+    evolved["last_intervention_effectiveness"] = effectiveness
+    evolved["decision_quality_score"] = update_decision_quality_score(
+        previous_score=previous_quality,
+        effectiveness=effectiveness,
+        current_progress_score=current_progress.get("score", 50),
+    )
     evolved["loop_has_open_action"] = next_action.get("status") in {"open", "stale"}
     return evolved
 
@@ -431,16 +862,67 @@ def ensure_action_loop_defaults(project: Dict[str, Any]) -> Dict[str, Any]:
         normalized.get("latest_update", normalized.get("version_footprint", "")),
         fallback=normalized.get("version_footprint", ""),
     )
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    quality = _clamp01(normalized.get("decision_quality_score", 0.55), default=0.55)
+    confidence = _clamp01(normalized.get("system_confidence", 0.62), default=0.62)
+    conservative_mode = quality < 0.45 or confidence < 0.5
     state = sanitize_text_strict(normalized.get("current_state", ""), allow_empty=True, max_len=40) or infer_current_state(stage_value)
     tension = sanitize_text_strict(normalized.get("current_tension", ""), allow_empty=True, max_len=120)
     next_action = normalize_next_action_state(normalized.get("next_action", {}), stage_value, latest)
+    if conservative_mode:
+        next_action["text"] = _compress_next_action_text(next_action.get("text", ""), conservative=True)
     if next_action.get("status") in {"open", "stale"} and not tension:
         tension = infer_current_tension(stage_value, latest)
     if not tension:
         tension = infer_current_tension(stage_value, latest)
+    updates = normalized.get("updates", [])
+    if isinstance(updates, list):
+        normalized_updates: List[Dict[str, Any]] = []
+        for item in updates:
+            if not isinstance(item, dict):
+                continue
+            item_copy = copy.deepcopy(item)
+            content = sanitize_text_strict(item_copy.get("content", ""), allow_empty=True, max_len=180)
+            item_kind = sanitize_text_strict(item_copy.get("kind", ""), allow_empty=True, max_len=16).lower()
+            if item_kind not in UPDATE_KIND_VALUES:
+                item_kind = infer_update_kind(content)
+            signal = _normalize_update_signals(
+                {
+                    "evidence_score": item_copy.get("evidence_score"),
+                    "action_alignment": item_copy.get("action_alignment"),
+                    "completion_signal": item_copy.get("completion_signal"),
+                },
+                content=content,
+                kind=item_kind,
+                next_action_text=next_action.get("text", ""),
+            )
+            item_copy["kind"] = item_kind
+            item_copy["evidence_score"] = signal["evidence_score"]
+            item_copy["action_alignment"] = signal["action_alignment"]
+            item_copy["completion_signal"] = signal["completion_signal"]
+            normalized_updates.append(item_copy)
+        normalized["updates"] = normalized_updates
     normalized["current_state"] = state
     normalized["current_tension"] = tension
     normalized["next_action"] = next_action
+    evaluation = evaluate_progress_state(normalized, ts, window=5)
+    normalized["progress_eval"] = evaluation["progress_eval"]
+    normalized["system_confidence"] = evaluation["system_confidence"]
+    effect = sanitize_text_strict(normalized.get("last_intervention_effectiveness", "unknown"), allow_empty=True, max_len=16).lower()
+    if effect not in INTERVENTION_EFFECTIVENESS_VALUES:
+        effect = "unknown"
+    normalized["last_intervention_effectiveness"] = effect
+    normalized["decision_quality_score"] = update_decision_quality_score(
+        previous_score=normalized.get("decision_quality_score", 0.55),
+        effectiveness=effect,
+        current_progress_score=normalized["progress_eval"].get("score", 50),
+    )
+    intervention = derive_intervention_state(normalized, ts)
+    if intervention.get("status") == "active" and intervention.get("recommended_next_action"):
+        next_action["text"] = _compress_next_action_text(intervention["recommended_next_action"], conservative=True)
+        next_action["status"] = "open"
+        normalized["next_action"] = next_action
+    normalized["intervention"] = intervention
     normalized["loop_has_open_action"] = next_action.get("status") in {"open", "stale"}
     return normalized
 
@@ -453,6 +935,8 @@ def build_update_entry(
     created_at: str = "",
     input_meta: Optional[Dict[str, Any]] = None,
     kind: str = "",
+    next_action_text: Any = "",
+    signals: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     safe_content = sanitize_version_event(content, allow_fallback=True)
     safe_created_at = sanitize_version_date(created_at or get_now_str())
@@ -460,6 +944,12 @@ def build_update_entry(
     safe_kind = sanitize_text_strict(kind, allow_empty=True, max_len=16).lower()
     if safe_kind not in UPDATE_KIND_VALUES:
         safe_kind = infer_update_kind(safe_content)
+    safe_signals = _normalize_update_signals(
+        signals or {},
+        content=safe_content,
+        kind=safe_kind,
+        next_action_text=next_action_text,
+    )
     merged_chars = len(safe_content)
     return {
         "id": clean_text(str(uuid.uuid4())[:12], 20, aggressive=True),
@@ -469,6 +959,9 @@ def build_update_entry(
         "created_at": safe_created_at,
         "source": safe_source,
         "kind": safe_kind,
+        "evidence_score": safe_signals["evidence_score"],
+        "action_alignment": safe_signals["action_alignment"],
+        "completion_signal": safe_signals["completion_signal"],
         "input_meta": normalize_input_meta(input_meta or {}, merged_chars_fallback=merged_chars),
     }
 
@@ -479,6 +972,9 @@ def _update_sort_key(item: Dict[str, Any]) -> str:
 
 def normalize_updates_state(project: Dict[str, Any], project_id: str, owner_user_id: str) -> List[Dict[str, Any]]:
     updates: List[Dict[str, Any]] = []
+    next_action_text = ""
+    if isinstance(project.get("next_action", {}), dict):
+        next_action_text = sanitize_text_strict(project.get("next_action", {}).get("text", ""), allow_empty=True, max_len=120)
     raw_updates = project.get("updates", [])
     if isinstance(raw_updates, list):
         for item in raw_updates:
@@ -492,6 +988,12 @@ def normalize_updates_state(project: Dict[str, Any], project_id: str, owner_user
                 created_at=item.get("created_at", item.get("date", item.get("timestamp", get_now_str()))),
                 input_meta=item.get("input_meta", {}),
                 kind=item.get("kind", ""),
+                next_action_text=next_action_text,
+                signals={
+                    "evidence_score": item.get("evidence_score"),
+                    "action_alignment": item.get("action_alignment"),
+                    "completion_signal": item.get("completion_signal"),
+                },
             )
             updates.append(entry)
 
@@ -517,6 +1019,7 @@ def normalize_updates_state(project: Dict[str, Any], project_id: str, owner_user
                         created_at=item.get("date", item.get("timestamp", get_now_str())),
                         input_meta={"has_text": True, "has_file": False, "merged_chars": len(event)},
                         kind="result",
+                        next_action_text=next_action_text,
                     )
                 )
 
@@ -534,6 +1037,7 @@ def normalize_updates_state(project: Dict[str, Any], project_id: str, owner_user
                 created_at=project.get("updated_at", get_now_str()),
                 input_meta={"has_text": True, "has_file": False, "merged_chars": len(fallback)},
                 kind="note",
+                next_action_text=next_action_text,
             )
         ]
 
@@ -801,6 +1305,20 @@ def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
         data.get("next_action", {}),
         clean.get("stage", ""),
         clean.get("latest_update", clean.get("version_footprint", "")),
+    )
+    clean["system_confidence"] = round(_clamp01(data.get("system_confidence", 0.62), default=0.62), 2)
+    clean["decision_quality_score"] = round(_clamp01(data.get("decision_quality_score", 0.55), default=0.55), 2)
+    effectiveness = sanitize_text_strict(data.get("last_intervention_effectiveness", "unknown"), allow_empty=True, max_len=16).lower()
+    if effectiveness not in INTERVENTION_EFFECTIVENESS_VALUES:
+        effectiveness = "unknown"
+    clean["last_intervention_effectiveness"] = effectiveness
+    clean["progress_eval"] = normalize_progress_eval_state(
+        data.get("progress_eval", {}),
+        fallback_timestamp=data.get("updated_at", get_now_str()),
+    )
+    clean["intervention"] = normalize_intervention_state(
+        data.get("intervention", {}),
+        fallback_timestamp=data.get("updated_at", get_now_str()),
     )
 
     return clean
