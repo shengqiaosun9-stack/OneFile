@@ -860,10 +860,24 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
         if key not in st.session_state:
             st.session_state[key] = value
 
+    current_idx = module_order.index(active_module)
+    step_cols = st.columns(4)
+    for idx, module_key in enumerate(module_order):
+        with step_cols[idx]:
+            is_active_step = module_key == active_module
+            step_label = module_labels[module_key].replace(") ", " ")
+            if st.button(
+                f"{'●' if is_active_step else '○'} {step_label}",
+                key=f"step_nav_{state_suffix}_{module_key}",
+                use_container_width=True,
+            ):
+                st.session_state[focus_key] = module_key
+                st.rerun()
+
     main_cols = st.columns([0.62, 0.38])
     with main_cols[0]:
-        st.markdown("#### 结构化编辑")
-        with st.expander("基础信息（title + summary）", expanded=active_module == "base"):
+        st.markdown(f"#### {module_labels[active_module]}")
+        if active_module == "base":
             st.text_input(
                 "项目名称（必填）",
                 key=f"title_{state_suffix}",
@@ -872,47 +886,66 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
             st.text_area(
                 "一句话定位（summary）",
                 key=f"summary_{state_suffix}",
-                height=90,
+                height=130,
                 placeholder="用一句话说明项目核心价值。",
             )
-
-        with st.expander("项目本质（problem + solution）", expanded=active_module == "essence"):
+        elif active_module == "essence":
             st.text_area(
                 "问题定义（problem_statement）",
                 key=f"problem_{state_suffix}",
-                height=110,
+                height=160,
                 placeholder="这个项目正在解决什么问题？",
             )
             st.text_area(
                 "解决方案（solution_approach）",
                 key=f"solution_{state_suffix}",
-                height=110,
+                height=160,
                 placeholder="你如何解决这个问题？",
             )
-
-        with st.expander("用户与场景（users + use_cases）", expanded=active_module == "users"):
+        elif active_module == "users":
             st.text_area(
                 "目标用户（users）",
                 key=f"users_{state_suffix}",
-                height=90,
+                height=130,
                 placeholder="谁是核心用户？",
             )
             st.text_area(
                 "典型场景（use_cases）",
                 key=f"use_cases_{state_suffix}",
-                height=110,
+                height=160,
                 placeholder="用户在什么场景下使用这个项目？",
             )
-
-        with st.expander("当前状态（latest_update）", expanded=active_module == "status"):
+        else:
             st.text_area(
                 "最新进展（latest_update）",
                 key=f"latest_{state_suffix}",
-                height=130,
+                height=220,
                 placeholder="例如：产品已上线并新增3个客户。",
             )
 
         st.caption("保存时会将四个模块拼装为结构化输入并进入既有 AI 结构化流程。")
+        nav_cols = st.columns([0.16, 0.16, 0.16, 0.52])
+        with nav_cols[0]:
+            prev_step = st.button(
+                "上一步",
+                key=f"prev_step_{state_suffix}",
+                use_container_width=True,
+                disabled=current_idx == 0,
+            )
+        with nav_cols[1]:
+            next_step = st.button(
+                "下一步",
+                key=f"next_step_{state_suffix}",
+                use_container_width=True,
+                disabled=current_idx == len(module_order) - 1,
+            )
+        if prev_step and current_idx > 0:
+            st.session_state[focus_key] = module_order[current_idx - 1]
+            st.rerun()
+        if next_step and current_idx < len(module_order) - 1:
+            st.session_state[focus_key] = module_order[current_idx + 1]
+            st.rerun()
+
         action_cols = st.columns([0.26, 0.18, 0.56])
         with action_cols[0]:
             submit = st.button(
@@ -946,7 +979,11 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
             border_color = "#2D7AFF" if is_active else "#E2E8F0"
             background = "#EFF6FF" if is_active else "#FFFFFF"
             section_title = module_labels[module_key]
-            content_html = escape(feedback_data[module_key]).replace("\n", "<br>")
+            if is_active:
+                preview_text = feedback_data[module_key]
+            else:
+                preview_text = feedback_data[module_key].split("\n")[0]
+            content_html = escape(preview_text).replace("\n", "<br>")
             st.markdown(
                 f"""
                 <div style="border:1px solid {border_color};background:{background};border-radius:10px;padding:12px;margin-bottom:10px;">
