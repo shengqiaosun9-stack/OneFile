@@ -817,54 +817,84 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
           <div class="creator-kicker">Edit Mode</div>
           <div style="font-size:24px;font-weight:700;color:#0f172a;margin-bottom:6px;">{escape(title_for_header)}</div>
           <div style="color:#64748B;font-size:14px;">
-            {'创建项目档案：请先填写项目名称与描述，随后可持续完善。' if is_create else '更新项目档案：你正在编辑同一项目对象，保存后卡片、完整档案与分享页将同步更新。'}
+            {'创建项目档案：填写最小信息即可创建，后续继续维护。' if is_create else '更新项目档案：左侧编辑，右侧查看当前档案，保存后会同步到卡片与分享页。'}
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    if project and project_id in st.session_state.undo_snapshots:
-        undo_cols = st.columns([0.22, 0.78])
-        with undo_cols[0]:
-            if st.button("撤销最近一次编辑", key=f"undo_edit_{project_id}", use_container_width=True):
-                try:
-                    undo_last_update(project_id)
-                    st.query_params["project"] = project_id
-                    st.query_params["view"] = "detail"
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"撤销失败：{clean_text(exc, 120)}")
-
-    with st.form(f"edit_form_{project_id or 'new'}", clear_on_submit=False):
-        title_input = st.text_input(
-            "项目名称（必填）",
-            value=default_title if not is_create else "",
-            placeholder="例如：星火计划",
-        )
-        desc_input = st.text_area(
-            "项目描述（必填）",
-            value=default_desc,
-            height=220,
-            placeholder="输入项目背景、目标用户、产品方案、商业模式等信息。",
-        )
-        latest_update_input = st.text_area(
-            "当前状态（可选）",
-            value=default_latest,
-            height=110,
-            placeholder="例如：产品已上线并新增3个客户。",
-        )
-        st.caption("保存时会先清洗文本，再进入同一套 AI 结构化流程；详情页展示的字段为唯一事实源。")
-
-        action_cols = st.columns([0.2, 0.16, 0.64])
-        with action_cols[0]:
-            submit = st.form_submit_button(
-                "创建项目档案" if is_create else "保存项目档案",
-                type="primary",
-                use_container_width=True,
+    main_cols = st.columns([0.62, 0.38])
+    with main_cols[0]:
+        st.markdown("#### 编辑内容")
+        with st.form(f"edit_form_{project_id or 'new'}", clear_on_submit=False):
+            title_input = st.text_input(
+                "项目名称（必填）",
+                value=default_title if not is_create else "",
+                placeholder="例如：星火计划",
             )
-        with action_cols[1]:
-            cancel = st.form_submit_button("取消", use_container_width=True)
+            desc_input = st.text_area(
+                "项目描述（必填）",
+                value=default_desc,
+                height=260,
+                placeholder="输入项目背景、目标用户、产品方案、商业模式等信息。",
+            )
+            latest_update_input = st.text_area(
+                "当前状态（可选）",
+                value=default_latest,
+                height=120,
+                placeholder="例如：产品已上线并新增3个客户。",
+            )
+            st.caption("保存时会先清洗文本，再进入同一套 AI 结构化流程。")
+
+            action_cols = st.columns([0.26, 0.18, 0.56])
+            with action_cols[0]:
+                submit = st.form_submit_button(
+                    "创建项目档案" if is_create else "保存项目档案",
+                    type="primary",
+                    use_container_width=True,
+                )
+            with action_cols[1]:
+                cancel = st.form_submit_button("取消", use_container_width=True)
+
+    with main_cols[1]:
+        st.markdown("#### 当前档案视图")
+        if is_create:
+            st.markdown(
+                """
+                - **Structured Metadata**：项目名称、阶段、形态、商业模式  
+                - **Problem & Solution**：问题定义与解决方案  
+                - **Users & Use Cases**：目标用户与典型场景  
+                - **Current Status**：当前阶段最新进展
+                """
+            )
+            st.caption("创建后会生成完整档案，你可以继续进入编辑态完善。")
+        else:
+            st.markdown(f"**项目名称**：{escape(target_project.get('title', ''))}")
+            st.markdown(f"**当前阶段**：{escape(target_project.get('stage_label', stage_label(target_project.get('stage', ''))))}")
+            st.markdown(f"**产品形态**：{escape(target_project.get('form_type_label', ''))}")
+            st.markdown(f"**商业模式**：{escape(target_project.get('model_desc', target_project.get('model', '')))}")
+            st.markdown("---")
+            st.markdown("**问题定义**")
+            st.markdown(escape(sanitize_text_strict(target_project.get("problem_statement", ""), allow_empty=True, max_len=180) or "待补充"))
+            st.markdown("**解决方案**")
+            st.markdown(escape(sanitize_text_strict(target_project.get("solution_approach", ""), allow_empty=True, max_len=180) or "待补充"))
+            st.markdown("---")
+            st.markdown("**目标用户**")
+            st.markdown(escape(sanitize_text_strict(target_project.get("users", ""), allow_empty=True, max_len=100) or "待补充"))
+            st.markdown("**典型场景**")
+            st.markdown(escape(sanitize_text_strict(target_project.get("use_cases", ""), allow_empty=True, max_len=180) or "待补充"))
+            st.markdown("---")
+            st.markdown("**当前状态**")
+            st.info(sanitize_text_strict(target_project.get("latest_update", ""), allow_empty=True, max_len=160) or "暂无最新进展")
+            if project and project_id in st.session_state.undo_snapshots:
+                if st.button("撤销最近一次编辑", key=f"undo_edit_{project_id}", use_container_width=True):
+                    try:
+                        undo_last_update(project_id)
+                        st.query_params["project"] = project_id
+                        st.query_params["view"] = "detail"
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"撤销失败：{clean_text(exc, 120)}")
 
     if cancel:
         if is_create:
