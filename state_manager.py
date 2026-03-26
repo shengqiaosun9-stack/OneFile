@@ -333,7 +333,14 @@ def get_visible_projects() -> List[Dict[str, Any]]:
     if not current_user_id:
         return []
     projects = st.session_state.get("projects", [])
-    return [item for item in projects if sanitize_text_strict(item.get("owner_user_id", ""), allow_empty=True, max_len=40) == current_user_id]
+    visible: List[Dict[str, Any]] = []
+    for item in projects:
+        owner_id = sanitize_text_strict(item.get("owner_user_id", ""), allow_empty=True, max_len=40)
+        share_state = item.get("share", {}) if isinstance(item.get("share", {}), dict) else {}
+        is_public = bool(share_state.get("is_public", False))
+        if owner_id == current_user_id or is_public:
+            visible.append(item)
+    return visible
 
 
 def refresh_ops_signals_from_events(project_ids: Optional[List[str]] = None, persist: bool = False) -> bool:
@@ -646,6 +653,10 @@ def set_project_share_state(project_id: str, is_public: bool) -> None:
     project = get_project_by_id(project_id)
     if not project:
         raise ValueError("目标项目不存在。")
+    current_user_id = get_current_user_id()
+    owner_id = sanitize_text_strict(project.get("owner_user_id", ""), allow_empty=True, max_len=40)
+    if not current_user_id or owner_id != current_user_id:
+        raise PermissionError("无权限修改该项目分享状态。")
     next_project = copy.deepcopy(project)
     share = normalize_share_state(next_project.get("share", {}), next_project.get("id", project_id))
     now = _now_ts()
@@ -668,6 +679,10 @@ def delete_project_by_id(project_id: str) -> None:
     current = get_project_by_id(project_id)
     if not current:
         raise ValueError("目标项目不存在。")
+    current_user_id = get_current_user_id()
+    owner_id = sanitize_text_strict(current.get("owner_user_id", ""), allow_empty=True, max_len=40)
+    if not current_user_id or owner_id != current_user_id:
+        raise PermissionError("无权限删除该项目。")
 
     st.session_state.projects = [
         project for project in st.session_state.projects if project.get("id") != project_id
@@ -694,6 +709,10 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
     project = get_project_by_id(project_id)
     if not project:
         raise ValueError("目标项目不存在。")
+    current_user_id = get_current_user_id()
+    owner_id = sanitize_text_strict(project.get("owner_user_id", ""), allow_empty=True, max_len=40)
+    if not current_user_id or owner_id != current_user_id:
+        raise PermissionError("无权限更新该项目。")
     previous_project = copy.deepcopy(project)
 
     cleaned_update = sanitize_text_strict(update_text, allow_empty=False, max_len=280)
@@ -721,7 +740,6 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
 
     timestamp = _now_ts()
     next_project = copy.deepcopy(project)
-    current_user_id = get_current_user_id()
     update_kind = infer_update_kind(cleaned_update)
 
     # 必改字段：latest_update / updated_at
@@ -812,6 +830,10 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
     current = get_project_by_id(project_id)
     if not current:
         raise ValueError("目标项目不存在。")
+    current_user_id = get_current_user_id()
+    owner_id = sanitize_text_strict(current.get("owner_user_id", ""), allow_empty=True, max_len=40)
+    if not current_user_id or owner_id != current_user_id:
+        raise PermissionError("无权限编辑该项目。")
     previous_project = copy.deepcopy(current)
 
     title = sanitize_text_strict(payload.get("title", ""), allow_empty=True, max_len=42)
@@ -839,7 +861,6 @@ def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
     )
 
     timestamp = _now_ts()
-    current_user_id = get_current_user_id()
     next_project = copy.deepcopy(current)
     next_project["title"] = title
     next_project["problem_statement"] = problem_statement

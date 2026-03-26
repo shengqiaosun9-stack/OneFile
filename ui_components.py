@@ -1231,6 +1231,11 @@ def _activity_snapshot(project: Dict[str, Any]) -> Dict[str, str]:
 
 def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     project = prepare_project_for_render(project)
+    current_user_id = clean_text(get_current_user_id(), 40, aggressive=True)
+    owner_user_id = clean_text(project.get("owner_user_id", ""), 40, aggressive=True)
+    is_owner = bool(current_user_id and owner_user_id and current_user_id == owner_user_id)
+    share_state = project.get("share", {}) if isinstance(project.get("share", {}), dict) else {}
+    is_public = bool(share_state.get("is_public", False))
     status_class = f"status-chip status-{project.get('status_theme', 'blue')}"
     border_style = "2px solid #DBEAFE" if project.get("id") == highlight_id else "1px solid #E2E8F0"
     box_shadow = "0 10px 18px rgba(45,122,255,0.14)" if project.get("id") == highlight_id else None
@@ -1246,6 +1251,11 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     form_text = _truncate_text(project.get("form_type_label", project.get("shape", "")), 36) or "待补充"
     model_text = _truncate_text(project.get("model_desc", project.get("model", "")), 52) or "待补充"
     activity = _activity_snapshot(project)
+    private_badge_html = (
+        "<div style='margin-top:6px;'><span class='status-chip status-slate'>我的私有</span></div>"
+        if is_owner and not is_public
+        else ""
+    )
 
     share_url = build_share_url(project["id"])
     top_actions = st.columns([0.84, 0.16])
@@ -1255,7 +1265,13 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
                 st.query_params["project"] = project["id"]
                 st.query_params["view"] = "share"
                 st.rerun()
-            render_copy_link_button(project["id"], share_url)
+            if is_owner:
+                render_copy_link_button(project["id"], share_url)
+            else:
+                if st.button("创建我的项目档案", key=f"clone_from_card_{project['id']}", use_container_width=True):
+                    st.query_params.clear()
+                    st.query_params["action"] = "create"
+                    st.rerun()
     st.markdown(
         f"""
         <div class="card-shell" style="{shell_style}">
@@ -1264,6 +1280,7 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
               <h2 class="card-title">{escape(project.get("title", ""))}</h2>
               <span class="{status_class}">{escape(project.get("status_tag", ""))}</span>
             </div>
+            {private_badge_html}
             <div class="card-summary line-clamp-2">{escape(summary_short)}</div>
             <div class="card-divider"></div>
             <div style="display:grid;grid-template-columns:1fr;gap:8px;">
@@ -1299,10 +1316,16 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
             st.query_params["view"] = "detail"
             st.rerun()
     with action_cols[1]:
-        if st.button("更新项目进展", key=f"update_{project['id']}"):
-            st.session_state.selected_project_id = project["id"]
-            open_update_overlay(project["id"])
-            st.rerun()
+        if is_owner:
+            if st.button("更新项目进展", key=f"update_{project['id']}"):
+                st.session_state.selected_project_id = project["id"]
+                open_update_overlay(project["id"])
+                st.rerun()
+        else:
+            if st.button("创建我的项目档案", key=f"cta_create_{project['id']}"):
+                st.query_params.clear()
+                st.query_params["action"] = "create"
+                st.rerun()
 
 
 def render_cards_grid(projects: List[Dict[str, Any]], highlight_id: str) -> None:
@@ -1439,6 +1462,9 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
 def render_project_detail_page(project: Dict[str, Any]) -> None:
     project = prepare_project_for_render(project)
     project_id = clean_text(project.get("id", ""), 24, aggressive=True)
+    current_user_id = clean_text(get_current_user_id(), 40, aggressive=True)
+    owner_user_id = clean_text(project.get("owner_user_id", ""), 40, aggressive=True)
+    is_owner = bool(current_user_id and owner_user_id and current_user_id == owner_user_id)
     share_url = build_share_url(project_id)
     share_state = project.get("share", {}) if isinstance(project.get("share", {}), dict) else {}
     is_public = bool(share_state.get("is_public", False))
@@ -1448,33 +1474,45 @@ def render_project_detail_page(project: Dict[str, Any]) -> None:
             st.query_params.clear()
             st.rerun()
     with header_cols[1]:
-        if st.button("编辑项目", key=f"detail_edit_{project_id}", type="primary", use_container_width=True):
-            st.query_params["project"] = project_id
-            st.query_params["view"] = "edit"
-            st.query_params.pop("mode", None)
-            st.rerun()
+        if is_owner:
+            if st.button("编辑项目", key=f"detail_edit_{project_id}", type="primary", use_container_width=True):
+                st.query_params["project"] = project_id
+                st.query_params["view"] = "edit"
+                st.query_params.pop("mode", None)
+                st.rerun()
+        else:
+            if st.button("创建我的项目档案", key=f"detail_create_entry_{project_id}", type="primary", use_container_width=True):
+                st.query_params.clear()
+                st.query_params["action"] = "create"
+                st.rerun()
     with header_cols[2]:
         with st.popover("⋯", use_container_width=False):
-            toggle_label = "设为私有" if is_public else "设为公开"
-            if st.button(toggle_label, key=f"toggle_share_{project_id}", use_container_width=True):
-                try:
-                    set_project_share_state(project_id, not is_public)
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"分享状态更新失败：{clean_text(exc, 120)}")
             if st.button("打开分享页", key=f"detail_share_{project_id}", use_container_width=True):
                 st.query_params["project"] = project_id
                 st.query_params["view"] = "share"
                 st.rerun()
-            render_copy_link_button(project_id, share_url)
-            if st.button("删除项目", key=f"delete_project_{project_id}", use_container_width=True):
-                st.session_state.delete_confirm_id = project_id
-                st.rerun()
+            if is_owner:
+                toggle_label = "设为私有" if is_public else "设为公开"
+                if st.button(toggle_label, key=f"toggle_share_{project_id}", use_container_width=True):
+                    try:
+                        set_project_share_state(project_id, not is_public)
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"分享状态更新失败：{clean_text(exc, 120)}")
+                render_copy_link_button(project_id, share_url)
+                if st.button("删除项目", key=f"delete_project_{project_id}", use_container_width=True):
+                    st.session_state.delete_confirm_id = project_id
+                    st.rerun()
+            else:
+                if st.button("创建我的项目档案", key=f"detail_create_from_public_{project_id}", use_container_width=True):
+                    st.query_params.clear()
+                    st.query_params["action"] = "create"
+                    st.rerun()
 
     state_label = "公开" if is_public else "私有"
     st.caption(f"分享状态：{state_label}")
 
-    if st.session_state.get("delete_confirm_id") == project_id:
+    if is_owner and st.session_state.get("delete_confirm_id") == project_id:
         st.warning("确认删除该项目档案？此操作不可恢复。")
         confirm_cols = st.columns([0.18, 0.18, 0.64])
         with confirm_cols[0]:
@@ -1628,7 +1666,14 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
 
 def render_share_page(project: Dict[str, Any], access_granted: bool = True, owner_preview: bool = False) -> None:
     project = prepare_project_for_render(project)
+    is_logged_in = bool(clean_text(get_current_user_id(), 40, aggressive=True))
     if not access_granted:
+        if is_logged_in:
+            top_cols = st.columns([0.2, 0.8])
+            with top_cols[0]:
+                if st.button("← 返回项目库", key="share_private_back_list", use_container_width=True):
+                    st.query_params.clear()
+                    st.rerun()
         st.markdown(
             """
             <div class="page-stack">
@@ -1644,16 +1689,17 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
         )
         cta_cols = st.columns([0.3, 0.7])
         with cta_cols[0]:
-            if st.button("创建我的项目档案", type="primary", use_container_width=True, key="share_private_create_cta"):
-                append_event_safe(
-                    event_type="share_cta_clicked",
-                    source="share_page_private",
-                    project_id=clean_text(project.get("id", ""), 24, aggressive=True),
-                    payload={"access_granted": False},
-                )
-                st.query_params.clear()
-                st.query_params["action"] = "create"
-                st.rerun()
+            if not is_logged_in:
+                if st.button("创建我的项目档案", type="primary", use_container_width=True, key="share_private_create_cta"):
+                    append_event_safe(
+                        event_type="share_cta_clicked",
+                        source="share_page_private",
+                        project_id=clean_text(project.get("id", ""), 24, aggressive=True),
+                        payload={"access_granted": False},
+                    )
+                    st.query_params.clear()
+                    st.query_params["action"] = "create"
+                    st.rerun()
         return
 
     summary = sanitize_text_strict(project.get("summary", ""), allow_empty=True, max_len=140) or "项目定位待补充"
@@ -1670,6 +1716,13 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
     activity = _activity_snapshot(project)
     recent_change_short = _truncate_text(latest or "暂无最新进展", 120)
     public_status = _public_progress_text(project)
+
+    if is_logged_in:
+        top_cols = st.columns([0.2, 0.8])
+        with top_cols[0]:
+            if st.button("← 返回项目库", key=f"share_back_list_{project.get('id', '')}", use_container_width=True):
+                st.query_params.clear()
+                st.rerun()
 
     st.markdown(
         f"""
@@ -1724,16 +1777,17 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
     )
     cta_cols = st.columns([0.3, 0.7])
     with cta_cols[0]:
-        if st.button("创建我的项目档案", type="primary", use_container_width=True, key=f"share_create_cta_{project.get('id', '')}"):
-            append_event_safe(
-                event_type="share_cta_clicked",
-                source="share_page_public",
-                project_id=clean_text(project.get("id", ""), 24, aggressive=True),
-                payload={"access_granted": True},
-            )
-            st.query_params.clear()
-            st.query_params["action"] = "create"
-            st.rerun()
+        if not is_logged_in:
+            if st.button("创建我的项目档案", type="primary", use_container_width=True, key=f"share_create_cta_{project.get('id', '')}"):
+                append_event_safe(
+                    event_type="share_cta_clicked",
+                    source="share_page_public",
+                    project_id=clean_text(project.get("id", ""), 24, aggressive=True),
+                    payload={"access_granted": True},
+                )
+                st.query_params.clear()
+                st.query_params["action"] = "create"
+                st.rerun()
 
 
 def render_filters(projects: List[Dict[str, Any]]) -> Dict[str, str]:

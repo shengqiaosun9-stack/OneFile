@@ -117,11 +117,28 @@ if page_view == "edit":
     st.stop()
 
 if project_id:
-    target_project = get_project_by_id(str(project_id))
+    target_project = get_project_by_id_any(str(project_id))
     if target_project:
+        owner_preview = bool(
+            is_authenticated()
+            and get_current_user_id()
+            and target_project.get("owner_user_id") == get_current_user_id()
+        )
+        share_state = target_project.get("share", {}) if isinstance(target_project.get("share", {}), dict) else {}
+        can_view_detail = bool(owner_preview or share_state.get("is_public", False))
+        if can_view_detail:
+            render_styles()
+            render_nav(st.session_state.active_tab)
+            render_project_detail_page(target_project)
+            st.stop()
         render_styles()
         render_nav(st.session_state.active_tab)
-        render_project_detail_page(target_project)
+        st.warning("该项目未公开，你无权查看完整档案。")
+        back_cols = st.columns([0.2, 0.8])
+        with back_cols[0]:
+            if st.button("返回项目库", key="detail_back_forbidden", type="primary", use_container_width=True):
+                st.query_params.clear()
+                st.rerun()
         st.stop()
     st.query_params.clear()
 
