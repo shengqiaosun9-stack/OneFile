@@ -1,6 +1,7 @@
 import json
 import os
 import uuid
+from datetime import datetime
 from html import escape
 from typing import Any, Dict, List, Optional
 
@@ -1174,6 +1175,68 @@ def _progress_status_label(status: str) -> str:
     return "不确定"
 
 
+def _parse_display_dt(value: Any) -> Optional[datetime]:
+    text = sanitize_text_strict(value, allow_empty=True, max_len=24)
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _public_progress_text(project: Dict[str, Any]) -> str:
+    progress_eval = project.get("progress_eval", {}) if isinstance(project.get("progress_eval", {}), dict) else {}
+    status = sanitize_text_strict(progress_eval.get("status", ""), allow_empty=True, max_len=20).lower()
+    if status == "advancing":
+        return "项目近期持续推进"
+    if status == "stalled":
+        return "项目近期更新较少，正在收敛下一步"
+    return "项目正在验证关键方向"
+
+
+def _activity_snapshot(project: Dict[str, Any]) -> Dict[str, str]:
+    ops = project.get("ops_signals", {}) if isinstance(project.get("ops_signals", {}), dict) else {}
+    updates_7d = max(int(ops.get("updates_7d", 0) or 0), 0)
+    last_activity = sanitize_text_strict(
+        ops.get("last_activity_at", project.get("updated_at", "")),
+        allow_empty=True,
+        max_len=24,
+    )
+    updated_at = sanitize_text_strict(project.get("updated_at", ""), allow_empty=True, max_len=24) or "-"
+    now_dt = datetime.now()
+    last_dt = _parse_display_dt(last_activity)
+    days_since = None
+    if last_dt:
+        days_since = max((now_dt.date() - last_dt.date()).days, 0)
+
+    if updates_7d >= 3 and days_since is not None and days_since <= 3:
+        badge = "近期持续更新"
+    elif updates_7d >= 1 and days_since is not None and days_since <= 7:
+        badge = "近期有进展"
+    elif days_since is not None and days_since <= 14:
+        badge = "轻度活跃"
+    else:
+        badge = "更新较少"
+
+    if days_since is None:
+        freshness = "活跃度数据待补充"
+    elif days_since == 0:
+        freshness = "今天有更新"
+    elif days_since == 1:
+        freshness = "1天前更新"
+    else:
+        freshness = f"{days_since}天前更新"
+
+    return {
+        "badge": badge,
+        "freshness": freshness,
+        "last_updated": updated_at,
+    }
+
+
 def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     project = prepare_project_for_render(project)
     status_class = f"status-chip status-{project.get('status_theme', 'blue')}"
@@ -1183,20 +1246,14 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
     if box_shadow:
         shell_style += f"box-shadow:{box_shadow};"
     summary_short = _truncate_text(project.get("summary", ""), 92) or "项目定位待补充"
-    latest_short = _truncate_text(project.get("latest_update", ""), 78) or "暂无最新进展"
+    latest_short = _truncate_text(project.get("latest_update", ""), 80) or "暂无最新进展"
     next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
-    next_action_text = _truncate_text(next_action.get("text", ""), 78) or "待生成下一动作"
-    next_action_status = next_action_status_label(next_action.get("status", "open"))
-    progress_eval = project.get("progress_eval", {}) if isinstance(project.get("progress_eval", {}), dict) else {}
-    try:
-        progress_score = int(progress_eval.get("score", 50))
-    except Exception:
-        progress_score = 50
-    progress_score = max(0, min(progress_score, 100))
-    progress_status = _progress_status_label(progress_eval.get("status", "uncertain"))
-    intervention = project.get("intervention", {}) if isinstance(project.get("intervention", {}), dict) else {}
-    intervention_status = sanitize_text_strict(intervention.get("status", ""), allow_empty=True, max_len=20).lower()
-    intervention_text = _truncate_text(intervention.get("message", ""), 82) if intervention_status == "active" else ""
+    next_action_text = _truncate_text(next_action.get("text", ""), 82) or "正在梳理下一步关键动作"
+    stage_text = project.get("stage_label", stage_label(project.get("stage", "")))
+    users_text = _truncate_text(project.get("users", ""), 56) or "待补充"
+    form_text = _truncate_text(project.get("form_type_label", project.get("shape", "")), 36) or "待补充"
+    model_text = _truncate_text(project.get("model_desc", project.get("model", "")), 52) or "待补充"
+    activity = _activity_snapshot(project)
 
     share_url = build_share_url(project["id"])
     top_actions = st.columns([0.84, 0.16])
@@ -1217,30 +1274,24 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
             </div>
             <div class="card-summary line-clamp-2">{escape(summary_short)}</div>
             <div class="card-divider"></div>
-            <div class="card-kv-grid">
-              <div class="card-kv">
-                <div class="card-kv-label">用户</div>
-                <div class="card-kv-value line-clamp-2">{escape(project.get("users", ""))}</div>
-              </div>
-              <div class="card-kv">
-                <div class="card-kv-label">产品形态</div>
-                <div class="card-kv-value line-clamp-2">{escape(project.get("form_type_label", project.get("shape", "")))}</div>
-              </div>
-              <div class="card-kv">
-                <div class="card-kv-label">商业模式</div>
-                <div class="card-kv-value line-clamp-2">{escape(project.get("model_desc", project.get("model", "")))}</div>
-              </div>
-              <div class="card-kv">
-                <div class="card-kv-label">阶段</div>
-                <div class="card-kv-value">{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</div>
-              </div>
+            <div style="display:grid;grid-template-columns:1fr;gap:8px;">
+              <div style="font-size:12px;color:#64748B;"><strong>用户：</strong>{escape(users_text)}</div>
+              <div style="font-size:12px;color:#64748B;"><strong>产品形态：</strong>{escape(form_text)}</div>
+              <div style="font-size:12px;color:#64748B;" class="line-clamp-1"><strong>商业模式：</strong>{escape(model_text)}</div>
             </div>
-            <div class="metric-bar" style="display:block;">
-              <div style="font-size:11px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">当前状态</div>
-              <div style="font-size:13px;color:#334155;" class="line-clamp-2"><strong>最新进展：</strong>{escape(latest_short)}</div>
-              <div style="font-size:13px;color:#334155;margin-top:6px;" class="line-clamp-2"><strong>下一动作（{escape(next_action_status)}）：</strong>{escape(next_action_text)}</div>
-              <div style="font-size:12px;color:#475569;margin-top:6px;"><strong>推进评估：</strong>{escape(progress_status)} · {progress_score}分</div>
-              {f'<div style="font-size:12px;color:#9A3412;margin-top:6px;" class="line-clamp-2"><strong>系统介入：</strong>{escape(intervention_text)}</div>' if intervention_text else ''}
+            <div class="metric-bar" style="display:block;margin-top:12px;">
+              <div style="font-size:11px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">当前阶段与状态</div>
+              <div style="font-size:13px;color:#334155;"><strong>阶段：</strong>{escape(stage_text)}</div>
+              <div style="font-size:13px;color:#334155;margin-top:6px;" class="line-clamp-2"><strong>当前状态：</strong>{escape(latest_short)}</div>
+            </div>
+            <div class="metric-bar" style="display:block;margin-top:10px;">
+              <div style="font-size:11px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">活跃信号</div>
+              <div style="font-size:13px;color:#334155;"><strong>{escape(activity.get("badge", ""))}</strong> · {escape(activity.get("freshness", ""))}</div>
+              <div style="font-size:12px;color:#64748B;margin-top:4px;"><strong>最近更新时间：</strong>{escape(activity.get("last_updated", "-"))}</div>
+            </div>
+            <div class="metric-bar" style="display:block;margin-top:10px;">
+              <div style="font-size:11px;color:#94A3B8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px;">创始人当前下一步</div>
+              <div style="font-size:13px;color:#334155;" class="line-clamp-2">{escape(next_action_text)}</div>
             </div>
           </div>
         </div>
@@ -1276,6 +1327,22 @@ def render_cards_grid(projects: List[Dict[str, Any]], highlight_id: str) -> None
 def render_archive_panel(project: Dict[str, Any]) -> None:
     project = prepare_project_for_render(project)
     summary_text = sanitize_text_strict(project.get("summary", ""), allow_empty=True, max_len=180) or "项目定位待补充"
+    stage_text = project.get("stage_label", stage_label(project.get("stage", "")))
+    form_text = project.get("form_type_label", form_type_label(project.get("form_type", "")))
+    model_text = project.get("model_type_label", model_type_label(project.get("model_type", "")))
+    latest_update = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=280) or "暂无最新进展"
+    current_tension = sanitize_text_strict(project.get("current_tension", ""), allow_empty=True, max_len=200) or "当前关键焦点待补充"
+    next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
+    next_action_text = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=180) or "正在梳理下一步关键动作"
+    problem_text = sanitize_text_strict(project.get("problem_statement", ""), allow_empty=True, max_len=280) or "待补充"
+    solution_text = sanitize_text_strict(project.get("solution_approach", ""), allow_empty=True, max_len=280) or "待补充"
+    users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=140) or "待补充"
+    use_cases_text = sanitize_text_strict(project.get("use_cases", ""), allow_empty=True, max_len=220) or "待补充"
+    model_desc_text = sanitize_text_strict(project.get("model_desc", project.get("model", "")), allow_empty=True, max_len=160) or "待补充"
+    activity = _activity_snapshot(project)
+    progress_public = _public_progress_text(project)
+    recent_change_short = _truncate_text(latest_update, 120)
+
     st.markdown(
         f"""
         <div class="surface surface-hero">
@@ -1295,75 +1362,15 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
     )
     st.markdown(
         f"""
-        <div class="archive-kpis">
-          <div class="archive-kpi"><div class="archive-kpi-label">当前阶段</div><div class="archive-kpi-value">{escape(project.get("stage_label", stage_label(project.get("stage", ""))))}</div></div>
-          <div class="archive-kpi"><div class="archive-kpi-label">产品形态</div><div class="archive-kpi-value">{escape(project.get("form_type_label", ""))}</div></div>
-          <div class="archive-kpi"><div class="archive-kpi-label">商业模式类型</div><div class="archive-kpi-value">{escape(project.get("model_type_label", model_type_label(project.get("model_type", ""))))}</div></div>
-          <div class="archive-kpi"><div class="archive-kpi-label">更新时间</div><div class="archive-kpi-value">{escape(project.get("updated_at", "-"))}</div></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    latest_update = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=280) or "暂无最新进展"
-    current_tension = sanitize_text_strict(project.get("current_tension", ""), allow_empty=True, max_len=180) or "当前张力待识别"
-    next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
-    next_action_text = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=180) or "待生成下一动作"
-    next_action_state = next_action_status_label(next_action.get("status", "open"))
-    progress_eval = project.get("progress_eval", {}) if isinstance(project.get("progress_eval", {}), dict) else {}
-    progress_status = _progress_status_label(progress_eval.get("status", "uncertain"))
-    try:
-        progress_score = int(progress_eval.get("score", 50))
-    except Exception:
-        progress_score = 50
-    progress_score = max(0, min(progress_score, 100))
-    try:
-        decision_quality = float(project.get("decision_quality_score", 0.55) or 0.55)
-    except Exception:
-        decision_quality = 0.55
-    try:
-        system_conf = float(project.get("system_confidence", 0.62) or 0.62)
-    except Exception:
-        system_conf = 0.62
-    intervention = project.get("intervention", {}) if isinstance(project.get("intervention", {}), dict) else {}
-    intervention_status = sanitize_text_strict(intervention.get("status", ""), allow_empty=True, max_len=20).lower()
-    intervention_message = sanitize_text_strict(intervention.get("message", ""), allow_empty=True, max_len=180)
-    recommended_action = sanitize_text_strict(intervention.get("recommended_next_action", ""), allow_empty=True, max_len=160)
-    intervention_effectiveness = sanitize_text_strict(
-        project.get("last_intervention_effectiveness", "unknown"),
-        allow_empty=True,
-        max_len=16,
-    ).lower()
-    intervention_effect_label = {
-        "positive": "正向",
-        "neutral": "中性",
-        "negative": "负向",
-        "unknown": "待评估",
-    }.get(intervention_effectiveness, "待评估")
-    problem_text = sanitize_text_strict(project.get("problem_statement", ""), allow_empty=True, max_len=280) or "待补充"
-    solution_text = sanitize_text_strict(project.get("solution_approach", ""), allow_empty=True, max_len=280) or "待补充"
-    users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=140) or "待补充"
-    use_cases_text = sanitize_text_strict(project.get("use_cases", ""), allow_empty=True, max_len=220) or "待补充"
-
-    st.markdown(
-        f"""
-        <div class="surface surface-section">
-          <div class="section-kicker">当前状态</div>
-          <div class="status-callout">{escape(latest_update)}</div>
-          <div class="status-callout" style="margin-top:8px;"><strong>当前张力：</strong>{escape(current_tension)}</div>
-          <div class="status-callout" style="margin-top:8px;"><strong>下一动作（{escape(next_action_state)}）：</strong>{escape(next_action_text)}</div>
-          <div class="status-callout" style="margin-top:8px;"><strong>推进评估：</strong>{escape(progress_status)} · {progress_score}分（系统置信度 {round(system_conf * 100)}%）</div>
-          <div class="status-callout" style="margin-top:8px;"><strong>决策质量：</strong>{round(decision_quality * 100)}%</div>
-          <div class="status-callout" style="margin-top:8px;"><strong>上次介入效果：</strong>{escape(intervention_effect_label)}</div>
-          {f'<div class="status-callout" style="margin-top:8px;background:#FFF7ED;border:1px solid #FDBA74;"><strong>系统介入：</strong>{escape(intervention_message)}{"<br/><strong>建议动作：</strong>"+escape(recommended_action) if recommended_action else ""}</div>' if intervention_status == 'active' and intervention_message else ''}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f"""
         <div class="surface surface-section" style="margin-top:12px;">
-          <div class="section-kicker">Problem & Solution</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div class="section-kicker">Core Structured Overview</div>
+          <div class="archive-kpis">
+            <div class="archive-kpi"><div class="archive-kpi-label">当前阶段</div><div class="archive-kpi-value">{escape(stage_text)}</div></div>
+            <div class="archive-kpi"><div class="archive-kpi-label">产品形态</div><div class="archive-kpi-value">{escape(form_text)}</div></div>
+            <div class="archive-kpi"><div class="archive-kpi-label">商业模式</div><div class="archive-kpi-value">{escape(model_text)}</div></div>
+            <div class="archive-kpi"><div class="archive-kpi-label">模式描述</div><div class="archive-kpi-value">{escape(model_desc_text)}</div></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px;">
             <div>
               <div style="font-size:12px;color:#64748B;font-weight:700;margin-bottom:6px;">问题定义</div>
               <div class="section-value">{escape(problem_text)}</div>
@@ -1373,6 +1380,24 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
               <div class="section-value">{escape(solution_text)}</div>
             </div>
           </div>
+          <div style="margin-top:12px;">
+            <div style="font-size:12px;color:#64748B;font-weight:700;margin-bottom:6px;">目标用户</div>
+            <div class="section-value">{escape(users_text)}</div>
+            <div style="font-size:12px;color:#64748B;font-weight:700;margin:10px 0 6px;">典型场景</div>
+            <div class="section-value">{escape(use_cases_text)}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f"""
+        <div class="surface surface-section">
+          <div class="section-kicker">Current Stage / Current Status</div>
+          <div class="status-callout"><strong>当前阶段：</strong>{escape(stage_text)}</div>
+          <div class="status-callout" style="margin-top:8px;"><strong>状态解读：</strong>{escape(progress_public)}</div>
+          <div class="status-callout" style="margin-top:8px;"><strong>当前进展：</strong>{escape(latest_update)}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1380,40 +1405,32 @@ def render_archive_panel(project: Dict[str, Any]) -> None:
     st.markdown(
         f"""
         <div class="surface surface-section" style="margin-top:12px;">
-          <div class="section-kicker">Users & Use Cases</div>
-          <div style="font-size:12px;color:#64748B;font-weight:700;margin-bottom:6px;">目标用户</div>
-          <div class="section-value">{escape(users_text)}</div>
-          <div style="font-size:12px;color:#64748B;font-weight:700;margin:12px 0 6px;">典型场景</div>
-          <div class="section-value">{escape(use_cases_text)}</div>
+          <div class="section-kicker">Lightweight Proof of Life</div>
+          <div class="status-callout"><strong>{escape(activity.get("badge", ""))}</strong> · {escape(activity.get("freshness", ""))}</div>
+          <div class="status-callout" style="margin-top:8px;"><strong>最近更新时间：</strong>{escape(activity.get("last_updated", "-"))}</div>
+          <div class="status-callout" style="margin-top:8px;"><strong>最近变化摘要：</strong>{escape(recent_change_short)}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    updates = project.get("updates", [])
-    if isinstance(updates, list) and updates:
-        with st.expander("演进轨迹", expanded=False):
-            for item in updates[:5]:
-                if not isinstance(item, dict):
-                    continue
-                update_date = sanitize_text_strict(item.get("created_at", ""), allow_empty=True, max_len=24) or "-"
-                update_content = sanitize_text_strict(item.get("content", ""), allow_empty=True, max_len=160) or "版本记录已更新"
-                update_kind = sanitize_text_strict(item.get("kind", ""), allow_empty=True, max_len=20).lower()
-                update_kind_label = {
-                    "hypothesis": "假设",
-                    "action": "动作",
-                    "result": "结果",
-                    "note": "记录",
-                }.get(update_kind, "记录")
-                st.markdown(
-                    f"""
-                    <div style="padding:10px 12px;border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;margin-bottom:8px;">
-                      <div style="font-size:12px;color:#94A3B8;font-weight:600;margin-bottom:4px;">{escape(update_date)} · {escape(update_kind_label)}</div>
-                      <div style="font-size:14px;color:#1E293B;line-height:1.65;">{escape(update_content)}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+    st.markdown(
+        f"""
+        <div class="surface surface-section" style="margin-top:12px;">
+          <div class="section-kicker">Current Key Focus</div>
+          <div class="section-value">{escape(current_tension)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div class="surface surface-section" style="margin-top:12px;">
+          <div class="section-kicker">Founder Current Next Move</div>
+          <div class="section-value">{escape(next_action_text)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if export_enabled():
         payload = get_export_payload(project)
@@ -1652,10 +1669,15 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
     form_text = escape(project.get("form_type_label", ""))
     model_text = escape(project.get("model_type_label", model_type_label(project.get("model_type", ""))))
     latest = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=180)
+    next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
+    next_move = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=180) or "创始人正在梳理下一步关键动作。"
     problem_text = sanitize_text_strict(project.get("problem_statement", ""), allow_empty=True, max_len=220) or "问题定义待补充"
     solution_text = sanitize_text_strict(project.get("solution_approach", ""), allow_empty=True, max_len=220) or "解决方案待补充"
     users_text = sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=120) or "目标用户待补充"
     use_cases_text = sanitize_text_strict(project.get("use_cases", ""), allow_empty=True, max_len=220) or "典型场景待补充"
+    activity = _activity_snapshot(project)
+    recent_change_short = _truncate_text(latest or "暂无最新进展", 120)
+    public_status = _public_progress_text(project)
 
     st.markdown(
         f"""
@@ -1690,6 +1712,19 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
           <section class="surface surface-section" style="margin-top:12px;">
             <div class="section-kicker">Current Status</div>
             <div class="status-callout">{escape(latest or "暂无最新进展")}</div>
+          </section>
+
+          <section class="surface surface-section" style="margin-top:12px;">
+            <div class="section-kicker">Founder Current Next Move</div>
+            <div class="status-callout">{escape(next_move)}</div>
+          </section>
+
+          <section class="surface surface-section" style="margin-top:12px;">
+            <div class="section-kicker">Proof of Life</div>
+            <div class="status-callout"><strong>{escape(activity.get("badge", ""))}</strong> · {escape(activity.get("freshness", ""))}</div>
+            <div class="status-callout" style="margin-top:8px;"><strong>最近更新时间：</strong>{escape(activity.get("last_updated", "-"))}</div>
+            <div class="status-callout" style="margin-top:8px;"><strong>状态解读：</strong>{escape(public_status)}</div>
+            <div class="status-callout" style="margin-top:8px;"><strong>最近变化摘要：</strong>{escape(recent_change_short)}</div>
           </section>
         </div>
         """,
