@@ -19,6 +19,7 @@ from project_model import (
     hard_scrub_project_for_state,
     infer_status_tag,
     migrate_project_for_hygiene,
+    normalize_form_type,
     normalize_model_type,
     normalize_project,
     normalize_stage_value,
@@ -497,3 +498,58 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
     st.session_state.selected_project_id = project_id
     st.session_state.last_generated_id = project_id
     st.session_state.flash_message = "项目进展已更新。"
+
+
+def save_project_direct_edit(project_id: str, payload: Dict[str, Any]) -> None:
+    current = get_project_by_id(project_id)
+    if not current:
+        raise ValueError("目标项目不存在。")
+
+    title = sanitize_text_strict(payload.get("title", ""), allow_empty=True, max_len=42)
+    if not title or not validate_title_candidate(title):
+        raise ValueError("请输入有效项目名称。")
+
+    problem_statement = sanitize_text_strict(payload.get("problem_statement", ""), allow_empty=True, max_len=220)
+    solution_approach = sanitize_text_strict(payload.get("solution_approach", ""), allow_empty=True, max_len=220)
+    users = sanitize_text_strict(payload.get("users", ""), allow_empty=True, max_len=120) or current.get("users", "")
+    use_cases = sanitize_text_strict(payload.get("use_cases", ""), allow_empty=True, max_len=220)
+    latest_update = sanitize_text_strict(payload.get("latest_update", ""), allow_empty=True, max_len=280)
+    if not latest_update:
+        latest_update = sanitize_text_strict(current.get("latest_update", ""), allow_empty=True, max_len=280)
+
+    stage = normalize_stage_value(payload.get("stage", current.get("stage", "")))
+    model_type = normalize_model_type(
+        payload.get("model_type", current.get("model_type", "")),
+        model_desc=current.get("model_desc", current.get("model", "")),
+    )
+    form_type = normalize_form_type(
+        payload.get("form_type", current.get("form_type", "")),
+        context=f"{title} {current.get('summary', '')} {current.get('model_desc', current.get('model', ''))}",
+    )
+
+    timestamp = _now_ts()
+    next_project = copy.deepcopy(current)
+    next_project["title"] = title
+    next_project["problem_statement"] = problem_statement
+    next_project["solution_approach"] = solution_approach
+    next_project["users"] = users
+    next_project["use_cases"] = use_cases
+    next_project["latest_update"] = latest_update
+    next_project["stage"] = stage
+    next_project["model_type"] = model_type
+    next_project["form_type"] = form_type
+    next_project["updated_at"] = timestamp
+    if latest_update:
+        next_project["version_footprint"] = latest_update
+        next_project["versions"] = [{"event": latest_update, "date": get_now_str()}]
+
+    normalized = normalize_project(next_project)
+    normalized["id"] = project_id
+    normalized["updated_at"] = timestamp
+
+    if not replace_project_by_id(project_id, normalized):
+        raise ValueError("目标项目不存在。")
+
+    st.session_state.selected_project_id = project_id
+    st.session_state.last_generated_id = project_id
+    st.session_state.flash_message = "项目档案已保存。"

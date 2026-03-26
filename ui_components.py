@@ -28,8 +28,7 @@ from state_manager import (
     delete_project_by_id,
     generate_update_preview,
     insert_project_top,
-    rename_project_title,
-    save_project_from_edit,
+    save_project_direct_edit,
     submit_overlay_update,
     undo_last_update,
 )
@@ -1172,280 +1171,108 @@ def render_project_detail_page(project: Dict[str, Any]) -> None:
 
 
 def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") -> None:
-    is_create = mode == "create" or not project
-    target_project = prepare_project_for_render(project) if project else {}
+    del mode
+    if not project:
+        st.warning("编辑页仅支持已有项目。请先在项目库创建项目。")
+        if st.button("返回项目库", type="primary"):
+            st.query_params.clear()
+            st.rerun()
+        return
+
+    target_project = prepare_project_for_render(project)
     project_id = clean_text(target_project.get("id", ""), 24, aggressive=True)
-    state_suffix = project_id or "new"
+    state_suffix = project_id or "edit"
 
-    task_units = {
-        "base": {
-            "title": "任务 1：定义项目身份",
-            "goal": "明确项目名称和一句话定位，让这个项目对象有稳定身份。",
-            "profile_section": "Structured Metadata",
-        },
-        "essence": {
-            "title": "任务 2：说明核心价值",
-            "goal": "沉淀项目解决的问题与解决路径，形成可沟通的价值主线。",
-            "profile_section": "Problem & Solution",
-        },
-        "users": {
-            "title": "任务 3：描述用户与场景",
-            "goal": "界定目标用户与实际使用场景，让项目对象可被外部理解。",
-            "profile_section": "Users & Use Cases",
-        },
-        "status": {
-            "title": "任务 4：刷新当前状态",
-            "goal": "更新当前阶段的最新进展，确保对外展示与内部认知一致。",
-            "profile_section": "Current Status",
-        },
+    defaults = {
+        f"direct_title_{state_suffix}": sanitize_text_strict(target_project.get("title", ""), allow_empty=True, max_len=42),
+        f"direct_problem_{state_suffix}": sanitize_text_strict(target_project.get("problem_statement", ""), allow_empty=True, max_len=220),
+        f"direct_solution_{state_suffix}": sanitize_text_strict(target_project.get("solution_approach", ""), allow_empty=True, max_len=220),
+        f"direct_users_{state_suffix}": sanitize_text_strict(target_project.get("users", ""), allow_empty=True, max_len=120),
+        f"direct_use_cases_{state_suffix}": sanitize_text_strict(target_project.get("use_cases", ""), allow_empty=True, max_len=220),
+        f"direct_latest_{state_suffix}": sanitize_text_strict(target_project.get("latest_update", ""), allow_empty=True, max_len=280),
+        f"direct_stage_{state_suffix}": target_project.get("stage", "BUILDING"),
+        f"direct_model_type_{state_suffix}": target_project.get("model_type", "UNKNOWN"),
+        f"direct_form_type_{state_suffix}": target_project.get("form_type", "OTHER"),
     }
-    create_order = ["base", "essence", "users", "status"]
-    update_order = ["status", "base", "essence", "users"]
-    task_order = create_order if is_create else update_order
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-    default_title = sanitize_text_strict(target_project.get("title", ""), allow_empty=True, max_len=42)
-    default_summary = sanitize_text_strict(target_project.get("summary", ""), allow_empty=True, max_len=78)
-    default_problem = sanitize_text_strict(target_project.get("problem_statement", ""), allow_empty=True, max_len=220)
-    default_solution = sanitize_text_strict(target_project.get("solution_approach", ""), allow_empty=True, max_len=220)
-    default_users = sanitize_text_strict(target_project.get("users", ""), allow_empty=True, max_len=120)
-    default_use_cases = sanitize_text_strict(target_project.get("use_cases", ""), allow_empty=True, max_len=220)
-    default_latest = sanitize_text_strict(target_project.get("latest_update", ""), allow_empty=True, max_len=280)
-
-    title_for_header = default_title or "新建项目"
     st.markdown(
         f"""
         <div class="creator-panel">
-          <div class="creator-kicker">Edit Mode</div>
-          <div style="font-size:24px;font-weight:700;color:#0f172a;margin-bottom:6px;">{escape(title_for_header)}</div>
-          <div style="color:#64748B;font-size:14px;">
-            {'创建节奏：按任务顺序逐步构建项目对象。' if is_create else '更新节奏：先刷新当前状态，再按需回补其他任务。'}
-          </div>
+          <div class="creator-kicker">Edit Project</div>
+          <div style="font-size:24px;font-weight:700;color:#0f172a;margin-bottom:6px;">{escape(target_project.get("title", ""))}</div>
+          <div style="color:#64748B;font-size:14px;">直接修改完整档案字段，保存后会同步到卡片、详情页与分享页。</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    focus_key = f"edit_focus_{state_suffix}"
-    if focus_key not in st.session_state:
-        st.session_state[focus_key] = task_order[0]
-    if st.session_state[focus_key] not in task_units:
-        st.session_state[focus_key] = task_order[0]
-    active_task = st.session_state[focus_key]
-    if active_task not in task_order:
-        active_task = task_order[0]
-        st.session_state[focus_key] = active_task
+    title_cols = st.columns([0.72, 0.14, 0.14])
+    with title_cols[0]:
+        st.text_input("项目名称", key=f"direct_title_{state_suffix}", placeholder="请输入项目名称")
+    with title_cols[1]:
+        save_clicked = st.button("保存项目", type="primary", use_container_width=True, key=f"save_direct_{state_suffix}")
+    with title_cols[2]:
+        cancel_clicked = st.button("取消", use_container_width=True, key=f"cancel_direct_{state_suffix}")
 
-    field_defaults = {
-        f"title_{state_suffix}": default_title,
-        f"summary_{state_suffix}": default_summary,
-        f"problem_{state_suffix}": default_problem,
-        f"solution_{state_suffix}": default_solution,
-        f"users_{state_suffix}": default_users,
-        f"use_cases_{state_suffix}": default_use_cases,
-        f"latest_{state_suffix}": default_latest,
-    }
-    for key, value in field_defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+    st.markdown("#### Problem & Solution")
+    st.text_area("问题定义", key=f"direct_problem_{state_suffix}", height=170, placeholder="这个项目要解决什么问题？")
+    st.text_area("解决方案", key=f"direct_solution_{state_suffix}", height=170, placeholder="你如何解决这个问题？")
 
-    selected_task_label = st.radio(
-        "当前构建任务",
-        [task_units[k]["title"] for k in task_order],
-        horizontal=True,
-        index=task_order.index(active_task),
-        key=f"task_focus_label_{state_suffix}",
-    )
-    selected_task = next((k for k in task_order if task_units[k]["title"] == selected_task_label), task_order[0])
-    st.session_state[focus_key] = selected_task
-    active_task = selected_task
+    st.markdown("#### Users & Use Cases")
+    st.text_input("目标用户", key=f"direct_users_{state_suffix}", placeholder="核心用户是谁？")
+    st.text_area("典型场景", key=f"direct_use_cases_{state_suffix}", height=150, placeholder="用户在什么场景下使用？")
 
-    current_idx = task_order.index(active_task)
+    st.markdown("#### Current Status")
+    st.text_area("最新进展", key=f"direct_latest_{state_suffix}", height=150, placeholder="请描述当前最新进展。")
 
-    step_cols = st.columns(4)
-    for idx, task_key in enumerate(task_order):
-        with step_cols[idx]:
-            is_active_step = task_key == active_task
-            if st.button(
-                f"{'●' if is_active_step else '○'} {idx + 1}",
-                key=f"task_step_{state_suffix}_{task_key}",
-                use_container_width=True,
-            ):
-                st.session_state[focus_key] = task_key
-                st.rerun()
-    st.progress((current_idx + 1) / len(task_order))
-    st.caption(f"当前进度：第 {current_idx + 1} / {len(task_order)} 个任务")
+    st.markdown("#### Structured Metadata")
+    meta_cols = st.columns(3)
+    with meta_cols[0]:
+        st.selectbox(
+            "阶段",
+            STAGE_VALUES,
+            key=f"direct_stage_{state_suffix}",
+            format_func=lambda x: STAGE_LABELS.get(x, x),
+        )
+    with meta_cols[1]:
+        st.selectbox(
+            "商业模式类型",
+            MODEL_TYPE_VALUES,
+            key=f"direct_model_type_{state_suffix}",
+            format_func=lambda x: MODEL_TYPE_LABELS.get(x, x),
+        )
+    with meta_cols[2]:
+        st.selectbox(
+            "产品形态",
+            FORM_TYPE_VALUES,
+            key=f"direct_form_type_{state_suffix}",
+            format_func=lambda x: FORM_TYPE_LABELS.get(x, x),
+        )
 
-    main_cols = st.columns([0.62, 0.38])
-    with main_cols[0]:
-        st.markdown(f"#### {task_units[active_task]['title']}")
-        st.info(task_units[active_task]["goal"])
-
-        if active_task == "base":
-            st.text_input("项目名称（必填）", key=f"title_{state_suffix}", placeholder="例如：星火计划")
-            st.text_area(
-                "一句话定位",
-                key=f"summary_{state_suffix}",
-                height=140,
-                placeholder="用一句话说明项目是什么、解决什么问题。",
-            )
-        elif active_task == "essence":
-            st.text_area(
-                "问题定义",
-                key=f"problem_{state_suffix}",
-                height=170,
-                placeholder="用户当前遇到的关键问题是什么？",
-            )
-            st.text_area(
-                "解决方案",
-                key=f"solution_{state_suffix}",
-                height=170,
-                placeholder="你用什么方式解决这个问题？",
-            )
-        elif active_task == "users":
-            st.text_area(
-                "目标用户",
-                key=f"users_{state_suffix}",
-                height=140,
-                placeholder="谁是最核心的使用者？",
-            )
-            st.text_area(
-                "典型使用场景",
-                key=f"use_cases_{state_suffix}",
-                height=170,
-                placeholder="这些用户在什么场景下使用你的产品？",
-            )
-        else:
-            st.text_area(
-                "当前阶段最新进展",
-                key=f"latest_{state_suffix}",
-                height=260,
-                placeholder="例如：本周新增3个客户，完成上线验证。",
-            )
-
-        nav_cols = st.columns([0.16, 0.16, 0.68])
-        with nav_cols[0]:
-            prev_step = st.button(
-                "上一步",
-                key=f"prev_task_{state_suffix}",
-                use_container_width=True,
-                disabled=current_idx == 0,
-            )
-        with nav_cols[1]:
-            next_step = st.button(
-                "下一步",
-                key=f"next_task_{state_suffix}",
-                use_container_width=True,
-                disabled=current_idx == len(task_order) - 1,
-            )
-        if prev_step and current_idx > 0:
-            st.session_state[focus_key] = task_order[current_idx - 1]
-            st.rerun()
-        if next_step and current_idx < len(task_order) - 1:
-            st.session_state[focus_key] = task_order[current_idx + 1]
-            st.rerun()
-
-        st.caption("保存时会把四个任务结果拼装为项目描述，并通过统一结构化流程更新 Full Profile。")
-        action_cols = st.columns([0.26, 0.18, 0.56])
-        with action_cols[0]:
-            submit = st.button(
-                "创建项目档案" if is_create else "保存项目档案",
-                type="primary",
-                use_container_width=True,
-                key=f"save_edit_{state_suffix}",
-            )
-        with action_cols[1]:
-            cancel = st.button("取消", use_container_width=True, key=f"cancel_edit_{state_suffix}")
-
-    with main_cols[1]:
-        st.markdown("#### Full Profile 结构映射")
-        st.caption("你正在编辑的任务会映射到右侧对应的 Full Profile 区块。")
-        feedback_data = {
-            "base": (
-                f"项目名称：{sanitize_text_strict(st.session_state.get(f'title_{state_suffix}', ''), allow_empty=True, max_len=42) or '（待填写）'}"
-                f"\n一句话定位：{sanitize_text_strict(st.session_state.get(f'summary_{state_suffix}', ''), allow_empty=True, max_len=78) or '（待填写）'}"
-            ),
-            "essence": (
-                f"问题：{sanitize_text_strict(st.session_state.get(f'problem_{state_suffix}', ''), allow_empty=True, max_len=140) or '（待填写）'}"
-                f"\n方案：{sanitize_text_strict(st.session_state.get(f'solution_{state_suffix}', ''), allow_empty=True, max_len=140) or '（待填写）'}"
-            ),
-            "users": (
-                f"目标用户：{sanitize_text_strict(st.session_state.get(f'users_{state_suffix}', ''), allow_empty=True, max_len=120) or '（待填写）'}"
-                f"\n典型场景：{sanitize_text_strict(st.session_state.get(f'use_cases_{state_suffix}', ''), allow_empty=True, max_len=140) or '（待填写）'}"
-            ),
-            "status": sanitize_text_strict(st.session_state.get(f"latest_{state_suffix}", ""), allow_empty=True, max_len=160) or "（待填写）",
-        }
-        canonical_order = ["base", "essence", "users", "status"]
-        for task_key in canonical_order:
-            is_active = task_key == active_task
-            border_color = "#2D7AFF" if is_active else "#E2E8F0"
-            background = "#EFF6FF" if is_active else "#FFFFFF"
-            preview_text = feedback_data[task_key] if is_active else feedback_data[task_key].split("\n")[0]
-            content_html = escape(preview_text).replace("\n", "<br>")
-            st.markdown(
-                f"""
-                <div style="border:1px solid {border_color};background:{background};border-radius:10px;padding:12px;margin-bottom:10px;">
-                  <div style="font-size:12px;color:#64748B;font-weight:700;margin-bottom:4px;">{task_units[task_key]['profile_section']}</div>
-                  <div style="font-size:12px;color:{'#1d4ed8' if is_active else '#94A3B8'};font-weight:600;margin-bottom:6px;">
-                    对应：{task_units[task_key]['title']}{'（正在构建）' if is_active else ''}
-                  </div>
-                  <div style="font-size:13px;color:#334155;line-height:1.5;">{content_html}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        if project and project_id in st.session_state.undo_snapshots and not is_create:
-            if st.button("撤销最近一次编辑", key=f"undo_edit_{project_id}", use_container_width=True):
-                try:
-                    undo_last_update(project_id)
-                    st.query_params["project"] = project_id
-                    st.query_params["view"] = "detail"
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"撤销失败：{clean_text(exc, 120)}")
-
-    if cancel:
-        if is_create:
-            st.query_params.clear()
-        else:
-            st.query_params["project"] = project_id
-            st.query_params["view"] = "detail"
+    if cancel_clicked:
+        st.query_params["project"] = project_id
+        st.query_params["view"] = "detail"
+        st.query_params.pop("mode", None)
         st.rerun()
 
-    if submit:
-        title_input = sanitize_text_strict(st.session_state.get(f"title_{state_suffix}", ""), allow_empty=True, max_len=42)
-        summary_input = sanitize_text_strict(st.session_state.get(f"summary_{state_suffix}", ""), allow_empty=True, max_len=120)
-        problem_input = sanitize_text_strict(st.session_state.get(f"problem_{state_suffix}", ""), allow_empty=True, max_len=220)
-        solution_input = sanitize_text_strict(st.session_state.get(f"solution_{state_suffix}", ""), allow_empty=True, max_len=220)
-        users_input = sanitize_text_strict(st.session_state.get(f"users_{state_suffix}", ""), allow_empty=True, max_len=140)
-        use_cases_input = sanitize_text_strict(st.session_state.get(f"use_cases_{state_suffix}", ""), allow_empty=True, max_len=220)
-        latest_update_input = sanitize_text_strict(st.session_state.get(f"latest_{state_suffix}", ""), allow_empty=True, max_len=280)
-
-        desc_blocks = [
-            "【基础信息】",
-            f"项目名称：{title_input}",
-            f"一句话定位：{summary_input}",
-            "",
-            "【项目本质】",
-            f"问题定义：{problem_input}",
-            f"解决方案：{solution_input}",
-            "",
-            "【用户与场景】",
-            f"目标用户：{users_input}",
-            f"典型场景：{use_cases_input}",
-            "",
-            "【当前状态】",
-            f"最新进展：{latest_update_input}",
-        ]
-        desc_input = sanitize_text_strict("\n".join(desc_blocks), allow_empty=False, max_len=6000)
+    if save_clicked:
         try:
-            with st.spinner("正在结构化并保存档案..."):
-                saved_id = save_project_from_edit(
-                    project_id if not is_create else None,
-                    title_input,
-                    desc_input,
-                    latest_update_input,
-                )
-            st.query_params["project"] = saved_id
+            payload = {
+                "title": st.session_state.get(f"direct_title_{state_suffix}", ""),
+                "problem_statement": st.session_state.get(f"direct_problem_{state_suffix}", ""),
+                "solution_approach": st.session_state.get(f"direct_solution_{state_suffix}", ""),
+                "users": st.session_state.get(f"direct_users_{state_suffix}", ""),
+                "use_cases": st.session_state.get(f"direct_use_cases_{state_suffix}", ""),
+                "latest_update": st.session_state.get(f"direct_latest_{state_suffix}", ""),
+                "stage": st.session_state.get(f"direct_stage_{state_suffix}", "BUILDING"),
+                "model_type": st.session_state.get(f"direct_model_type_{state_suffix}", "UNKNOWN"),
+                "form_type": st.session_state.get(f"direct_form_type_{state_suffix}", "OTHER"),
+            }
+            save_project_direct_edit(project_id, payload)
+            st.query_params["project"] = project_id
             st.query_params["view"] = "detail"
             st.query_params.pop("mode", None)
             st.rerun()
