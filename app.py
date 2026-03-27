@@ -137,11 +137,13 @@ if not is_authenticated():
                 get_screen_primary_cta("landing"),
                 type="primary",
                 use_container_width=True,
-                disabled=not can_submit,
             )
         st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
     if submitted:
+        if not _is_valid_login_email(st.session_state.get("login_email_input", "")):
+            st.error("请输入有效邮箱地址，例如 name@company.com")
+            st.stop()
         try:
             register_or_login_user(st.session_state.get("login_email_input", ""))
             st.session_state.flash_message = "已进入你的项目空间。"
