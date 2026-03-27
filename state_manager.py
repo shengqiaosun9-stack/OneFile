@@ -100,6 +100,11 @@ def normalize_email(email: str) -> str:
     return sanitize_text_strict(email or "", allow_empty=True, max_len=120).strip().lower()
 
 
+def is_valid_email(email: str) -> bool:
+    normalized = normalize_email(email)
+    return bool(normalized and EMAIL_PATTERN.match(normalized))
+
+
 def _sanitize_event_value(value: Any, depth: int = 0) -> Any:
     if depth >= 3:
         return sanitize_text_strict(value, allow_empty=True, max_len=120)
@@ -439,7 +444,7 @@ def _save_users_to_session_and_store(users: List[Dict[str, Any]]) -> None:
 
 def register_or_login_user(email: str) -> Dict[str, Any]:
     normalized_email = normalize_email(email)
-    if not normalized_email or not EMAIL_PATTERN.match(normalized_email):
+    if not is_valid_email(normalized_email):
         raise ValueError("请输入有效邮箱地址。")
 
     users = list(st.session_state.get("users", []))

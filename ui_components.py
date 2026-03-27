@@ -97,6 +97,19 @@ CREATE_TEXT_WARNING_THRESHOLD = 50
 CREATE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
 
 
+def get_screen_primary_cta(screen: str, is_owner: bool = False) -> str:
+    safe = clean_text(screen, 24, aggressive=True).lower()
+    if safe == "landing":
+        return "进入项目空间"
+    if safe == "list_card":
+        return "查看完整档案"
+    if safe == "detail":
+        return "编辑项目" if is_owner else "创建我的项目档案"
+    if safe == "share":
+        return "继续更新这个项目" if is_owner else "创建我的项目档案"
+    return "继续"
+
+
 def _ensure_create_overlay_state() -> None:
     defaults = {
         "create_dialog_open": False,
@@ -200,8 +213,20 @@ def render_create_overlay() -> None:
             allow_empty=True,
             max_len=12000,
         )
+        title_preview = sanitize_text_strict(
+            st.session_state.get("create_draft_title", ""),
+            allow_empty=True,
+            max_len=42,
+        )
+        can_submit_create = bool(title_preview and validate_title_candidate(title_preview) and text_clean)
         if text_clean and len("".join(text_clean.split())) < CREATE_TEXT_WARNING_THRESHOLD:
             st.warning("内容较少，生成结果可能不完整")
+        if not title_preview:
+            st.caption("请先填写项目名/公司名。")
+        elif not validate_title_candidate(title_preview):
+            st.caption("项目名称建议使用简短清晰的中文、英文或数字组合。")
+        elif not text_clean:
+            st.caption("请补充项目描述后再创建。")
 
         uploaded_file = None
         with st.expander("补充文件（可选）", expanded=False):
@@ -220,7 +245,7 @@ def render_create_overlay() -> None:
                 "创建项目档案",
                 type="primary",
                 use_container_width=True,
-                disabled=is_submitting,
+                disabled=is_submitting or not can_submit_create,
                 key="create_overlay_submit",
             )
         with action_cols[1]:
@@ -434,6 +459,14 @@ def render_update_overlay() -> None:
             placeholder="描述最近的变化，例如：新增客户、开始收费、产品上线新功能…",
             disabled=is_submitting,
         )
+        update_text_preview = sanitize_text_strict(
+            st.session_state.get("update_draft_text", ""),
+            allow_empty=True,
+            max_len=280,
+        )
+        can_submit_update = bool(update_text_preview)
+        if not update_text_preview:
+            st.caption("请先输入本次更新内容。")
 
         uploaded_file = None
         with st.expander("补充文件（可选）", expanded=False):
@@ -452,7 +485,7 @@ def render_update_overlay() -> None:
                 "提交更新",
                 type="primary",
                 use_container_width=True,
-                disabled=is_submitting,
+                disabled=is_submitting or not can_submit_update,
                 key="update_overlay_submit",
             )
         with action_cols[1]:
@@ -996,12 +1029,13 @@ def render_styles() -> None:
         }
 
         .stButton > button {
-          border-radius: 0.5rem;
+          min-height: 42px;
+          border-radius: 10px;
           border: 1px solid #E2E8F0;
           background: #fff;
           color: #334155;
           padding: 0.625rem 1rem;
-          font-weight: 500;
+          font-weight: 600;
           transition: all 150ms ease;
         }
 
@@ -1014,7 +1048,7 @@ def render_styles() -> None:
           background: var(--accent);
           color: #fff;
           border-color: var(--accent);
-          box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+          box-shadow: 0 4px 10px rgba(37, 99, 235, 0.18);
         }
 
         .stButton > button[kind="primary"]:hover {
@@ -1022,21 +1056,170 @@ def render_styles() -> None:
           border-color: #1D4ED8;
         }
 
+        .stButton > button:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.24);
+        }
+
         .stTextInput input, .stTextArea textarea {
-          border-radius: 0.5rem !important;
+          border-radius: 10px !important;
           background: #FFFFFF !important;
           border: 1px solid #E2E8F0 !important;
+          min-height: 42px;
         }
 
         .stSelectbox [data-baseweb="select"] > div {
-          border-radius: 0.5rem !important;
+          border-radius: 10px !important;
           background: #FFFFFF !important;
           border-color: #E2E8F0 !important;
+        }
+
+        .stTextInput input:focus, .stTextArea textarea:focus {
+          border-color: #2563EB !important;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18) !important;
+        }
+
+        .status-amber { background: #F8FAFC; color: #334155; border-color: #E2E8F0; }
+        .status-purple { background: #F8FAFC; color: #334155; border-color: #E2E8F0; }
+        .status-slate { background: #F8FAFC; color: #475569; border-color: #E2E8F0; }
+
+        .card-shell {
+          box-shadow: 0 1px 2px rgba(15,23,42,0.06);
+          border-radius: 14px;
+        }
+        .card-shell:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 10px 20px rgba(15,23,42,0.08);
+        }
+        .metric-bar {
+          background: #F8FAFC;
+          border: 1px solid #E5E7EB;
+          border-radius: 10px;
+        }
+        .surface {
+          border-radius: 16px;
+          box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+        }
+
+        .detail-focus-panel {
+          margin: 12px 0 14px;
+          border: 1px solid #E5E7EB;
+          border-radius: 16px;
+          background: #FFFFFF;
+          box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+          padding: 16px;
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+        }
+        .detail-focus-item {
+          background: #F8FAFC;
+          border: 1px solid #E5E7EB;
+          border-radius: 12px;
+          padding: 12px;
+        }
+        .detail-focus-kicker {
+          font-size: 11px;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #64748B;
+          font-weight: 700;
+          margin-bottom: 6px;
+        }
+        .detail-focus-value {
+          font-size: 14px;
+          line-height: 1.6;
+          color: #0F172A;
+          font-weight: 600;
+        }
+
+        .login-shell {
+          width: 100%;
+          padding: 2.5rem 0 1rem;
+        }
+        .login-value-pane {
+          background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+          border: 1px solid #E5E7EB;
+          border-radius: 20px;
+          box-shadow: 0 10px 20px rgba(15,23,42,0.06);
+          padding: 28px;
+          min-height: 360px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        .login-kicker {
+          display: inline-flex;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #2563EB;
+          margin-bottom: 12px;
+        }
+        .login-title {
+          font-size: 38px;
+          line-height: 1.18;
+          letter-spacing: -0.02em;
+          margin: 0;
+          color: #0F172A;
+          font-weight: 760;
+        }
+        .login-subtitle {
+          font-size: 16px;
+          line-height: 1.75;
+          color: #475569;
+          margin: 16px 0 0;
+        }
+        .login-trust-line {
+          margin-top: 18px;
+          padding-top: 14px;
+          border-top: 1px solid #E5E7EB;
+          font-size: 13px;
+          color: #64748B;
+        }
+        .login-card-pane {
+          border: 1px solid #E5E7EB;
+          border-radius: 20px;
+          background: #FFFFFF;
+          box-shadow: 0 10px 20px rgba(15,23,42,0.06);
+          padding: 24px;
+          min-height: 360px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        .login-card-headline {
+          font-size: 24px;
+          line-height: 1.25;
+          color: #0F172A;
+          font-weight: 720;
+          margin-bottom: 6px;
+        }
+        .login-card-desc {
+          font-size: 14px;
+          line-height: 1.65;
+          color: #64748B;
+          margin-bottom: 12px;
+        }
+        .form-inline-error {
+          color: #B91C1C;
+          font-size: 12px;
+          margin: 2px 0 10px;
+        }
+        .form-inline-hint {
+          color: #64748B;
+          font-size: 12px;
+          margin: 2px 0 10px;
         }
 
         @media (max-width: 1024px) {
           .nav-links { display: none; }
           .archive-kpis { grid-template-columns: 1fr; }
+          .detail-focus-panel { grid-template-columns: 1fr; }
+          .login-shell { padding-top: 1rem; }
+          .login-title { font-size: 30px; }
+          .login-value-pane, .login-card-pane { min-height: auto; padding: 20px; }
         }
         </style>
         """,
@@ -1313,7 +1496,7 @@ def render_card(project: Dict[str, Any], highlight_id: str) -> None:
 
     action_cols = st.columns([1.0, 1.0])
     with action_cols[0]:
-        if st.button("查看完整档案", key=f"view_{project['id']}", type="primary"):
+        if st.button(get_screen_primary_cta("list_card", is_owner=is_owner), key=f"view_{project['id']}", type="primary"):
             st.session_state.selected_project_id = project["id"]
             st.query_params["project"] = project["id"]
             st.query_params["view"] = "detail"
@@ -1477,14 +1660,15 @@ def render_project_detail_page(project: Dict[str, Any]) -> None:
             st.query_params.clear()
             st.rerun()
     with header_cols[1]:
+        primary_detail_cta = get_screen_primary_cta("detail", is_owner=is_owner)
         if is_owner:
-            if st.button("编辑项目", key=f"detail_edit_{project_id}", type="primary", use_container_width=True):
+            if st.button(primary_detail_cta, key=f"detail_edit_{project_id}", type="primary", use_container_width=True):
                 st.query_params["project"] = project_id
                 st.query_params["view"] = "edit"
                 st.query_params.pop("mode", None)
                 st.rerun()
         else:
-            if st.button("创建我的项目档案", key=f"detail_create_entry_{project_id}", type="primary", use_container_width=True):
+            if st.button(primary_detail_cta, key=f"detail_create_entry_{project_id}", type="primary", use_container_width=True):
                 st.query_params.clear()
                 st.query_params["action"] = "create"
                 st.rerun()
@@ -1513,6 +1697,32 @@ def render_project_detail_page(project: Dict[str, Any]) -> None:
                     st.rerun()
 
     state_label = "公开" if is_public else "私有"
+    focus_stage = project.get("stage_label", stage_label(project.get("stage", "")))
+    focus_status = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=120) or "暂无最新进展"
+    focus_next = sanitize_text_strict(
+        ((project.get("next_action", {}) or {}).get("text", "") if isinstance(project.get("next_action", {}), dict) else ""),
+        allow_empty=True,
+        max_len=120,
+    ) or "正在梳理下一步关键动作"
+    st.markdown(
+        f"""
+        <section class="detail-focus-panel">
+          <div class="detail-focus-item">
+            <div class="detail-focus-kicker">Current Stage</div>
+            <div class="detail-focus-value">{escape(focus_stage)}</div>
+          </div>
+          <div class="detail-focus-item">
+            <div class="detail-focus-kicker">Current Status</div>
+            <div class="detail-focus-value">{escape(focus_status)}</div>
+          </div>
+          <div class="detail-focus-item">
+            <div class="detail-focus-kicker">Next Action</div>
+            <div class="detail-focus-value">{escape(focus_next)}</div>
+          </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
     st.caption(f"分享状态：{state_label}")
 
     if is_owner and st.session_state.get("delete_confirm_id") == project_id:
@@ -1696,7 +1906,12 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
         )
         cta_cols = st.columns([0.3, 0.7])
         with cta_cols[0]:
-            if st.button("创建我的项目档案", type="primary", use_container_width=True, key="share_private_create_cta"):
+            if st.button(
+                get_screen_primary_cta("share", is_owner=False),
+                type="primary",
+                use_container_width=True,
+                key="share_private_create_cta",
+            ):
                 cta_token = issue_share_cta_token(
                     project_id=project_id,
                     source="share_page_private",
@@ -1786,8 +2001,9 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
     )
     cta_cols = st.columns([0.3, 0.7])
     with cta_cols[0]:
+        share_cta_label = get_screen_primary_cta("share", is_owner=is_owner)
         if is_owner:
-            if st.button("继续更新这个项目", type="primary", use_container_width=True, key=f"share_update_cta_{project_id}"):
+            if st.button(share_cta_label, type="primary", use_container_width=True, key=f"share_update_cta_{project_id}"):
                 cta_token = issue_share_cta_token(
                     project_id=project_id,
                     source="share_page_owner",
@@ -1802,7 +2018,7 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
                     st.query_params["cta_token"] = cta_token
                 st.rerun()
         else:
-            if st.button("创建我的项目档案", type="primary", use_container_width=True, key=f"share_create_cta_{project_id}"):
+            if st.button(share_cta_label, type="primary", use_container_width=True, key=f"share_create_cta_{project_id}"):
                 cta_token = issue_share_cta_token(
                     project_id=project_id,
                     source="share_page_public",

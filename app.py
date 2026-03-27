@@ -11,10 +11,13 @@ from state_manager import (
     get_visible_projects,
     init_state,
     is_authenticated,
+    is_valid_email,
+    normalize_email,
     remember_share_cta_token,
     register_or_login_user,
 )
 from ui_components import (
+    get_screen_primary_cta,
     render_cards_grid,
     render_create_overlay,
     render_filters,
@@ -81,14 +84,56 @@ if page_view == "share" and project_id:
 
 if not is_authenticated():
     render_styles()
-    st.markdown("## 欢迎使用 OneFile")
-    st.markdown("请输入邮箱以进入你的项目空间。")
-    with st.form("email_entry_form", clear_on_submit=False):
-        email = st.text_input("邮箱", value=get_current_user_email(), placeholder="you@company.com")
-        submitted = st.form_submit_button("进入项目空间", type="primary")
+    if "login_email_input" not in st.session_state:
+        st.session_state.login_email_input = get_current_user_email()
+    st.markdown('<div class="login-shell">', unsafe_allow_html=True)
+    left_col, right_col = st.columns([0.56, 0.44], gap="large")
+    with left_col:
+        st.markdown(
+            """
+            <div class="login-value-pane">
+              <div class="login-kicker">OneFile</div>
+              <h1 class="login-title">把项目进展变成可分享、可转化的结构化档案</h1>
+              <p class="login-subtitle">输入邮箱后即可进入你的专属项目空间，继续创建、更新与分享闭环。</p>
+              <div class="login-trust-line">已支持分享回流归因与私有项目隔离，不公开你的邮箱地址。</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with right_col:
+        st.markdown('<div class="login-card-pane">', unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div class="login-card-headline">极速进入项目空间</div>
+            <div class="login-card-desc">仅需邮箱，一步登录并恢复你的项目上下文。</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.form("email_entry_form", clear_on_submit=False):
+            email = st.text_input("邮箱", key="login_email_input", placeholder="you@company.com")
+            normalized_email = normalize_email(email)
+            can_submit = is_valid_email(normalized_email)
+            if email and not can_submit:
+                st.markdown(
+                    '<div class="form-inline-error">请输入有效邮箱地址，例如 name@company.com</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<div class="form-inline-hint">邮箱仅用于识别你的项目空间和回流行为，不对外展示。</div>',
+                    unsafe_allow_html=True,
+                )
+            submitted = st.form_submit_button(
+                get_screen_primary_cta("landing"),
+                type="primary",
+                use_container_width=True,
+                disabled=not can_submit,
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
     if submitted:
         try:
-            register_or_login_user(email)
+            register_or_login_user(st.session_state.get("login_email_input", ""))
             st.session_state.flash_message = "已进入你的项目空间。"
             if st.session_state.pending_create_after_login:
                 st.session_state.pending_create_after_login = False
