@@ -1,4 +1,5 @@
 import streamlit as st
+import re
 
 from project_model import get_now_str, project_matches
 from state_manager import (
@@ -11,8 +12,6 @@ from state_manager import (
     get_visible_projects,
     init_state,
     is_authenticated,
-    is_valid_email,
-    normalize_email,
     remember_share_cta_token,
     register_or_login_user,
 )
@@ -34,6 +33,17 @@ except ImportError:
     render_edit_page = None
 
 st.set_page_config(page_title="OneFile · 一人档", page_icon="🧬", layout="wide")
+
+_LOGIN_EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+
+def _normalize_login_email(email: str) -> str:
+    return str(email or "").strip().lower()
+
+
+def _is_valid_login_email(email: str) -> bool:
+    normalized = _normalize_login_email(email)
+    return bool(normalized and _LOGIN_EMAIL_PATTERN.match(normalized))
 
 
 # === App Orchestration ===
@@ -111,8 +121,8 @@ if not is_authenticated():
         )
         with st.form("email_entry_form", clear_on_submit=False):
             email = st.text_input("邮箱", key="login_email_input", placeholder="you@company.com")
-            normalized_email = normalize_email(email)
-            can_submit = is_valid_email(normalized_email)
+            normalized_email = _normalize_login_email(email)
+            can_submit = _is_valid_login_email(normalized_email)
             if email and not can_submit:
                 st.markdown(
                     '<div class="form-inline-error">请输入有效邮箱地址，例如 name@company.com</div>',
