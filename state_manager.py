@@ -80,6 +80,8 @@ def _contains_legacy_markup_payload(project: Dict[str, Any]) -> bool:
 
 EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 EVENT_MAX_COUNT = 20000
+SHARE_CTA_TOKEN_TTL_DAYS = 7
+SHARE_CTA_TOKEN_SESSION_KEY = "active_share_cta_token"
 EVENT_TYPE_VALUES = {
     "project_created",
     "project_updated",
@@ -89,6 +91,8 @@ EVENT_TYPE_VALUES = {
     "share_viewed",
     "share_denied",
     "share_cta_clicked",
+    "share_conversion_attributed",
+    "share_conversion_skipped",
 }
 
 
@@ -198,6 +202,157 @@ def append_event_safe(
         )
     except Exception:
         return None
+
+
+def remember_share_cta_token(cta_token: str) -> None:
+    safe = sanitize_text_strict(cta_token, allow_empty=True, max_len=40)
+    if not safe:
+        return
+    st.session_state[SHARE_CTA_TOKEN_SESSION_KEY] = safe
+
+
+def get_active_share_cta_token() -> str:
+    return sanitize_text_strict(st.session_state.get(SHARE_CTA_TOKEN_SESSION_KEY, ""), allow_empty=True, max_len=40)
+
+
+def _find_share_cta_event_by_token(cta_token: str) -> Optional[Dict[str, Any]]:
+    token = sanitize_text_strict(cta_token, allow_empty=True, max_len=40)
+    if not token:
+        return None
+    _load_events_to_session()
+    events = [item for item in st.session_state.get("events", []) if isinstance(item, dict)]
+    for event in reversed(events):
+        event_type = sanitize_text_strict(event.get("event_type", ""), allow_empty=True, max_len=40).lower()
+        if event_type != "share_cta_clicked":
+            continue
+        payload = event.get("payload", {}) if isinstance(event.get("payload", {}), dict) else {}
+        current_token = sanitize_text_strict(payload.get("cta_token", ""), allow_empty=True, max_len=40)
+        if current_token == token:
+            return event
+    return None
+
+
+def _share_conversion_exists(cta_token: str, kind: str) -> bool:
+    token = sanitize_text_strict(cta_token, allow_empty=True, max_len=40)
+    conversion_kind = sanitize_text_strict(kind, allow_empty=True, max_len=16).lower()
+    if not token or conversion_kind not in {"create", "update"}:
+        return False
+    _load_events_to_session()
+    for event in st.session_state.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        event_type = sanitize_text_strict(event.get("event_type", ""), allow_empty=True, max_len=40).lower()
+        if event_type != "share_conversion_attributed":
+            continue
+        payload = event.get("payload", {}) if isinstance(event.get("payload", {}), dict) else {}
+        payload_token = sanitize_text_strict(payload.get("cta_token", ""), allow_empty=True, max_len=40)
+        payload_kind = sanitize_text_strict(payload.get("conversion_kind", ""), allow_empty=True, max_len=16).lower()
+        if payload_token == token and payload_kind == conversion_kind:
+            return True
+    return False
+
+
+def _is_share_cta_token_expired(cta_event_ts: str) -> bool:
+    event_dt = _parse_updated_at(cta_event_ts)
+    if event_dt == datetime.min:
+        return True
+    age_days = max((datetime.now().date() - event_dt.date()).days, 0)
+    return age_days > SHARE_CTA_TOKEN_TTL_DAYS
+
+
+def issue_share_cta_token(
+    project_id: str,
+    source: str,
+    cta: str = "start_project",
+    ref: str = "",
+    access_granted: bool = True,
+) -> str:
+    pid = sanitize_text_strict(project_id, allow_empty=True, max_len=24)
+    if not pid:
+        return ""
+    safe_source = _sanitize_event_source(source)
+    safe_cta = sanitize_text_strict(cta, allow_empty=True, max_len=40).lower() or "start_project"
+    safe_ref = sanitize_text_strict(ref, allow_empty=True, max_len=80).lower()
+    token_seed = f"{pid}:{safe_source}:{safe_cta}:{_now_ts()}"
+    cta_token = hashlib.md5(token_seed.encode("utf-8")).hexdigest()[:16]
+    issued = append_event_safe(
+        event_type="share_cta_clicked",
+        source=safe_source,
+        project_id=pid,
+        payload={
+            "cta": safe_cta,
+            "cta_token": cta_token,
+            "source": safe_source,
+            "ref": safe_ref,
+            "access_granted": bool(access_granted),
+        },
+    )
+    if not issued:
+        return ""
+    remember_share_cta_token(cta_token)
+    refresh_ops_signals_from_events(project_ids=[pid], persist=True)
+    return cta_token
+
+
+def attribute_share_conversion(kind: str, target_project_id: str = "") -> bool:
+    conversion_kind = sanitize_text_strict(kind, allow_empty=True, max_len=16).lower()
+    if conversion_kind not in {"create", "update"}:
+        return False
+    cta_token = get_active_share_cta_token()
+    if not cta_token:
+        return False
+
+    cta_event = _find_share_cta_event_by_token(cta_token)
+    if not isinstance(cta_event, dict):
+        return False
+
+    source_project_id = sanitize_text_strict(cta_event.get("project_id", ""), allow_empty=True, max_len=24)
+    if not source_project_id:
+        return False
+
+    if _is_share_cta_token_expired(str(cta_event.get("ts", ""))):
+        append_event_safe(
+            event_type="share_conversion_skipped",
+            source="share_cta_attribution",
+            project_id=source_project_id,
+            payload={
+                "cta_token": cta_token,
+                "conversion_kind": conversion_kind,
+                "reason": "token_expired",
+            },
+        )
+        refresh_ops_signals_from_events(project_ids=[source_project_id], persist=True)
+        return False
+
+    if _share_conversion_exists(cta_token, conversion_kind):
+        append_event_safe(
+            event_type="share_conversion_skipped",
+            source="share_cta_attribution",
+            project_id=source_project_id,
+            payload={
+                "cta_token": cta_token,
+                "conversion_kind": conversion_kind,
+                "reason": "duplicate",
+            },
+        )
+        refresh_ops_signals_from_events(project_ids=[source_project_id], persist=True)
+        return False
+
+    payload = cta_event.get("payload", {}) if isinstance(cta_event.get("payload", {}), dict) else {}
+    append_event_safe(
+        event_type="share_conversion_attributed",
+        source=sanitize_text_strict(cta_event.get("source", ""), allow_empty=True, max_len=40).lower() or "share_cta",
+        project_id=source_project_id,
+        payload={
+            "cta_token": cta_token,
+            "conversion_kind": conversion_kind,
+            "target_project_id": sanitize_text_strict(target_project_id, allow_empty=True, max_len=24),
+            "cta": sanitize_text_strict(payload.get("cta", ""), allow_empty=True, max_len=40).lower(),
+            "ref": sanitize_text_strict(payload.get("ref", ""), allow_empty=True, max_len=80).lower(),
+        },
+    )
+    refresh_ops_signals_from_events(project_ids=[source_project_id], persist=True)
+    return True
 
 
 def get_recent_project_events(project_id: str, limit: int = 12) -> List[Dict[str, Any]]:
@@ -545,6 +700,8 @@ def init_state() -> None:
         st.session_state.update_file_error = None
     if "update_submit_nonce" not in st.session_state:
         st.session_state.update_submit_nonce = None
+    if SHARE_CTA_TOKEN_SESSION_KEY not in st.session_state:
+        st.session_state[SHARE_CTA_TOKEN_SESSION_KEY] = ""
 
     if st.session_state.projects:
         st.session_state.projects = [hard_scrub_project_for_state(project) for project in st.session_state.projects]
@@ -643,6 +800,7 @@ def insert_project_top(project: Dict[str, Any]) -> None:
             },
         )
         refresh_ops_signals_from_events(project_ids=[project_id], persist=True)
+        attribute_share_conversion(kind="create", target_project_id=project_id)
 
 
 def persist_projects() -> None:
@@ -820,6 +978,7 @@ def submit_overlay_update(project_id: str, update_text: str, supplemental_text: 
         timestamp=timestamp,
     )
     refresh_ops_signals_from_events(project_ids=[project_id], persist=True)
+    attribute_share_conversion(kind="update", target_project_id=project_id)
 
     st.session_state.selected_project_id = project_id
     st.session_state.last_generated_id = project_id

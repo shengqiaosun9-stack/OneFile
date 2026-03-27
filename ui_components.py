@@ -29,11 +29,11 @@ from project_model import (
     validate_title_candidate,
 )
 from state_manager import (
-    append_event_safe,
     delete_project_by_id,
     get_current_user_id,
     get_recent_project_events,
     get_project_by_id,
+    issue_share_cta_token,
     insert_project_top,
     rebuild_ops_signals_from_events,
     save_project_direct_edit,
@@ -523,11 +523,14 @@ def render_styles() -> None:
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
         :root {
-          --tech-blue: #2D7AFF;
-          --bg: #F5F7FA;
-          --line: #E2E8F0;
-          --text: #1E293B;
-          --muted: #64748B;
+          --tech-blue: #2563EB;
+          --accent: #2563EB;
+          --success: #16A34A;
+          --bg: #F7F8FA;
+          --surface: #FFFFFF;
+          --line: #E5E7EB;
+          --text: #111827;
+          --muted: #6B7280;
           --white: #FFFFFF;
         }
 
@@ -700,9 +703,9 @@ def render_styles() -> None:
           white-space: nowrap;
         }
 
-        .status-blue { background: #EFF6FF; color: #2D7AFF; border-color: #DBEAFE; }
+        .status-blue { background: #EFF6FF; color: #2563EB; border-color: #DBEAFE; }
         .status-amber { background: #FFFBEB; color: #D97706; border-color: #FDE68A; }
-        .status-green { background: #F0FDF4; color: #16A34A; border-color: #BBF7D0; }
+        .status-green { background: #F0FDF4; color: var(--success); border-color: #BBF7D0; }
         .status-purple { background: #FAF5FF; color: #9333EA; border-color: #E9D5FF; }
         .status-slate { background: #F1F5F9; color: #475569; border-color: #CBD5E1; }
 
@@ -1008,26 +1011,26 @@ def render_styles() -> None:
         }
 
         .stButton > button[kind="primary"] {
-          background: var(--tech-blue);
+          background: var(--accent);
           color: #fff;
-          border-color: var(--tech-blue);
+          border-color: var(--accent);
           box-shadow: 0 1px 2px rgba(0,0,0,0.06);
         }
 
         .stButton > button[kind="primary"]:hover {
-          background: #2563EB;
-          border-color: #2563EB;
+          background: #1D4ED8;
+          border-color: #1D4ED8;
         }
 
         .stTextInput input, .stTextArea textarea {
           border-radius: 0.5rem !important;
-          background: #F8FAFC !important;
+          background: #FFFFFF !important;
           border: 1px solid #E2E8F0 !important;
         }
 
         .stSelectbox [data-baseweb="select"] > div {
           border-radius: 0.5rem !important;
-          background: #F8FAFC !important;
+          background: #FFFFFF !important;
           border-color: #E2E8F0 !important;
         }
 
@@ -1666,7 +1669,11 @@ def render_edit_page(project: Optional[Dict[str, Any]], mode: str = "update") ->
 
 def render_share_page(project: Dict[str, Any], access_granted: bool = True, owner_preview: bool = False) -> None:
     project = prepare_project_for_render(project)
-    is_logged_in = bool(clean_text(get_current_user_id(), 40, aggressive=True))
+    current_user_id = clean_text(get_current_user_id(), 40, aggressive=True)
+    is_logged_in = bool(current_user_id)
+    owner_user_id = clean_text(project.get("owner_user_id", ""), 40, aggressive=True)
+    is_owner = bool(current_user_id and owner_user_id and current_user_id == owner_user_id)
+    project_id = clean_text(project.get("id", ""), 24, aggressive=True)
     if not access_granted:
         if is_logged_in:
             top_cols = st.columns([0.2, 0.8])
@@ -1689,17 +1696,19 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
         )
         cta_cols = st.columns([0.3, 0.7])
         with cta_cols[0]:
-            if not is_logged_in:
-                if st.button("创建我的项目档案", type="primary", use_container_width=True, key="share_private_create_cta"):
-                    append_event_safe(
-                        event_type="share_cta_clicked",
-                        source="share_page_private",
-                        project_id=clean_text(project.get("id", ""), 24, aggressive=True),
-                        payload={"access_granted": False},
-                    )
-                    st.query_params.clear()
-                    st.query_params["action"] = "create"
-                    st.rerun()
+            if st.button("创建我的项目档案", type="primary", use_container_width=True, key="share_private_create_cta"):
+                cta_token = issue_share_cta_token(
+                    project_id=project_id,
+                    source="share_page_private",
+                    cta="start_project",
+                    ref="private_gate",
+                    access_granted=False,
+                )
+                st.query_params.clear()
+                st.query_params["action"] = "create"
+                if cta_token:
+                    st.query_params["cta_token"] = cta_token
+                st.rerun()
         return
 
     summary = sanitize_text_strict(project.get("summary", ""), allow_empty=True, max_len=140) or "项目定位待补充"
@@ -1777,16 +1786,34 @@ def render_share_page(project: Dict[str, Any], access_granted: bool = True, owne
     )
     cta_cols = st.columns([0.3, 0.7])
     with cta_cols[0]:
-        if not is_logged_in:
-            if st.button("创建我的项目档案", type="primary", use_container_width=True, key=f"share_create_cta_{project.get('id', '')}"):
-                append_event_safe(
-                    event_type="share_cta_clicked",
+        if is_owner:
+            if st.button("继续更新这个项目", type="primary", use_container_width=True, key=f"share_update_cta_{project_id}"):
+                cta_token = issue_share_cta_token(
+                    project_id=project_id,
+                    source="share_page_owner",
+                    cta="continue_update",
+                    ref="share_hero",
+                    access_granted=True,
+                )
+                st.query_params.clear()
+                st.query_params["project"] = project_id
+                st.query_params["view"] = "detail"
+                if cta_token:
+                    st.query_params["cta_token"] = cta_token
+                st.rerun()
+        else:
+            if st.button("创建我的项目档案", type="primary", use_container_width=True, key=f"share_create_cta_{project_id}"):
+                cta_token = issue_share_cta_token(
+                    project_id=project_id,
                     source="share_page_public",
-                    project_id=clean_text(project.get("id", ""), 24, aggressive=True),
-                    payload={"access_granted": True},
+                    cta="start_project",
+                    ref="share_hero",
+                    access_granted=True,
                 )
                 st.query_params.clear()
                 st.query_params["action"] = "create"
+                if cta_token:
+                    st.query_params["cta_token"] = cta_token
                 st.rerun()
 
 

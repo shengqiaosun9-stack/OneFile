@@ -11,6 +11,7 @@ from state_manager import (
     get_visible_projects,
     init_state,
     is_authenticated,
+    remember_share_cta_token,
     register_or_login_user,
 )
 from ui_components import (
@@ -39,6 +40,10 @@ project_id = st.query_params.get("project", "")
 page_view = str(st.query_params.get("view", "detail" if project_id else "")).strip().lower()
 page_mode = str(st.query_params.get("mode", "")).strip().lower()
 page_action = str(st.query_params.get("action", "")).strip().lower()
+page_cta_token = str(st.query_params.get("cta_token", "")).strip()
+
+if page_cta_token:
+    remember_share_cta_token(page_cta_token)
 
 if "pending_create_after_login" not in st.session_state:
     st.session_state.pending_create_after_login = False
