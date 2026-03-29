@@ -54,6 +54,7 @@ EVENT_TYPE_VALUES = {
     "weekly_report_generated",
     "intervention_learning_viewed",
 }
+FALLBACK_WARNING_TEXT = "AI 服务暂不可用，已自动使用本地规则完成结构化。"
 
 
 class ServiceError(Exception):
@@ -62,6 +63,13 @@ class ServiceError(Exception):
         self.status_code = status_code
         self.code = code
         self.message = message
+
+
+def _build_structuring_warning(meta: Dict[str, Any]) -> Optional[str]:
+    if not bool(meta.get("used_local_structuring", False)):
+        return None
+    # Never expose provider internals (e.g. missing API keys) to end users.
+    return FALLBACK_WARNING_TEXT
 
 
 def _contains_legacy_markup_payload(project: Dict[str, Any]) -> bool:
@@ -968,7 +976,7 @@ def create_project(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "project": normalized,
         "used_fallback": bool(meta.get("used_local_structuring", False)),
-        "warning": sanitize_text_strict(meta.get("last_api_error", ""), allow_empty=True, max_len=180) or None,
+        "warning": _build_structuring_warning(meta),
     }
 
 
@@ -1193,7 +1201,7 @@ def update_project_progress(project_id: str, payload: Dict[str, Any]) -> Dict[st
     return {
         "project": normalized,
         "used_fallback": bool(meta.get("used_local_structuring", False)),
-        "warning": sanitize_text_strict(meta.get("last_api_error", ""), allow_empty=True, max_len=180) or None,
+        "warning": _build_structuring_warning(meta),
         "quality_feedback": quality_feedback,
         "evolution_explanation": evolution_explanation,
     }

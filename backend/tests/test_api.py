@@ -132,7 +132,7 @@ def test_create_success_and_fallback_meta(client: TestClient, monkeypatch):
     )
     assert response2.status_code == 200
     assert response2.json()["used_fallback"] is True
-    assert response2.json()["warning"] == "api timeout"
+    assert response2.json()["warning"] == "AI 服务暂不可用，已自动使用本地规则完成结构化。"
 
 
 def test_create_merges_supplemental_text_into_structuring_input(client: TestClient, monkeypatch):
