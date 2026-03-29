@@ -6,19 +6,22 @@ FRONTEND_DIR="$ROOT_DIR/frontend"
 
 cd "$ROOT_DIR"
 
-echo "[1/5] Running backend tests..."
+echo "[1/6] Running backend tests..."
 python3 -m pytest backend/tests -q
 
-echo "[2/5] Running frontend lint..."
+echo "[2/6] Running frontend lint..."
 cd "$FRONTEND_DIR"
 npm run lint
 
-echo "[3/5] Running frontend build..."
+echo "[3/6] Running frontend build..."
 npm run build
+
+echo "[4/6] Running impeccable UI gate..."
+npm run check:impeccable
 
 cd "$ROOT_DIR"
 
-echo "[4/5] Checking git state..."
+echo "[5/6] Checking git state..."
 branch="$(git rev-parse --abbrev-ref HEAD)"
 if [[ "$branch" != "main" ]]; then
   echo "Error: release-demo.sh must run on branch 'main' (current: $branch)."
@@ -36,7 +39,7 @@ if [[ "$ahead" -eq 0 ]]; then
   exit 0
 fi
 
-echo "[5/5] Pushing main to trigger Netlify + Render auto deploy..."
+echo "[6/6] Pushing main to trigger Netlify + Render auto deploy..."
 git push origin main
 
 echo "Release completed. Monitor platform logs for rollout status."

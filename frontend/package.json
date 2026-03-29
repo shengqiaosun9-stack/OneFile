@@ -13,6 +13,8 @@
     "test:e2e": "playwright test",
     "check:ui": "npm run lint",
     "check:landing-style": "node scripts/check-landing-style.mjs",
+    "check:impeccable": "node scripts/check-impeccable.mjs",
+    "check:impeccable:baseline": "node scripts/check-impeccable.mjs --update-baseline",
     "check:smoke": "npm run lint && npm run build && npm run test:e2e",
     "check:smoke:full": "npm run check:smoke && npm run check:landing-style"
   },

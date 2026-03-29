@@ -42,6 +42,12 @@ Optional (when switching to real email OTP):
 ./scripts/release-demo.sh
 ```
 
+The script includes:
+- backend tests
+- frontend lint
+- frontend build
+- `frontend` impeccable UI gate (`npm run check:impeccable`)
+
 ## 4) Demo-tier data caveat
 
 Render free instances can restart and lose filesystem changes.

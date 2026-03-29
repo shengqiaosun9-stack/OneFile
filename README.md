@@ -70,7 +70,8 @@ The script runs:
 1. `python3 -m pytest backend/tests -q`
 2. `cd frontend && npm run lint`
 3. `cd frontend && npm run build`
-4. push `main` to trigger Netlify + Render deploy
+4. `cd frontend && npm run check:impeccable`
+5. push `main` to trigger Netlify + Render deploy
 
 ## Verification
 
@@ -81,6 +82,9 @@ python -m pytest backend/tests -q
 # Frontend lint + build + e2e
 cd frontend
 npm run check:smoke
+
+# Impeccable UI gate (no new visual regressions)
+npm run check:impeccable
 ```
 
 ## Data
@@ -123,3 +127,11 @@ Every UI/product iteration should pass this gate order:
 5. `plan-design-review` + `ui-ux-pro-max` + `impeccable`
 6. `verification-before-completion`
 7. `requesting-code-review`
+
+## Impeccable Gate (local)
+- Rules: `frontend/impeccable/gate.rules.json`
+- Baseline: `frontend/impeccable/baseline.json`
+- Report output: `frontend/test-results/impeccable-report.json`
+- Commands:
+  - `cd frontend && npm run check:impeccable`
+  - `cd frontend && npm run check:impeccable:baseline` (only after intentional design refactor)

@@ -1,0 +1,95 @@
+{
+  "version": "1.0.0",
+  "description": "OneFile local impeccable gate rules for visual consistency and anti-dashboard drift.",
+  "targets": [
+    {
+      "file": "src/app/page.tsx",
+      "required_tokens": [
+        "landing-premium",
+        "landing-nav",
+        "landing-hero",
+        "landing-value-grid",
+        "landing-showcase-track",
+        "landing-flow-shell",
+        "landing-cta-btn"
+      ]
+    },
+    {
+      "file": "src/app/library/page.tsx",
+      "required_tokens": [
+        "landing-premium",
+        "onefile-surface",
+        "onefile-panel",
+        "landing-cta-btn"
+      ]
+    },
+    {
+      "file": "src/app/projects/[id]/page.tsx",
+      "required_tokens": [
+        "landing-premium",
+        "onefile-surface",
+        "onefile-panel",
+        "landing-cta-btn"
+      ]
+    },
+    {
+      "file": "src/app/share/[id]/page.tsx",
+      "required_tokens": [
+        "landing-premium",
+        "onefile-surface",
+        "onefile-panel",
+        "landing-cta-btn",
+        "onefile-poster-card"
+      ]
+    }
+  ],
+  "css": {
+    "file": "src/app/globals.css",
+    "required_snippets": [
+      "--landing-bg-start",
+      "--landing-bg-end",
+      "--landing-brand",
+      "--landing-title",
+      "--landing-text",
+      "--landing-caption",
+      "--landing-highlight",
+      "background: linear-gradient(160deg, var(--landing-bg-start), var(--landing-bg-end));",
+      ".onefile-surface",
+      ".onefile-panel",
+      ".landing-cta-btn",
+      ".onefile-poster-card"
+    ]
+  },
+  "forbidden_patterns": [
+    {
+      "id": "no-dashboard-heading",
+      "description": "Avoid dashboard IA drift in core pages.",
+      "pattern": "\\bdashboard\\b|\\badmin\\s*panel\\b|\\bKPI\\b",
+      "flags": "i",
+      "paths": [
+        "src/app/page.tsx",
+        "src/app/library/page.tsx",
+        "src/app/projects/[id]/page.tsx",
+        "src/app/share/[id]/page.tsx"
+      ],
+      "selector": "copy"
+    }
+  ],
+  "allow_hex_colors": [
+    "#4263eb",
+    "#1e293b",
+    "#64748b",
+    "#94a3b8",
+    "#e2e8f0",
+    "#eff6ff",
+    "#f8fafc",
+    "#f5f8fb",
+    "#ffffff",
+    "#fff",
+    "#334155",
+    "#eef2f7",
+    "#f8fafd",
+    "#ff0000",
+    "#000"
+  ]
+}
