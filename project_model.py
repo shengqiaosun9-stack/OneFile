@@ -327,6 +327,9 @@ def normalize_ops_signals_state(value: Any, fallback_timestamp: str) -> Dict[str
         "completed_actions_14d": max(int(raw.get("completed_actions_14d", 0) or 0), 0),
         "intervention_trigger_rate_14d": round(_clamp01(raw.get("intervention_trigger_rate_14d", 0.0), default=0.0), 2),
         "share_views_14d": max(int(raw.get("share_views_14d", 0) or 0), 0),
+        "share_cta_clicks_14d": max(int(raw.get("share_cta_clicks_14d", 0) or 0), 0),
+        "share_create_conversions_14d": max(int(raw.get("share_create_conversions_14d", 0) or 0), 0),
+        "share_update_conversions_14d": max(int(raw.get("share_update_conversions_14d", 0) or 0), 0),
         "last_activity_at": sanitize_version_date(raw.get("last_activity_at", fallback_timestamp)),
     }
 
@@ -343,6 +346,9 @@ def derive_ops_signals(project_id: Any, events: Any, now_ts: str = "") -> Dict[s
     intervention_triggered_14d = 0
     project_updates_14d = 0
     share_views_14d = 0
+    share_cta_clicks_14d = 0
+    share_create_conversions_14d = 0
+    share_update_conversions_14d = 0
     last_activity_at = ""
 
     for event in events:
@@ -371,6 +377,15 @@ def derive_ops_signals(project_id: Any, events: Any, now_ts: str = "") -> Dict[s
             intervention_triggered_14d += 1
         if event_type == "share_viewed" and age_days <= 14:
             share_views_14d += 1
+        if event_type == "share_cta_clicked" and age_days <= 14:
+            share_cta_clicks_14d += 1
+        if event_type == "share_conversion_attributed" and age_days <= 14:
+            payload = event.get("payload", {}) if isinstance(event.get("payload", {}), dict) else {}
+            conversion_kind = sanitize_text_strict(payload.get("conversion_kind", ""), allow_empty=True, max_len=16).lower()
+            if conversion_kind == "create":
+                share_create_conversions_14d += 1
+            elif conversion_kind == "update":
+                share_update_conversions_14d += 1
 
     denom = max(project_updates_14d, 1)
     intervention_rate = intervention_triggered_14d / denom
@@ -380,6 +395,9 @@ def derive_ops_signals(project_id: Any, events: Any, now_ts: str = "") -> Dict[s
             "completed_actions_14d": completed_actions_14d,
             "intervention_trigger_rate_14d": intervention_rate,
             "share_views_14d": share_views_14d,
+            "share_cta_clicks_14d": share_cta_clicks_14d,
+            "share_create_conversions_14d": share_create_conversions_14d,
+            "share_update_conversions_14d": share_update_conversions_14d,
             "last_activity_at": last_activity_at or safe_now,
         },
         safe_now,

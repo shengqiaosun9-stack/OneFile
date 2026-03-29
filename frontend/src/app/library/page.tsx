@@ -1,0 +1,342 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+
+import { ProjectCard } from "@/components/onefile/project-card";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { copyZh } from "@/lib/copy-zh";
+import { getApiErrorMessage, resolveApiError } from "@/lib/error-zh";
+import { clearEmail, saveEmail } from "@/lib/session";
+import type { ApiError, AuthMeResponse, BackupExportResponse, ListResponse, OneFileProject } from "@/lib/types";
+
+export const dynamic = "force-dynamic";
+
+const USER_SPLIT_RE = /[、，,\/|;；]+/;
+
+function getFormLabel(project: OneFileProject): string {
+  return (project.form_type_label || project.form_type || "").trim();
+}
+
+function getModelLabel(project: OneFileProject): string {
+  return (project.model_type_label || project.model_type || "").trim();
+}
+
+function getUserTokens(users: string | undefined): string[] {
+  if (!users) return [];
+  return users
+    .split(USER_SPLIT_RE)
+    .map((item) => item.trim())
+    .filter((item) => item && item !== "待补充");
+}
+
+function includesUserToken(users: string | undefined, target: string): boolean {
+  if (!target) return true;
+  const tokens = getUserTokens(users);
+  return tokens.some((token) => token.toLowerCase() === target.toLowerCase());
+}
+
+export default function LibraryPage() {
+  const t = copyZh.library;
+  const router = useRouter();
+  const [authenticatedEmail, setAuthenticatedEmail] = useState("");
+  const [authReady, setAuthReady] = useState(false);
+
+  const [projects, setProjects] = useState<OneFileProject[]>([]);
+  const [userId, setUserId] = useState("");
+  const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<"all" | "public" | "mine">("all");
+  const [formFilter, setFormFilter] = useState("all");
+  const [usersFilter, setUsersFilter] = useState("all");
+  const [modelFilter, setModelFilter] = useState("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [exportingBackup, setExportingBackup] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const meRes = await fetch("/api/auth/me", { cache: "no-store" });
+      if (meRes.ok) {
+        const meBody = (await meRes.json()) as AuthMeResponse;
+        if (meBody.user?.email) {
+          setAuthenticatedEmail(meBody.user.email);
+          saveEmail(meBody.user.email);
+        }
+      }
+      setAuthReady(true);
+    })();
+  }, []);
+
+  const isAuthenticated = Boolean(authenticatedEmail);
+
+  useEffect(() => {
+    if (!authReady) return;
+    (async () => {
+      const res = await fetch("/api/projects", { cache: "no-store" });
+      if (!res.ok) {
+        const body = (await res.json()) as ApiError;
+        setError(getApiErrorMessage(body, t.loadFailed));
+        setLoading(false);
+        return;
+      }
+      const body = (await res.json()) as ListResponse;
+      setProjects(body.projects || []);
+      setUserId(body.user?.id || "");
+      setLoading(false);
+    })();
+  }, [authReady, t.loadFailed]);
+
+  const scopeProjects = useMemo(() => {
+    let source = projects;
+    if (scope === "public") {
+      source = source.filter((item) => Boolean(item.share?.is_public));
+    } else if (scope === "mine") {
+      source = source.filter((item) => item.owner_user_id === userId);
+    }
+    return source;
+  }, [projects, scope, userId]);
+
+  const formOptions = useMemo(() => {
+    return Array.from(new Set(scopeProjects.map(getFormLabel).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"));
+  }, [scopeProjects]);
+
+  const userOptions = useMemo(() => {
+    return Array.from(new Set(scopeProjects.flatMap((item) => getUserTokens(item.users)))).sort((a, b) => a.localeCompare(b, "zh-CN"));
+  }, [scopeProjects]);
+
+  const modelOptions = useMemo(() => {
+    return Array.from(new Set(scopeProjects.map(getModelLabel).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"));
+  }, [scopeProjects]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let source = scopeProjects;
+
+    source = source.filter((item) => {
+      const formValue = getFormLabel(item);
+      const modelValue = getModelLabel(item);
+      const formMatched = formFilter === "all" || formValue === formFilter;
+      const usersMatched = usersFilter === "all" || includesUserToken(item.users, usersFilter);
+      const modelMatched = modelFilter === "all" || modelValue === modelFilter;
+      return formMatched && usersMatched && modelMatched;
+    });
+
+    if (!q) return source;
+    return source.filter((item) => {
+      return `${item.title} ${item.summary || ""} ${item.stage_label || ""} ${item.stage || ""} ${item.users || ""} ${getFormLabel(item)} ${getModelLabel(item)}`
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [scopeProjects, query, formFilter, usersFilter, modelFilter]);
+
+  const totalCount = projects.length;
+  const publicCount = projects.filter((item) => Boolean(item.share?.is_public)).length;
+  const mineCount = userId ? projects.filter((item) => item.owner_user_id === userId).length : 0;
+
+  async function onLogout() {
+    setLoggingOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      clearEmail();
+      setAuthenticatedEmail("");
+      setUserId("");
+      router.push("/library?mode=guest");
+    }
+  }
+
+  async function onExportBackup() {
+    if (!isAuthenticated || exportingBackup) return;
+    setExportingBackup(true);
+    try {
+      const res = await fetch("/api/backup/export", { cache: "no-store" });
+      if (!res.ok) {
+        const failure = await resolveApiError(res, t.loadFailed);
+        toast.error(failure.message);
+        return;
+      }
+      const body = (await res.json()) as BackupExportResponse;
+      const blob = new Blob([JSON.stringify(body, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `onefile-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success(t.exportBackup);
+    } finally {
+      setExportingBackup(false);
+    }
+  }
+
+  return (
+    <main className="landing-premium min-h-screen px-6 py-7 sm:px-8 sm:py-9">
+      <div className="mx-auto w-full max-w-7xl space-y-6 sm:space-y-7">
+        <header className="onefile-surface flex flex-col gap-5 p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="landing-brand">{copyZh.common.brand}</p>
+                <span className="landing-brand-sub">· 一人档</span>
+              </div>
+              <h1 className="mt-2 text-2xl font-semibold text-[var(--landing-title)]">{t.title}</h1>
+              <p className="mt-1 text-sm onefile-subtle">{t.subtitle}</p>
+            </div>
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+              {isAuthenticated ? <span className="text-xs onefile-caption">{t.signedInAs}：{authenticatedEmail}</span> : null}
+              <Link href="/" className={buttonVariants({ variant: "ghost", className: "landing-secondary-btn h-10 px-4" })}>
+                {t.backLanding}
+              </Link>
+              <Button
+                className="landing-cta-btn h-10 px-5"
+                onClick={() => router.push(isAuthenticated ? "/projects/new" : "/?next=%2Fprojects%2Fnew")}
+              >
+                {isAuthenticated ? t.createProject : t.createNeedLogin}
+              </Button>
+              {isAuthenticated ? (
+                <Button variant="ghost" className="landing-secondary-btn h-10 px-4" disabled={exportingBackup} onClick={onExportBackup}>
+                  {exportingBackup ? t.exportingBackup : t.exportBackup}
+                </Button>
+              ) : null}
+              {isAuthenticated ? (
+                <Button variant="ghost" className="landing-secondary-btn h-10 px-4" disabled={loggingOut} onClick={onLogout}>
+                  {loggingOut ? t.loggingOut : t.logout}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t.searchPlaceholder}
+            className="onefile-input h-11 w-full sm:max-w-lg"
+          />
+        </header>
+
+        <section className="onefile-surface grid grid-cols-1 gap-4 p-5 sm:grid-cols-3 sm:p-6">
+          <div>
+            <p className="text-xs onefile-caption">{t.statAll}</p>
+            <p className="mt-1 text-2xl font-semibold text-[var(--landing-title)]">{totalCount}</p>
+          </div>
+          <div>
+            <p className="text-xs onefile-caption">{t.statPublic}</p>
+            <p className="mt-1 text-2xl font-semibold text-[var(--landing-title)]">{publicCount}</p>
+          </div>
+          <div>
+            <p className="text-xs onefile-caption">{t.statMine}</p>
+            <p className="mt-1 text-2xl font-semibold text-[var(--landing-title)]">{mineCount}</p>
+          </div>
+        </section>
+
+        <section className="onefile-surface space-y-4 p-5 sm:p-6">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" className={`onefile-chip h-9 px-4 ${scope === "all" ? "is-active" : ""}`} onClick={() => setScope("all")}>
+              {t.filterAll}
+            </Button>
+            <Button
+              variant="ghost"
+              className={`onefile-chip h-9 px-4 ${scope === "public" ? "is-active" : ""}`}
+              onClick={() => setScope("public")}
+            >
+              {t.filterPublic}
+            </Button>
+            <Button variant="ghost" className={`onefile-chip h-9 px-4 ${scope === "mine" ? "is-active" : ""}`} onClick={() => setScope("mine")}>
+              {t.filterMine}
+            </Button>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <label className="space-y-1">
+              <span className="text-xs onefile-caption">{t.filterFormLabel}</span>
+              <select
+                className="onefile-select h-10 w-full rounded-lg px-3 text-sm"
+                value={formFilter}
+                onChange={(e) => setFormFilter(e.target.value)}
+              >
+                <option value="all">{t.filterAnyForm}</option>
+                {formOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-1">
+              <span className="text-xs onefile-caption">{t.filterUsersLabel}</span>
+              <select
+                className="onefile-select h-10 w-full rounded-lg px-3 text-sm"
+                value={usersFilter}
+                onChange={(e) => setUsersFilter(e.target.value)}
+              >
+                <option value="all">{t.filterAnyUsers}</option>
+                {userOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-1">
+              <span className="text-xs onefile-caption">{t.filterModelLabel}</span>
+              <select
+                className="onefile-select h-10 w-full rounded-lg px-3 text-sm"
+                value={modelFilter}
+                onChange={(e) => setModelFilter(e.target.value)}
+              >
+                <option value="all">{t.filterAnyModel}</option>
+                {modelOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </section>
+
+        {loading ? (
+          <div className="space-y-3">
+            <p className="text-sm onefile-subtle">{t.loadingCards}</p>
+            <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, index) => (
+                <div key={`library-skeleton-${index}`} className="onefile-panel p-4">
+                  <Skeleton className="h-4 w-2/3" />
+                  <Skeleton className="mt-3 h-4 w-full" />
+                  <Skeleton className="mt-2 h-4 w-4/5" />
+                  <Skeleton className="mt-4 h-8 w-full" />
+                </div>
+              ))}
+            </section>
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="onefile-panel p-4">
+            <p className="text-sm text-destructive">{error}</p>
+          </div>
+        ) : null}
+
+        {!loading && !error && filtered.length === 0 ? (
+          <div className="onefile-panel p-10 text-center">
+            <p className="mb-4 text-sm onefile-subtle">{t.emptyHint}</p>
+            <Link href="/library?mode=guest" className={buttonVariants({ variant: "ghost", className: "landing-secondary-btn h-10 px-4" })}>
+              {t.openDemo}
+            </Link>
+          </div>
+        ) : null}
+
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {filtered.map((project) => (
+            <ProjectCard key={project.id} project={project} />
+          ))}
+        </section>
+      </div>
+    </main>
+  );
+}

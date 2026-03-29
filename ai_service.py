@@ -3,9 +3,7 @@ import os
 import re
 from io import BytesIO
 from html import unescape
-from typing import Any, Dict, List
-
-import streamlit as st
+from typing import Any, Dict, List, Optional
 
 from project_model import (
     get_export_payload,
@@ -18,6 +16,33 @@ from project_model import (
     sanitize_schema,
 )
 from text_cleaning import clean_text, sanitize_text_strict
+
+_LAST_USED_LOCAL_STRUCTURING = False
+_LAST_API_ERROR = ""
+
+
+def _safe_secret_get(key: str) -> Optional[str]:
+    _ = key
+    return None
+
+
+def _safe_session_state_set(key: str, value: Any) -> None:
+    _ = (key, value)
+
+
+def _set_structuring_meta(used_local_structuring: bool, api_error: str = "") -> None:
+    global _LAST_USED_LOCAL_STRUCTURING, _LAST_API_ERROR
+    _LAST_USED_LOCAL_STRUCTURING = bool(used_local_structuring)
+    _LAST_API_ERROR = clean_text(api_error or "", 180)
+    _safe_session_state_set("used_local_structuring", _LAST_USED_LOCAL_STRUCTURING)
+    _safe_session_state_set("last_api_error", _LAST_API_ERROR or None)
+
+
+def get_last_structuring_meta() -> Dict[str, Any]:
+    return {
+        "used_local_structuring": bool(_LAST_USED_LOCAL_STRUCTURING),
+        "last_api_error": _LAST_API_ERROR or "",
+    }
 
 
 def extract_text_from_uploaded_file(uploaded_file: Any) -> str:
@@ -61,23 +86,14 @@ def get_model_name() -> str:
         or os.getenv("MODEL_NAME")
     )
     if not model:
-        try:
-            model = (
-                st.secrets.get("HUNYUAN_MODEL")
-                or st.secrets.get("MODEL_NAME")
-            )
-        except Exception:
-            model = None
+        model = _safe_secret_get("HUNYUAN_MODEL") or _safe_secret_get("MODEL_NAME")
     return str(model or "hunyuan-turbos-latest").strip()
 
 
 def get_base_url() -> str:
     base_url = os.getenv("HUNYUAN_BASE_URL") or os.getenv("OPENAI_BASE_URL")
     if not base_url:
-        try:
-            base_url = st.secrets.get("HUNYUAN_BASE_URL") or st.secrets.get("OPENAI_BASE_URL")
-        except Exception:
-            base_url = None
+        base_url = _safe_secret_get("HUNYUAN_BASE_URL") or _safe_secret_get("OPENAI_BASE_URL")
     return str(base_url or "https://api.hunyuan.cloud.tencent.com/v1").strip()
 
 
@@ -92,13 +108,7 @@ def get_client() -> Any:
         or os.getenv("OPENAI_API_KEY")
     )
     if not api_key:
-        try:
-            api_key = (
-                st.secrets.get("HUNYUAN_API_KEY")
-                or st.secrets.get("OPENAI_API_KEY")
-            )
-        except Exception:
-            api_key = None
+        api_key = _safe_secret_get("HUNYUAN_API_KEY") or _safe_secret_get("OPENAI_API_KEY")
     api_key = str(api_key or "").strip()
     if not api_key:
         raise ValueError("未检测到 API Key。请设置 HUNYUAN_API_KEY，或使用 OPENAI_API_KEY 作为回退。")
@@ -247,8 +257,7 @@ def build_update_input(project: Dict[str, Any], update_text: str) -> str:
 
 
 def structure_project(raw_input: str, user_title: str = "") -> Dict[str, Any]:
-    st.session_state.used_local_structuring = False
-    st.session_state.last_api_error = None
+    _set_structuring_meta(used_local_structuring=False, api_error="")
     system_prompt = (
         "你是 OneFile 的 AI 结构化引擎。"
         "任务是把混乱项目描述整理为投资人可快速理解、可比较、可检索的结构化项目档案。"
@@ -320,6 +329,5 @@ JSON Schema:
             schema["title"] = sanitize_text_strict(user_title, allow_empty=False, max_len=42)
         return sanitize_schema(schema)
     except Exception as exc:
-        st.session_state.used_local_structuring = True
-        st.session_state.last_api_error = clean_text(exc, 180)
+        _set_structuring_meta(used_local_structuring=True, api_error=str(exc))
         return fallback_structure_project(raw_input, user_title=user_title)

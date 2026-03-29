@@ -1,21 +1,25 @@
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List
+import uuid
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-PROJECTS_FILE = DATA_DIR / "projects.json"
+DATA_DIR = Path(os.getenv("ONEFILE_DATA_DIR", str(BASE_DIR / "data"))).resolve()
+PROJECTS_FILE = Path(os.getenv("ONEFILE_PROJECTS_FILE", str(DATA_DIR / "projects.json"))).resolve()
 SCHEMA_VERSION = 2
 STORE_TEMPLATE: Dict[str, Any] = {
     "schema_version": SCHEMA_VERSION,
     "users": [],
     "projects": [],
     "events": [],
+    "auth_challenges": [],
+    "auth_sessions": [],
 }
 
 
 def _ensure_storage_dir() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PROJECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _normalize_store(raw: Any) -> Dict[str, Any]:
@@ -26,6 +30,8 @@ def _normalize_store(raw: Any) -> Dict[str, Any]:
             "users": [],
             "projects": [item for item in raw if isinstance(item, dict)],
             "events": [],
+            "auth_challenges": [],
+            "auth_sessions": [],
         }
     if not isinstance(raw, dict):
         return dict(STORE_TEMPLATE)
@@ -33,11 +39,15 @@ def _normalize_store(raw: Any) -> Dict[str, Any]:
     users = raw.get("users", [])
     projects = raw.get("projects", [])
     events = raw.get("events", [])
+    auth_challenges = raw.get("auth_challenges", [])
+    auth_sessions = raw.get("auth_sessions", [])
     normalized: Dict[str, Any] = {
         "schema_version": int(raw.get("schema_version", SCHEMA_VERSION)),
         "users": [item for item in users if isinstance(item, dict)],
         "projects": [item for item in projects if isinstance(item, dict)],
         "events": [item for item in events if isinstance(item, dict)],
+        "auth_challenges": [item for item in auth_challenges if isinstance(item, dict)],
+        "auth_sessions": [item for item in auth_sessions if isinstance(item, dict)],
     }
     return normalized
 
@@ -60,9 +70,14 @@ def load_store() -> Dict[str, Any]:
 def save_store(store: Dict[str, Any]) -> None:
     _ensure_storage_dir()
     payload = _normalize_store(store)
-    tmp_file = PROJECTS_FILE.with_suffix(".json.tmp")
-    tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_file.replace(PROJECTS_FILE)
+    # Use a unique temp file per write to avoid races under concurrent requests.
+    tmp_file = DATA_DIR / f"{PROJECTS_FILE.name}.{uuid.uuid4().hex}.tmp"
+    try:
+        tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_file.replace(PROJECTS_FILE)
+    finally:
+        if tmp_file.exists():
+            tmp_file.unlink(missing_ok=True)
 
 
 def load_projects() -> List[Dict[str, Any]]:

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: onefile-backend-demo
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: ONEFILE_ENV
+        value: production
+      - key: ONEFILE_AUTH_DEBUG_CODES
+        value: "1"
+      - key: ONEFILE_SESSION_COOKIE_SECURE
+        value: "1"

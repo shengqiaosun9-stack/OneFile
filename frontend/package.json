@@ -1,0 +1,47 @@
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "clean:next": "rm -rf .next",
+    "dev:clean": "npm run clean:next && npm run dev -- --port 3000",
+    "dev:reset": "(lsof -ti :3000 | xargs kill -9) 2>/dev/null || true; npm run dev:clean",
+    "build": "next build",
+    "start": "next start",
+    "lint": "mkdir -p test-results && eslint .",
+    "test:e2e": "playwright test",
+    "check:ui": "npm run lint",
+    "check:landing-style": "node scripts/check-landing-style.mjs",
+    "check:smoke": "npm run lint && npm run build && npm run test:e2e",
+    "check:smoke:full": "npm run check:smoke && npm run check:landing-style"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.3.0",
+    "@types/qrcode": "^1.5.6",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "html-to-image": "^1.11.13",
+    "lucide-react": "^1.7.0",
+    "next": "16.2.1",
+    "next-themes": "^0.4.6",
+    "qrcode": "^1.5.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "shadcn": "^4.1.1",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.5.0",
+    "tw-animate-css": "^1.4.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.2",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.1",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
