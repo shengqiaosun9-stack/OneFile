@@ -199,5 +199,9 @@ export const copyZh = {
     posterOnlyPublic: "仅公开项目支持生成海报。",
     posterDone: "海报已生成并开始下载。",
     posterFailed: "海报生成失败，请稍后重试。",
+    copyLinkButton: "复制分享链接",
+    copyLinkDone: "分享链接已复制，可粘贴到浏览器或微信聊天。",
+    copyLinkFailed: "复制失败，请手动复制地址栏链接。",
+    wechatFallbackHint: "若微信内无法直接打开，请先复制链接到系统浏览器，或优先使用海报二维码分享。",
   },
 } as const;

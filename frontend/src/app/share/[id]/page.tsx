@@ -124,6 +124,29 @@ export default function SharePage() {
     }
   }
 
+  async function handleCopyLink() {
+    if (!projectId || typeof window === "undefined") return;
+    const link = `${window.location.origin}/share/${projectId}`;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(link);
+      } else {
+        const input = document.createElement("textarea");
+        input.value = link;
+        input.setAttribute("readonly", "true");
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        document.body.removeChild(input);
+      }
+      toast.success(t.copyLinkDone);
+    } catch {
+      toast.error(t.copyLinkFailed);
+    }
+  }
+
   return (
     <main className="landing-premium min-h-screen px-6 py-7 sm:px-8 sm:py-9">
       <div className="mx-auto max-w-4xl space-y-6">
@@ -179,6 +202,14 @@ export default function SharePage() {
               <Button className="landing-cta-btn h-10 px-5" onClick={handleCta}>
                 {t.cta}
               </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="landing-secondary-btn h-10 px-5"
+                onClick={handleCopyLink}
+              >
+                {t.copyLinkButton}
+              </Button>
               {project.share?.is_public ? (
                 <Button
                   type="button"
@@ -192,6 +223,7 @@ export default function SharePage() {
               ) : (
                 <p className="text-xs onefile-caption">{t.posterOnlyPublic}</p>
               )}
+              <p className="text-xs onefile-caption">{t.wechatFallbackHint}</p>
             </section>
 
             <div className="onefile-poster-render">

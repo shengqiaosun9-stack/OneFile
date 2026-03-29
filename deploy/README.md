@@ -1,7 +1,7 @@
-# OneFile Deployment (Vercel + Render, Demo Tier)
+# OneFile Deployment (Netlify + Render, Demo Tier)
 
 This folder provides a low-cost demo deployment baseline:
-- Frontend: Vercel (project root directory `frontend`)
+- Frontend: Netlify (project root directory `frontend`)
 - Backend: Render Web Service (free tier, ephemeral disk)
 
 ## 1) Backend on Render
@@ -24,17 +24,18 @@ Optional (when switching to real email OTP):
 - `ONEFILE_RESEND_API_KEY=...`
 - `ONEFILE_RESEND_FROM_EMAIL=OneFile <noreply@yourdomain.com>`
 
-## 2) Frontend on Vercel
+## 2) Frontend on Netlify
 
-- Root Directory: `frontend`
+- Base directory: `frontend`
 - Build Command: `npm run build`
+- Publish directory: `.next` (if Netlify auto-detects Next.js settings, keep default)
 - Environment Variable:
   - `BACKEND_API_URL=https://<your-render-backend>.onrender.com`
   - `NEXT_PUBLIC_DEMO_MODE=1`
 
 ## 3) Continuous deployment
 
-- Render and Vercel both connect to this repo and track `main`.
+- Render and Netlify both connect to this repo and track `main`.
 - Use the release script to run gates before push:
 
 ```bash
@@ -45,3 +46,8 @@ Optional (when switching to real email OTP):
 
 Render free instances can restart and lose filesystem changes.
 Use in-app backup export (`/library` -> 导出我的备份) as a safety fallback.
+
+## 5) No-domain WeChat fallback (current stage)
+
+Without a custom domain, WeChat in-app link opening may be unstable.
+Use the share poster and QR code as the primary distribution path, and provide copy-link guidance for opening in system browser.

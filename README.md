@@ -36,7 +36,7 @@ Open: `http://127.0.0.1:3000`
 ## Production Deploy (Demo Tier)
 
 Target architecture:
-- Frontend: Vercel (`frontend` 目录)
+- Frontend: Netlify (`frontend` 目录)
 - Backend: Render free web service
 
 One-time setup:
@@ -48,9 +48,10 @@ One-time setup:
      - `ONEFILE_ENV=production`
      - `ONEFILE_AUTH_DEBUG_CODES=1`
      - `ONEFILE_SESSION_COOKIE_SECURE=1`
-2. Deploy frontend on Vercel:
-   - Root Directory: `frontend`
+2. Deploy frontend on Netlify:
+   - Base directory: `frontend`
    - Build: `npm run build`
+   - Publish: `.next`（若 Netlify 自动识别 Next.js 配置可用默认）
    - Env:
      - `BACKEND_API_URL=https://<your-render-backend>.onrender.com`
      - `NEXT_PUBLIC_DEMO_MODE=1`
@@ -69,7 +70,7 @@ The script runs:
 1. `python3 -m pytest backend/tests -q`
 2. `cd frontend && npm run lint`
 3. `cd frontend && npm run build`
-4. push `main` to trigger Vercel + Render deploy
+4. push `main` to trigger Netlify + Render deploy
 
 ## Verification
 
@@ -93,7 +94,7 @@ npm run check:smoke
   - Check Render logs: import error, missing env, startup command mismatch.
   - Verify health endpoint: `GET /health`.
 - Frontend 502 / API error:
-  - Check `BACKEND_API_URL` in Vercel.
+  - Check `BACKEND_API_URL` in Netlify.
   - Confirm backend URL is reachable and HTTPS.
 - Session/login invalid:
   - Ensure backend has `ONEFILE_SESSION_COOKIE_SECURE=1` in production.
@@ -101,6 +102,9 @@ npm run check:smoke
 - Frequent 429 on OTP:
   - Current limits are in backend env (`ONEFILE_AUTH_START_MAX_PER_HOUR`, `ONEFILE_AUTH_START_MAX_PER_IP_HOUR`).
   - Raise values only if real traffic proves it is too strict.
+- WeChat in-app open issue (no custom domain stage):
+  - Prefer poster + QR distribution.
+  - If link fails in WeChat, copy link and open in system browser.
 
 ## Upgrade path (Demo -> Real)
 1. Turn off debug OTP and use real email:

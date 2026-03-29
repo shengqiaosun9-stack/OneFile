@@ -36,7 +36,7 @@ if [[ "$ahead" -eq 0 ]]; then
   exit 0
 fi
 
-echo "[5/5] Pushing main to trigger Vercel + Render auto deploy..."
+echo "[5/5] Pushing main to trigger Netlify + Render auto deploy..."
 git push origin main
 
 echo "Release completed. Monitor platform logs for rollout status."
