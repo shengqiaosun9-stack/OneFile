@@ -1,0 +1,345 @@
+{
+  "schema_version": 2,
+  "users": [
+    {
+      "id": "u_demo_owner",
+      "email": "demo@onefile.app",
+      "created_at": "2026-03-28 18:00:00",
+      "last_seen_at": "2026-03-28 18:00:00",
+      "status": "active"
+    }
+  ],
+  "projects": [
+    {
+      "id": "p_demo_001",
+      "status_tag": "MVP 已上线",
+      "updated_at": "2026-03-27 10:00:00",
+      "latest_update": "Launched closed beta with 12 paying users.",
+      "metrics": {
+        "team_size": "核心团队：1人",
+        "progress": "当前阶段：方向打磨",
+        "business_signal": "产品价值验证中"
+      },
+      "generated": false,
+      "stage_label": "MVP",
+      "form_type_label": "SaaS",
+      "model_type_label": "B2B 订阅",
+      "title": "SoloTax AI",
+      "desc": "",
+      "tech_stack": [],
+      "users": "待补充",
+      "use_cases": "Quarterly filing prep, bookkeeping cleanup, accountant handoff.",
+      "problem_statement": "Solo founders lose hours every month preparing tax records manually.",
+      "solution_approach": "Auto-ingest invoices, classify expenses, and generate filing-ready reports.",
+      "model": "待补充",
+      "model_desc": "待补充",
+      "model_type": "B2B_SUBSCRIPTION",
+      "pricing_strategy": "",
+      "form_type": "SAAS",
+      "stage": "MVP",
+      "version_footprint": "Launched closed beta with 12 paying users.",
+      "summary": "AI tax assistant for solo founders to prepare quarterly filings.",
+      "owner_user_id": "u_demo_owner",
+      "share": {
+        "is_public": true,
+        "slug": "solotax-ai",
+        "published_at": "2026-03-28",
+        "last_shared_at": "2026-03-28"
+      },
+      "updates": [
+        {
+          "id": "e97f1159-267",
+          "project_id": "p_demo_001",
+          "author_user_id": "u_demo_owner",
+          "content": "Launched closed beta with 12 paying users.",
+          "created_at": "2026-03-27 10:00:00",
+          "source": "overlay_update",
+          "kind": "note",
+          "evidence_score": 0.82,
+          "action_alignment": 0.74,
+          "completion_signal": true,
+          "input_meta": {
+            "has_text": true,
+            "has_file": false,
+            "merged_chars": 42
+          }
+        }
+      ],
+      "current_state": "MVP验证",
+      "current_tension": "MVP已成型，但核心价值尚未被持续验证",
+      "next_action": {
+        "text": "Ship CSV export for accountant workflows",
+        "status": "open",
+        "generated_at": "2026-03-28",
+        "completed_at": "",
+        "confidence": 0.62
+      },
+      "system_confidence": 0.7,
+      "decision_quality_score": 0.6,
+      "last_intervention_effectiveness": "unknown",
+      "progress_eval": {
+        "status": "stalled",
+        "score": 33,
+        "reason_codes": [
+          "ev_completion_zero",
+          "ev_progress_stalled",
+          "ev_recent_activity",
+          "ev_updates_zero",
+          "inf_completion_signal",
+          "inf_low_evidence_updates"
+        ],
+        "evaluated_at": "2026-03-29 02:57:55"
+      },
+      "intervention": {
+        "type": "none",
+        "message": "",
+        "recommended_next_action": "",
+        "triggered_at": "2026-03-27 10:00:00",
+        "status": "idle"
+      },
+      "ops_signals": {
+        "updates_7d": 0,
+        "completed_actions_14d": 0,
+        "intervention_trigger_rate_14d": 0.0,
+        "share_views_14d": 10,
+        "share_cta_clicks_14d": 1,
+        "share_create_conversions_14d": 0,
+        "share_update_conversions_14d": 0,
+        "last_activity_at": "2026-03-29 01:46:05"
+      },
+      "team_text": "核心团队：1人",
+      "stage_metric": "当前阶段：方向打磨",
+      "status_theme": "blue",
+      "shape": "SaaS",
+      "share_slug": "solotax-ai",
+      "versions": [
+        {
+          "event": "Launched closed beta with 12 paying users.",
+          "date": "2026-03-27 10:00:00"
+        }
+      ],
+      "loop_has_open_action": true
+    },
+    {
+      "id": "p_demo_002",
+      "status_tag": "开发中",
+      "updated_at": "2026-03-26 15:30:00",
+      "latest_update": "Finished project and share page CTA loop.",
+      "metrics": {
+        "team_size": "核心团队：1人",
+        "progress": "当前阶段：方向打磨",
+        "business_signal": "产品价值验证中"
+      },
+      "generated": false,
+      "stage_label": "开发中",
+      "form_type_label": "其他",
+      "model_type_label": "未知模式",
+      "title": "PocketOps",
+      "desc": "",
+      "tech_stack": [],
+      "users": "待补充",
+      "use_cases": "Weekly planning, launch checklists, progress logging.",
+      "problem_statement": "Founders run support, sales, and shipping without a unified process hub.",
+      "solution_approach": "Provide one page to track tasks, risks, and weekly outcomes.",
+      "model": "待补充",
+      "model_desc": "待补充",
+      "model_type": "UNKNOWN",
+      "pricing_strategy": "",
+      "form_type": "OTHER",
+      "stage": "BUILDING",
+      "version_footprint": "Finished project and share page CTA loop.",
+      "summary": "A lightweight operations console for one-person startups.",
+      "owner_user_id": "u_demo_owner",
+      "share": {
+        "is_public": true,
+        "slug": "pocketops",
+        "published_at": "2026-03-28",
+        "last_shared_at": "2026-03-28"
+      },
+      "updates": [
+        {
+          "id": "a689468a-7fb",
+          "project_id": "p_demo_002",
+          "author_user_id": "u_demo_owner",
+          "content": "Finished project and share page CTA loop.",
+          "created_at": "2026-03-26 15:30:00",
+          "source": "overlay_update",
+          "kind": "note",
+          "evidence_score": 0.68,
+          "action_alignment": 0.71,
+          "completion_signal": false,
+          "input_meta": {
+            "has_text": true,
+            "has_file": false,
+            "merged_chars": 41
+          }
+        }
+      ],
+      "current_state": "构建验证",
+      "current_tension": "原型尚未获得稳定的用户反馈",
+      "next_action": {
+        "text": "Add recurring template packs",
+        "status": "open",
+        "generated_at": "2026-03-28",
+        "completed_at": "",
+        "confidence": 0.62
+      },
+      "system_confidence": 0.7,
+      "decision_quality_score": 0.55,
+      "last_intervention_effectiveness": "unknown",
+      "progress_eval": {
+        "status": "stalled",
+        "score": 27,
+        "reason_codes": [
+          "ev_completion_zero",
+          "ev_progress_stalled",
+          "ev_recent_activity",
+          "ev_updates_zero",
+          "inf_low_evidence_updates"
+        ],
+        "evaluated_at": "2026-03-29 02:57:55"
+      },
+      "intervention": {
+        "type": "none",
+        "message": "",
+        "recommended_next_action": "",
+        "triggered_at": "2026-03-26 15:30:00",
+        "status": "idle"
+      },
+      "ops_signals": {
+        "updates_7d": 0,
+        "completed_actions_14d": 0,
+        "intervention_trigger_rate_14d": 0.0,
+        "share_views_14d": 3,
+        "share_cta_clicks_14d": 2,
+        "share_create_conversions_14d": 0,
+        "share_update_conversions_14d": 0,
+        "last_activity_at": "2026-03-28 23:15:32"
+      },
+      "team_text": "核心团队：1人",
+      "stage_metric": "当前阶段：方向打磨",
+      "status_theme": "slate",
+      "shape": "其他",
+      "share_slug": "pocketops",
+      "versions": [
+        {
+          "event": "Finished project and share page CTA loop.",
+          "date": "2026-03-26 15:30:00"
+        }
+      ],
+      "loop_has_open_action": true
+    },
+    {
+      "id": "p_demo_private",
+      "status_tag": "MVP 已上线",
+      "updated_at": "2026-03-25 09:20:00",
+      "latest_update": "Drafted first 40 target accounts.",
+      "metrics": {
+        "team_size": "核心团队：1人",
+        "progress": "当前阶段：方向打磨",
+        "business_signal": "产品价值验证中"
+      },
+      "generated": false,
+      "stage_label": "MVP",
+      "form_type_label": "其他",
+      "model_type_label": "未知模式",
+      "title": "Stealth Founder CRM",
+      "desc": "",
+      "tech_stack": [],
+      "users": "待补充",
+      "use_cases": "Investor outreach, partner follow-up.",
+      "problem_statement": "Needs confidential tracking of private outreach conversations.",
+      "solution_approach": "Private records with controlled share links for selected partners.",
+      "model": "待补充",
+      "model_desc": "待补充",
+      "model_type": "UNKNOWN",
+      "pricing_strategy": "",
+      "form_type": "OTHER",
+      "stage": "MVP",
+      "version_footprint": "Drafted first 40 target accounts.",
+      "summary": "Private pipeline for investor and partner outreach.",
+      "owner_user_id": "u_demo_owner",
+      "share": {
+        "is_public": false,
+        "slug": "stealth-founder-crm",
+        "published_at": "",
+        "last_shared_at": ""
+      },
+      "updates": [
+        {
+          "id": "7aff7185-ff9",
+          "project_id": "p_demo_private",
+          "author_user_id": "u_demo_owner",
+          "content": "Drafted first 40 target accounts.",
+          "created_at": "2026-03-25 09:20:00",
+          "source": "overlay_update",
+          "kind": "note",
+          "evidence_score": 0.52,
+          "action_alignment": 0.58,
+          "completion_signal": false,
+          "input_meta": {
+            "has_text": true,
+            "has_file": false,
+            "merged_chars": 33
+          }
+        }
+      ],
+      "current_state": "MVP验证",
+      "current_tension": "MVP已成型，但核心价值尚未被持续验证",
+      "next_action": {
+        "text": "Validate message with 5 founder intros",
+        "status": "open",
+        "generated_at": "2026-03-28",
+        "completed_at": "",
+        "confidence": 0.62
+      },
+      "system_confidence": 0.62,
+      "decision_quality_score": 0.5,
+      "last_intervention_effectiveness": "unknown",
+      "progress_eval": {
+        "status": "stalled",
+        "score": 16,
+        "reason_codes": [
+          "ev_completion_zero",
+          "ev_inactive_3d",
+          "ev_progress_stalled",
+          "ev_updates_zero",
+          "inf_low_evidence_updates"
+        ],
+        "evaluated_at": "2026-03-29 02:57:55"
+      },
+      "intervention": {
+        "type": "none",
+        "message": "",
+        "recommended_next_action": "",
+        "triggered_at": "2026-03-25 09:20:00",
+        "status": "idle"
+      },
+      "ops_signals": {
+        "updates_7d": 0,
+        "completed_actions_14d": 0,
+        "intervention_trigger_rate_14d": 0.0,
+        "share_views_14d": 0,
+        "share_cta_clicks_14d": 0,
+        "share_create_conversions_14d": 0,
+        "share_update_conversions_14d": 0,
+        "last_activity_at": "2026-03-25 09:20:00"
+      },
+      "team_text": "核心团队：1人",
+      "stage_metric": "当前阶段：方向打磨",
+      "status_theme": "blue",
+      "shape": "其他",
+      "share_slug": "stealth-founder-crm",
+      "versions": [
+        {
+          "event": "Drafted first 40 target accounts.",
+          "date": "2026-03-25 09:20:00"
+        }
+      ],
+      "loop_has_open_action": true
+    }
+  ],
+  "events": [],
+  "auth_challenges": [],
+  "auth_sessions": []
+}

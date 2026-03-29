@@ -7,6 +7,7 @@ import uuid
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("ONEFILE_DATA_DIR", str(BASE_DIR / "data"))).resolve()
 PROJECTS_FILE = Path(os.getenv("ONEFILE_PROJECTS_FILE", str(DATA_DIR / "projects.json"))).resolve()
+SEED_FILE = Path(os.getenv("ONEFILE_PROJECTS_SEED_FILE", str(PROJECTS_FILE.with_name("projects.seed.json")))).resolve()
 SCHEMA_VERSION = 2
 STORE_TEMPLATE: Dict[str, Any] = {
     "schema_version": SCHEMA_VERSION,
@@ -20,6 +21,11 @@ STORE_TEMPLATE: Dict[str, Any] = {
 
 def _ensure_storage_dir() -> None:
     PROJECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _clone_store(payload: Dict[str, Any]) -> Dict[str, Any]:
+    # Deep clone to avoid cross-request mutation of shared templates.
+    return json.loads(json.dumps(payload, ensure_ascii=False))
 
 
 def _normalize_store(raw: Any) -> Dict[str, Any]:
@@ -52,19 +58,35 @@ def _normalize_store(raw: Any) -> Dict[str, Any]:
     return normalized
 
 
+def _load_seed_store() -> Dict[str, Any]:
+    if not SEED_FILE.exists():
+        return _clone_store(STORE_TEMPLATE)
+    try:
+        content = SEED_FILE.read_text(encoding="utf-8").strip()
+        if not content:
+            return _clone_store(STORE_TEMPLATE)
+        normalized = _normalize_store(json.loads(content))
+        return _clone_store(normalized)
+    except Exception:
+        return _clone_store(STORE_TEMPLATE)
+
+
 def load_store() -> Dict[str, Any]:
     _ensure_storage_dir()
     if not PROJECTS_FILE.exists():
-        PROJECTS_FILE.write_text(json.dumps(STORE_TEMPLATE, ensure_ascii=False, indent=2), encoding="utf-8")
-        return dict(STORE_TEMPLATE)
+        seed = _load_seed_store()
+        PROJECTS_FILE.write_text(json.dumps(seed, ensure_ascii=False, indent=2), encoding="utf-8")
+        return seed
 
     try:
         content = PROJECTS_FILE.read_text(encoding="utf-8").strip()
         if not content:
-            return dict(STORE_TEMPLATE)
+            seed = _load_seed_store()
+            PROJECTS_FILE.write_text(json.dumps(seed, ensure_ascii=False, indent=2), encoding="utf-8")
+            return seed
         return _normalize_store(json.loads(content))
     except Exception:
-        return dict(STORE_TEMPLATE)
+        return _clone_store(STORE_TEMPLATE)
 
 
 def save_store(store: Dict[str, Any]) -> None:
