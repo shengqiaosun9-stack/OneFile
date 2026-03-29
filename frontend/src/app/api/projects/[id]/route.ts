@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { buildQuery, proxyToBackend } from "@/lib/backend-proxy";
+import { buildQuery, proxyToBackend, readJsonBody } from "@/lib/backend-proxy";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -10,8 +10,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const body = await req.json();
-  return proxyToBackend(req, `/v1/projects/${id}`, { method: "PATCH", body });
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  return proxyToBackend(req, `/v1/projects/${id}`, { method: "PATCH", body: parsed.body });
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { buildLoginRedirectPath, currentPathWithQuery } from "@/lib/auth-redirect";
 import { copyZh } from "@/lib/copy-zh";
 import { resolveApiError } from "@/lib/error-zh";
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { saveEmail } from "@/lib/session";
 import type { AuthMeResponse, BpExtractResponse, MutationResponse } from "@/lib/types";
 
@@ -20,6 +21,8 @@ export default function NewProjectPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [authReady, setAuthReady] = useState(false);
+  const [authProbeTick, setAuthProbeTick] = useState(0);
+  const [authProbeError, setAuthProbeError] = useState("");
 
   const [title, setTitle] = useState("");
   const [inputText, setInputText] = useState("");
@@ -42,19 +45,26 @@ export default function NewProjectPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     (async () => {
-      const meRes = await fetch("/api/auth/me", { cache: "no-store" });
-      if (!meRes.ok) {
+      setAuthReady(false);
+      setAuthProbeError("");
+      try {
+        const meRes = await fetchWithTimeout("/api/auth/me", { cache: "no-store" }, 10_000);
+        if (!meRes.ok) {
+          setAuthReady(true);
+          return;
+        }
+        const me = (await meRes.json()) as AuthMeResponse;
+        setEmail(me.user?.email || "");
+        if (me.user?.email) {
+          saveEmail(me.user.email);
+        }
+      } catch {
+        setAuthProbeError(t.authCheckFailed);
+      } finally {
         setAuthReady(true);
-        return;
       }
-      const me = (await meRes.json()) as AuthMeResponse;
-      setEmail(me.user?.email || "");
-      if (me.user?.email) {
-        saveEmail(me.user.email);
-      }
-      setAuthReady(true);
     })();
-  }, []);
+  }, [authProbeTick, t.authCheckFailed]);
 
   function validateEntityName(rawTitle: string): { ok: boolean; warning?: string; error?: string } {
     const trimmed = rawTitle.trim();
@@ -88,10 +98,10 @@ export default function NewProjectPage() {
     const formData = new FormData();
     formData.append("file", file);
     try {
-      const res = await fetch("/api/uploads/bp-extract", {
+      const res = await fetchWithTimeout("/api/uploads/bp-extract", {
         method: "POST",
         body: formData,
-      });
+      }, 12_000);
       if (!res.ok) {
         const failure = await resolveApiError(res, t.uploadFailed);
         if (failure.status === 401) {
@@ -110,6 +120,9 @@ export default function NewProjectPage() {
       setSupplementalText(body.extracted_text || "");
       setBpMetaText(summary);
       toast.success(summary);
+    } catch {
+      setError(t.uploadNetworkFailed);
+      toast.error(t.uploadNetworkFailed);
     } finally {
       setBpParsing(false);
     }
@@ -139,39 +152,48 @@ export default function NewProjectPage() {
     if (!nameValidation.warning) setWarning("");
     const ctaToken = readCtaTokenFromUrl();
 
-    const res = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        title: title.trim(),
-        input_text: inputText,
-        supplemental_text: supplementalText,
-        cta_token: ctaToken,
-      }),
-    });
+    try {
+      const res = await fetchWithTimeout(
+        "/api/projects",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title: title.trim(),
+            input_text: inputText,
+            supplemental_text: supplementalText,
+            cta_token: ctaToken,
+          }),
+        },
+        12_000,
+      );
 
-    if (!res.ok) {
-      const failure = await resolveApiError(res, t.createFailed);
-      if (failure.status === 401) {
+      if (!res.ok) {
+        const failure = await resolveApiError(res, t.createFailed);
+        if (failure.status === 401) {
+          toast.error(failure.message);
+          router.push(buildLoginRedirectPath(currentPathWithQuery("/projects/new"), failure.code || "unauthorized"));
+          return;
+        }
+        setError(failure.message);
         toast.error(failure.message);
-        setSaving(false);
-        router.push(buildLoginRedirectPath(currentPathWithQuery("/projects/new"), failure.code || "unauthorized"));
         return;
       }
-      setError(failure.message);
-      toast.error(failure.message);
+
+      const body = (await res.json()) as MutationResponse;
+      if (body.used_fallback) {
+        const warningMessage = body.warning || t.fallbackWarning;
+        setWarning(warningMessage);
+        toast.warning(warningMessage);
+      }
+
+      router.push(`/projects/${body.project.id}?created=1`);
+    } catch {
+      setError(t.createNetworkFailed);
+      toast.error(t.createNetworkFailed);
+    } finally {
       setSaving(false);
-      return;
     }
-
-    const body = (await res.json()) as MutationResponse;
-    if (body.used_fallback) {
-      const warningMessage = body.warning || t.fallbackWarning;
-      setWarning(warningMessage);
-      toast.warning(warningMessage);
-    }
-
-    router.push(`/projects/${body.project.id}`);
   }
 
   if (authReady && !email) {
@@ -183,6 +205,12 @@ export default function NewProjectPage() {
           <section className="onefile-panel space-y-3 p-5 sm:p-6">
             <h1 className="text-xl font-semibold text-[var(--landing-title)]">{t.needLoginTitle}</h1>
             <p className="text-sm onefile-subtle">{t.needLoginDesc}</p>
+            {authProbeError ? <p className="text-sm text-destructive">{authProbeError}</p> : null}
+            {authProbeError ? (
+              <Button variant="ghost" className="landing-secondary-btn h-10 px-4" onClick={() => setAuthProbeTick((prev) => prev + 1)}>
+                {t.retryAuthCheck}
+              </Button>
+            ) : null}
             <Button className="landing-cta-btn h-10 px-5" onClick={() => router.push(`/?next=${encodeURIComponent(loginNext)}`)}>
               {t.goLogin}
             </Button>

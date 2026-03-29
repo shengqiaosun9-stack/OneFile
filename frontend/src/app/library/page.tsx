@@ -10,9 +10,10 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { copyZh } from "@/lib/copy-zh";
-import { getApiErrorMessage, resolveApiError } from "@/lib/error-zh";
+import { resolveApiError } from "@/lib/error-zh";
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { clearEmail, saveEmail } from "@/lib/session";
-import type { ApiError, AuthMeResponse, BackupExportResponse, ListResponse, OneFileProject } from "@/lib/types";
+import type { AuthMeResponse, BackupExportResponse, ListResponse, OneFileProject } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -55,41 +56,80 @@ export default function LibraryPage() {
   const [modelFilter, setModelFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reloadTick, setReloadTick] = useState(0);
+  const [healthStatus, setHealthStatus] = useState<"checking" | "ok" | "down">("checking");
+  const [healthMessage, setHealthMessage] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const [exportingBackup, setExportingBackup] = useState(false);
 
   useEffect(() => {
     (async () => {
-      const meRes = await fetch("/api/auth/me", { cache: "no-store" });
-      if (meRes.ok) {
-        const meBody = (await meRes.json()) as AuthMeResponse;
-        if (meBody.user?.email) {
-          setAuthenticatedEmail(meBody.user.email);
-          saveEmail(meBody.user.email);
+      try {
+        const meRes = await fetchWithTimeout("/api/auth/me", { cache: "no-store" }, 10_000);
+        if (meRes.ok) {
+          const meBody = (await meRes.json()) as AuthMeResponse;
+          if (meBody.user?.email) {
+            setAuthenticatedEmail(meBody.user.email);
+            saveEmail(meBody.user.email);
+          }
         }
+      } catch {
+        // Keep guest mode available when auth probe fails.
+      } finally {
+        setAuthReady(true);
       }
-      setAuthReady(true);
     })();
   }, []);
 
   const isAuthenticated = Boolean(authenticatedEmail);
 
   useEffect(() => {
+    (async () => {
+      setHealthStatus("checking");
+      setHealthMessage("");
+      try {
+        const res = await fetchWithTimeout("/api/health", { cache: "no-store" }, 8_000);
+        if (!res.ok) {
+          const failure = await resolveApiError(res, t.healthDown);
+          setHealthStatus("down");
+          setHealthMessage(failure.message);
+          return;
+        }
+        setHealthStatus("ok");
+      } catch {
+        setHealthStatus("down");
+        setHealthMessage("");
+      }
+    })();
+  }, [reloadTick, t.healthDown]);
+
+  useEffect(() => {
     if (!authReady) return;
     (async () => {
-      const res = await fetch("/api/projects", { cache: "no-store" });
-      if (!res.ok) {
-        const body = (await res.json()) as ApiError;
-        setError(getApiErrorMessage(body, t.loadFailed));
+      setLoading(true);
+      setError("");
+      try {
+        const res = await fetchWithTimeout("/api/projects", { cache: "no-store" }, 12_000);
+        if (!res.ok) {
+          const failure = await resolveApiError(res, t.loadFailed);
+          setError(failure.message);
+          return;
+        }
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          setError(t.invalidResponse);
+          return;
+        }
+        const body = (await res.json()) as ListResponse;
+        setProjects(body.projects || []);
+        setUserId(body.user?.id || "");
+      } catch {
+        setError(t.loadTimeout);
+      } finally {
         setLoading(false);
-        return;
       }
-      const body = (await res.json()) as ListResponse;
-      setProjects(body.projects || []);
-      setUserId(body.user?.id || "");
-      setLoading(false);
     })();
-  }, [authReady, t.loadFailed]);
+  }, [authReady, reloadTick, t.invalidResponse, t.loadFailed, t.loadTimeout]);
 
   const scopeProjects = useMemo(() => {
     let source = projects;
@@ -186,6 +226,13 @@ export default function LibraryPage() {
               </div>
               <h1 className="mt-2 text-2xl font-semibold text-[var(--landing-title)]">{t.title}</h1>
               <p className="mt-1 text-sm onefile-subtle">{t.subtitle}</p>
+              <p className="mt-1 text-xs onefile-caption">
+                {healthStatus === "ok"
+                  ? t.healthOk
+                  : healthStatus === "checking"
+                    ? t.healthChecking
+                    : `${t.healthDown}${healthMessage ? `：${healthMessage}` : ""}`}
+              </p>
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
               {isAuthenticated ? <span className="text-xs onefile-caption">{t.signedInAs}：{authenticatedEmail}</span> : null}
@@ -317,17 +364,28 @@ export default function LibraryPage() {
         ) : null}
 
         {error ? (
-          <div className="onefile-panel p-4">
+          <div className="onefile-panel space-y-3 p-4">
             <p className="text-sm text-destructive">{error}</p>
+            <Button variant="ghost" className="landing-secondary-btn h-9 px-4" onClick={() => setReloadTick((prev) => prev + 1)}>
+              {t.retryLoad}
+            </Button>
           </div>
         ) : null}
 
         {!loading && !error && filtered.length === 0 ? (
-          <div className="onefile-panel p-10 text-center">
-            <p className="mb-4 text-sm onefile-subtle">{t.emptyHint}</p>
-            <Link href="/library?mode=guest" className={buttonVariants({ variant: "ghost", className: "landing-secondary-btn h-10 px-4" })}>
-              {t.openDemo}
-            </Link>
+          <div className="onefile-panel space-y-4 p-10 text-center">
+            <p className="text-sm onefile-subtle">{t.emptyHint}</p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button
+                className="landing-cta-btn h-10 px-5"
+                onClick={() => router.push(isAuthenticated ? "/projects/new" : "/?next=%2Fprojects%2Fnew")}
+              >
+                {isAuthenticated ? t.createProject : t.createNeedLogin}
+              </Button>
+              <Link href="/library?mode=guest" className={buttonVariants({ variant: "ghost", className: "landing-secondary-btn h-10 px-4" })}>
+                {t.openDemo}
+              </Link>
+            </div>
           </div>
         ) : null}
 

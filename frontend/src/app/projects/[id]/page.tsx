@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -18,9 +18,12 @@ export const dynamic = "force-dynamic";
 export default function ProjectDetailPage() {
   const t = copyZh.detail;
   const router = useRouter();
+  const searchParams = useSearchParams();
   const routeParams = useParams<{ id: string }>();
+  const updateInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const projectId = String(routeParams.id || "");
+  const createdFromNew = searchParams.get("created") === "1";
   const [authUserId, setAuthUserId] = useState("");
   const [authReady, setAuthReady] = useState(false);
 
@@ -217,6 +220,27 @@ export default function ProjectDetailPage() {
           </section>
         ) : null}
 
+        {createdFromNew && isOwner ? (
+          <section className="onefile-surface space-y-3 p-5 sm:p-6">
+            <h2 className="onefile-section-title">{t.createdTitle}</h2>
+            <p className="text-sm onefile-subtle">{t.createdDesc}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                className="landing-cta-btn h-10 px-5"
+                onClick={() => {
+                  updateInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  updateInputRef.current?.focus();
+                }}
+              >
+                {t.createdActionUpdate}
+              </Button>
+              <Button variant="ghost" className="landing-secondary-btn h-10 px-4" onClick={() => router.push(`/share/${project.id}`)}>
+                {t.createdActionShare}
+              </Button>
+            </div>
+          </section>
+        ) : null}
+
         {!isOwner ? (
           <section className="onefile-panel p-4">
             <p className="text-sm onefile-subtle">{t.ownerOnlyHint}</p>
@@ -271,6 +295,7 @@ export default function ProjectDetailPage() {
             <div>
               <form onSubmit={submitUpdate} className="space-y-3">
                 <Textarea
+                  ref={updateInputRef}
                   placeholder={t.updatePlaceholder}
                   rows={5}
                   value={updateText}

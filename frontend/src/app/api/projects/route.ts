@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { buildQuery, proxyToBackend } from "@/lib/backend-proxy";
+import { buildQuery, proxyToBackend, readJsonBody } from "@/lib/backend-proxy";
 
 export async function GET(req: NextRequest) {
   const path = buildQuery("/v1/projects", req.nextUrl.searchParams);
@@ -8,6 +8,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  return proxyToBackend(req, "/v1/projects", { method: "POST", body });
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  return proxyToBackend(req, "/v1/projects", { method: "POST", body: parsed.body });
 }

@@ -11,8 +11,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { copyZh } from "@/lib/copy-zh";
 import { getApiErrorMessage, resolveApiError } from "@/lib/error-zh";
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { saveEmail } from "@/lib/session";
-import type { AuthResponse, ListResponse, OneFileProject } from "@/lib/types";
+import type { AuthResponse, AuthStartResponse, ListResponse, OneFileProject } from "@/lib/types";
 
 type ShowcaseBlueprint = {
   key: string;
@@ -81,6 +82,7 @@ export default function LandingPage() {
   const [challengeId, setChallengeId] = useState("");
   const [authStep, setAuthStep] = useState<"email" | "code">("email");
   const [debugCode, setDebugCode] = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showcaseCards, setShowcaseCards] = useState<ShowcaseCard[]>(() => resolveShowcaseCards([]));
@@ -136,6 +138,14 @@ export default function LandingPage() {
     setLoginOpen(true);
     toast.error(message);
   }, [reasonRaw, t.loginFailed]);
+
+  useEffect(() => {
+    if (authStep !== "code" || resendCooldown <= 0) return;
+    const timer = window.setInterval(() => {
+      setResendCooldown((current) => (current <= 1 ? 0 : current - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [authStep, resendCooldown]);
 
   const getShowcaseItems = useCallback(() => showcaseCardRefs.current.filter(Boolean) as HTMLElement[], []);
 
@@ -236,8 +246,50 @@ export default function LandingPage() {
     setChallengeId("");
     setAuthStep("email");
     setDebugCode("");
+    setResendCooldown(0);
     setError("");
     setLoading(false);
+  }
+
+  async function requestLoginCode(targetEmail: string): Promise<boolean> {
+    const res = await fetchWithTimeout(
+      "/api/auth/login/start",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: targetEmail }),
+      },
+      10_000,
+    );
+    if (!res.ok) {
+      const failure = await resolveApiError(res, t.loginFailed);
+      setError(failure.message);
+      toast.error(failure.message);
+      return false;
+    }
+    const body = (await res.json()) as AuthStartResponse;
+    setChallengeId(body.challenge_id || "");
+    setDebugCode(body.debug_code || "");
+    setAuthStep("code");
+    setResendCooldown(Math.max(10, Math.min(120, Number(body.expires_in_seconds || 60))));
+    return true;
+  }
+
+  async function onResendCode() {
+    if (loading || resendCooldown > 0 || !email.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      const ok = await requestLoginCode(email);
+      if (ok) {
+        toast.success(t.codeResentHint);
+      }
+    } catch {
+      setError(t.loginTimeout);
+      toast.error(t.loginTimeout);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function onLogin(event: FormEvent) {
@@ -246,44 +298,48 @@ export default function LandingPage() {
     setError("");
 
     if (authStep === "email") {
-      const res = await fetch("/api/auth/login/start", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
+      try {
+        const ok = await requestLoginCode(email);
+        if (ok) {
+          toast.success(t.codeSentHint);
+        }
+      } catch {
+        setError(t.loginTimeout);
+        toast.error(t.loginTimeout);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    try {
+      const res = await fetchWithTimeout(
+        "/api/auth/login/verify",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, challenge_id: challengeId, code }),
+        },
+        10_000,
+      );
       if (!res.ok) {
         const failure = await resolveApiError(res, t.loginFailed);
         setError(failure.message);
         toast.error(failure.message);
-        setLoading(false);
         return;
       }
-      const body = (await res.json()) as { challenge_id: string; debug_code?: string };
-      setChallengeId(body.challenge_id || "");
-      setDebugCode(body.debug_code || "");
-      setAuthStep("code");
-      setLoading(false);
-      return;
-    }
 
-    const res = await fetch("/api/auth/login/verify", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, challenge_id: challengeId, code }),
-    });
-    if (!res.ok) {
-      const failure = await resolveApiError(res, t.loginFailed);
-      setError(failure.message);
-      toast.error(failure.message);
+      const body = (await res.json()) as AuthResponse;
+      saveEmail(body.user.email);
+      setLoginOpen(false);
+      resetLoginFlow();
+      router.push(nextPath);
+    } catch {
+      setError(t.loginTimeout);
+      toast.error(t.loginTimeout);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const body = (await res.json()) as AuthResponse;
-    saveEmail(body.user.email);
-    setLoginOpen(false);
-    resetLoginFlow();
-    router.push(nextPath);
   }
 
   const guestLibraryHref = useMemo(() => "/library?mode=guest", []);
@@ -531,6 +587,11 @@ export default function LandingPage() {
               {loading ? (authStep === "email" ? t.sendingCode : t.verifyingCode) : authStep === "email" ? t.sendCode : t.verifyCode}
             </Button>
             {authStep === "code" ? <p className="text-xs text-slate-500">{t.codeSentHint}</p> : null}
+            {authStep === "code" ? (
+              <p className="text-xs text-slate-500">
+                {resendCooldown > 0 ? t.resendIn(resendCooldown) : t.resendReady}
+              </p>
+            ) : null}
             {authStep === "code" && debugCode ? (
               <p className="text-xs text-slate-500">
                 {t.debugCodeHint}
@@ -538,9 +599,20 @@ export default function LandingPage() {
               </p>
             ) : null}
             {authStep === "code" ? (
-              <Button type="button" variant="ghost" className="landing-secondary-btn h-10 w-full" onClick={resetLoginFlow}>
-                {t.switchEmail}
-              </Button>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="landing-secondary-btn h-10 w-full"
+                  onClick={onResendCode}
+                  disabled={loading || resendCooldown > 0}
+                >
+                  {t.resendCode}
+                </Button>
+                <Button type="button" variant="ghost" className="landing-secondary-btn h-10 w-full" onClick={resetLoginFlow}>
+                  {t.switchEmail}
+                </Button>
+              </div>
             ) : null}
             {error ? <p className="text-sm text-red-500">{error}</p> : null}
           </form>

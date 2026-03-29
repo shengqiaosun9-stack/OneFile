@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { buildLoginRedirectPath, currentPathWithQuery } from "@/lib/auth-redirect";
 import { copyZh } from "@/lib/copy-zh";
 import { resolveApiError } from "@/lib/error-zh";
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import type { AuthMeResponse, CtaResponse, OneFileProject, ShareResponse } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -19,72 +20,103 @@ export default function SharePage() {
   const routeParams = useParams<{ id: string }>();
   const projectId = String(routeParams.id || "");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [reloadTick, setReloadTick] = useState(0);
 
   const [project, setProject] = useState<OneFileProject | null>(null);
   const [accessGranted, setAccessGranted] = useState(false);
   const [message, setMessage] = useState("");
+  const [canRetry, setCanRetry] = useState(false);
   const [posterGenerating, setPosterGenerating] = useState(false);
   const posterRef = useRef<HTMLDivElement | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState("");
 
   useEffect(() => {
     (async () => {
-      const meRes = await fetch("/api/auth/me", { cache: "no-store" });
-      if (!meRes.ok) return;
-      const me = (await meRes.json()) as AuthMeResponse;
-      setIsAuthenticated(Boolean(me.user?.email));
+      try {
+        const meRes = await fetchWithTimeout("/api/auth/me", { cache: "no-store" }, 10_000);
+        if (!meRes.ok) return;
+        const me = (await meRes.json()) as AuthMeResponse;
+        setIsAuthenticated(Boolean(me.user?.email));
+      } catch {
+        // Keep share page readable in guest mode.
+      }
     })();
-  }, []);
+  }, [reloadTick]);
 
   useEffect(() => {
     if (!projectId) return;
 
     (async () => {
-      const res = await fetch(`/api/share/${projectId}`, { cache: "no-store" });
-      if (!res.ok) {
-        const failure = await resolveApiError(res, t.loadFailed);
-        setMessage(failure.message);
-        toast.error(failure.message);
-        return;
-      }
-      const body = (await res.json()) as ShareResponse;
-      setProject(body.project);
-      setAccessGranted(body.access_granted);
-      if (!body.access_granted) {
-        setMessage(t.privateMessage);
+      setLoading(true);
+      setProject(null);
+      setMessage("");
+      setCanRetry(false);
+      try {
+        const res = await fetchWithTimeout(`/api/share/${projectId}`, { cache: "no-store" }, 12_000);
+        if (!res.ok) {
+          const failure = await resolveApiError(res, t.loadFailed);
+          setMessage(failure.message);
+          setCanRetry(true);
+          toast.error(failure.message);
+          return;
+        }
+        const body = (await res.json()) as ShareResponse;
+        setProject(body.project);
+        setAccessGranted(body.access_granted);
+        if (!body.access_granted) {
+          setMessage(t.privateMessage);
+        }
+      } catch {
+        setMessage(t.loadTimeout);
+        setCanRetry(true);
+        toast.error(t.loadTimeout);
+      } finally {
+        setLoading(false);
       }
     })();
-  }, [projectId, t.loadFailed, t.privateMessage]);
+  }, [projectId, reloadTick, t.loadFailed, t.loadTimeout, t.privateMessage]);
 
   async function handleCta() {
     if (!projectId) return;
-    const res = await fetch(`/api/share/${projectId}/cta`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cta: "start_project", source: "share_page_cta", ref: "share_page" }),
-    });
+    try {
+      const res = await fetchWithTimeout(
+        `/api/share/${projectId}/cta`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cta: "start_project", source: "share_page_cta", ref: "share_page" }),
+        },
+        10_000,
+      );
 
-    if (!res.ok) {
-      const failure = await resolveApiError(res, t.ctaFailed);
-      if (failure.status === 401) {
-        toast.error(failure.message);
-        router.push(buildLoginRedirectPath(currentPathWithQuery(`/share/${projectId}`), failure.code || "unauthorized"));
+        if (!res.ok) {
+          const failure = await resolveApiError(res, t.ctaFailed);
+          if (failure.status === 401) {
+            toast.error(failure.message);
+            router.push(buildLoginRedirectPath(currentPathWithQuery(`/share/${projectId}`), failure.code || "unauthorized"));
+            return;
+          }
+          setMessage(failure.message);
+          setCanRetry(false);
+          toast.error(failure.message);
+          return;
+        }
+
+      const body = (await res.json()) as CtaResponse;
+      const next = new URLSearchParams();
+      next.set("cta_token", body.cta_token);
+      const target = `/projects/new?${next.toString()}`;
+      if (isAuthenticated) {
+        router.push(target);
         return;
       }
-      setMessage(failure.message);
-      toast.error(failure.message);
-      return;
+      router.push(`/?next=${encodeURIComponent(target)}`);
+    } catch {
+      setMessage(t.ctaTimeout);
+      setCanRetry(false);
+      toast.error(t.ctaTimeout);
     }
-
-    const body = (await res.json()) as CtaResponse;
-    const next = new URLSearchParams();
-    next.set("cta_token", body.cta_token);
-    const target = `/projects/new?${next.toString()}`;
-    if (isAuthenticated) {
-      router.push(target);
-      return;
-    }
-    router.push(`/?next=${encodeURIComponent(target)}`);
   }
 
   async function handleGeneratePoster() {
@@ -164,14 +196,24 @@ export default function SharePage() {
           </Button>
         </header>
 
-        {!project ? (
+        {loading ? (
           <div className="onefile-panel p-4">
             <p className="text-sm onefile-subtle">{t.loading}</p>
           </div>
         ) : null}
         {message ? (
-          <div className="onefile-panel p-4">
+          <div className="onefile-panel space-y-3 p-4">
             <p className="text-sm onefile-subtle">{message}</p>
+            {canRetry ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="landing-secondary-btn h-9 px-4"
+                onClick={() => setReloadTick((prev) => prev + 1)}
+              >
+                {t.retryLoad}
+              </Button>
+            ) : null}
           </div>
         ) : null}
 
