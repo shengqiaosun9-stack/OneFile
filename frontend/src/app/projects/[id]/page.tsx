@@ -37,6 +37,33 @@ export default function ProjectDetailPage() {
   const [warning, setWarning] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editSummary, setEditSummary] = useState("");
+  const [editUsers, setEditUsers] = useState("");
+  const [editFormType, setEditFormType] = useState("OTHER");
+  const [editModelType, setEditModelType] = useState("UNKNOWN");
+
+  const formTypeOptions = [
+    { value: "AI_NATIVE_APP", label: "AI 原生应用" },
+    { value: "SAAS", label: "SaaS" },
+    { value: "API_SERVICE", label: "API 服务" },
+    { value: "AGENT", label: "Agent" },
+    { value: "MARKETPLACE", label: "Marketplace" },
+    { value: "DATA_TOOL", label: "数据工具" },
+    { value: "INFRASTRUCTURE", label: "基础设施" },
+    { value: "OTHER", label: "其他" },
+  ];
+
+  const modelTypeOptions = [
+    { value: "B2B_SUBSCRIPTION", label: "B2B 订阅" },
+    { value: "B2C_SUBSCRIPTION", label: "B2C 订阅" },
+    { value: "USAGE_BASED", label: "按量计费" },
+    { value: "COMMISSION", label: "佣金抽成" },
+    { value: "ONE_TIME", label: "一次性付费" },
+    { value: "OUTSOURCING", label: "服务外包" },
+    { value: "ADS", label: "广告变现" },
+    { value: "MARKETPLACE", label: "平台撮合" },
+    { value: "HYBRID", label: "混合模式" },
+    { value: "UNKNOWN", label: "待明确" },
+  ];
 
   useEffect(() => {
     (async () => {
@@ -66,6 +93,9 @@ export default function ProjectDetailPage() {
       setProject(body.project);
       setEditTitle(body.project.title || "");
       setEditSummary(body.project.summary || "");
+      setEditUsers(body.project.users || "");
+      setEditFormType(body.project.form_type || "OTHER");
+      setEditModelType(body.project.model_type || "UNKNOWN");
     })();
   }, [projectId, authReady, t.loadFailed]);
 
@@ -141,12 +171,24 @@ export default function ProjectDetailPage() {
     const res = await fetch(`/api/projects/${project.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: editTitle, summary: editSummary }),
+      body: JSON.stringify({
+        title: editTitle,
+        summary: editSummary,
+        users: editUsers,
+        form_type: editFormType,
+        model_type: editModelType,
+      }),
     });
 
     if (res.ok) {
       const body = (await res.json()) as { project: OneFileProject };
       setProject(body.project);
+      setEditTitle(body.project.title || "");
+      setEditSummary(body.project.summary || "");
+      setEditUsers(body.project.users || "");
+      setEditFormType(body.project.form_type || "OTHER");
+      setEditModelType(body.project.model_type || "UNKNOWN");
+      toast.success(t.advancedSaved);
     } else {
       await handleWriteFailure(res, t.editFailed);
     }
@@ -331,6 +373,42 @@ export default function ProjectDetailPage() {
                   placeholder={t.summaryPlaceholder}
                   className="onefile-input"
                 />
+                <Input
+                  value={editUsers}
+                  onChange={(e) => setEditUsers(e.target.value)}
+                  placeholder={t.usersPlaceholder}
+                  className="onefile-input"
+                />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1">
+                    <span className="text-xs onefile-caption">{t.formTypeLabel}</span>
+                    <select
+                      value={editFormType}
+                      onChange={(e) => setEditFormType(e.target.value)}
+                      className="onefile-select h-10 w-full rounded-lg px-3 text-sm"
+                    >
+                      {formTypeOptions.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs onefile-caption">{t.modelTypeLabel}</span>
+                    <select
+                      value={editModelType}
+                      onChange={(e) => setEditModelType(e.target.value)}
+                      className="onefile-select h-10 w-full rounded-lg px-3 text-sm"
+                    >
+                      {modelTypeOptions.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
                 <Button type="submit" variant="ghost" className="landing-secondary-btn" disabled={savingEdit}>
                   {savingEdit ? t.saving : t.saveAdvanced}
                 </Button>
