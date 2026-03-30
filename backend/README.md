@@ -17,6 +17,7 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
   - `ONEFILE_ENV=production`
   - `ONEFILE_AUTH_DEBUG_CODES=1`
   - `ONEFILE_SESSION_COOKIE_SECURE=1`
+  - `HUNYUAN_API_KEY=...`
 
 ## Environment
 
@@ -31,6 +32,9 @@ uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 - `ONEFILE_AUTH_EMAIL_PROVIDER` (`resend`)
 - `ONEFILE_RESEND_API_KEY`
 - `ONEFILE_RESEND_FROM_EMAIL` (例如 `OneFile <noreply@yourdomain.com>`)
+- `HUNYUAN_API_KEY` (混元结构化必填)
+- `HUNYUAN_BASE_URL` (可选，默认 `https://api.hunyuan.cloud.tencent.com/v1`)
+- `HUNYUAN_MODEL` (可选，默认 `hunyuan-turbos-latest`)
 - `ONEFILE_GROWTH_WINDOW_DEFAULT_DAYS` (default `14`)
 - `ONEFILE_GROWTH_WINDOW_MAX_DAYS` (default `60`, min `7`, max `120`)
 - `ONEFILE_INTERVENTION_WINDOW_DEFAULT_DAYS` (default `30`)

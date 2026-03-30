@@ -21,6 +21,11 @@ python -m pip install -r requirements.txt
 # export ONEFILE_AUTH_DEBUG_CODES=0
 # export ONEFILE_RESEND_API_KEY=...
 # export ONEFILE_RESEND_FROM_EMAIL="OneFile <noreply@yourdomain.com>"
+# AI 结构化（混元，生产建议必配）
+# export HUNYUAN_API_KEY=...
+# 可选覆盖
+# export HUNYUAN_BASE_URL="https://api.hunyuan.cloud.tencent.com/v1"
+# export HUNYUAN_MODEL="hunyuan-turbos-latest"
 uvicorn backend.main:app --reload --port 8000
 ```
 
@@ -32,6 +37,14 @@ BACKEND_API_URL=http://127.0.0.1:8000 npm run dev
 ```
 
 Open: `http://127.0.0.1:3000`
+
+### 3) Secret safety (required once per clone)
+```bash
+./scripts/install-git-hooks.sh
+./scripts/check-secrets.sh repo
+```
+
+Use `.env.example` / `frontend/.env.example` as templates, and keep real secrets only in local `.env*` files (ignored by git).
 
 ## Production Deploy (Demo Tier)
 
@@ -48,6 +61,7 @@ One-time setup:
      - `ONEFILE_ENV=production`
      - `ONEFILE_AUTH_DEBUG_CODES=1`
      - `ONEFILE_SESSION_COOKIE_SECURE=1`
+     - `HUNYUAN_API_KEY=...`
 2. Deploy frontend on Netlify:
    - Base directory: `frontend`
    - Build: `npm run build`
@@ -68,10 +82,12 @@ After both platforms are connected to `main` auto-deploy, run:
 
 The script runs:
 1. `python3 -m pytest backend/tests -q`
-2. `cd frontend && npm run lint`
-3. `cd frontend && npm run build`
-4. `cd frontend && npm run check:impeccable`
-5. push `main` to trigger Netlify + Render deploy
+2. backend AI readiness check (`used_fallback` must be false)
+3. `cd frontend && npm run lint`
+4. `cd frontend && npm run build`
+5. `cd frontend && npm run check:impeccable`
+6. repository secret scan (`./scripts/check-secrets.sh repo`)
+7. push `main` to trigger Netlify + Render deploy
 
 ## Verification
 

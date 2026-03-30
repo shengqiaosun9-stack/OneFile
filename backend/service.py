@@ -53,6 +53,7 @@ EVENT_TYPE_VALUES = {
     "portfolio_viewed",
     "weekly_report_generated",
     "intervention_learning_viewed",
+    "ai_structuring_fallback",
 }
 FALLBACK_WARNING_TEXT = "AI 服务暂不可用，已自动使用本地规则完成结构化。"
 
@@ -70,6 +71,32 @@ def _build_structuring_warning(meta: Dict[str, Any]) -> Optional[str]:
         return None
     # Never expose provider internals (e.g. missing API keys) to end users.
     return FALLBACK_WARNING_TEXT
+
+
+def _record_ai_fallback_event(
+    state: Dict[str, Any],
+    *,
+    user_id: str,
+    source: str,
+    project_id: str = "",
+    meta: Optional[Dict[str, Any]] = None,
+    ts: str = "",
+) -> None:
+    payload_meta = meta or {}
+    if not bool(payload_meta.get("used_local_structuring", False)):
+        return
+    _append_event(
+        state=state,
+        event_type="ai_structuring_fallback",
+        source=source,
+        user_id=user_id,
+        project_id=project_id,
+        ts=ts or _now_ts(),
+        payload={
+            "error_type": sanitize_text_strict(payload_meta.get("last_api_error_type", ""), allow_empty=True, max_len=32) or "unknown",
+            "has_error": bool(sanitize_text_strict(payload_meta.get("last_api_error", ""), allow_empty=True, max_len=180)),
+        },
+    )
 
 
 def _contains_legacy_markup_payload(project: Dict[str, Any]) -> bool:
@@ -1010,6 +1037,13 @@ def create_project(payload: Dict[str, Any]) -> Dict[str, Any]:
         cta_token=cta_token,
         source="create",
     )
+    _record_ai_fallback_event(
+        state=state,
+        user_id=user["id"],
+        source="create_structuring",
+        project_id=sanitize_text_strict(normalized.get("id", ""), allow_empty=True, max_len=24),
+        meta=meta,
+    )
 
     save_state(state)
     return {
@@ -1079,6 +1113,13 @@ def generate_project(payload: Dict[str, Any]) -> Dict[str, Any]:
         has_file=bool(file_text),
         cta_token=cta_token,
         source="create",
+    )
+    _record_ai_fallback_event(
+        state=state,
+        user_id=user["id"],
+        source="generate_structuring",
+        project_id=sanitize_text_strict(normalized.get("id", ""), allow_empty=True, max_len=24),
+        meta=meta,
     )
 
     save_state(state)
@@ -1301,6 +1342,14 @@ def update_project_progress(project_id: str, payload: Dict[str, Any]) -> Dict[st
         timestamp=timestamp,
     )
     _emit_loop_transition_events(state, previous_project, normalized, project_id, "overlay_update", timestamp)
+    _record_ai_fallback_event(
+        state=state,
+        user_id=user["id"],
+        source="update_structuring",
+        project_id=project_id,
+        meta=meta,
+        ts=timestamp,
+    )
     refresh_ids = [project_id]
     if source_project_id:
         refresh_ids.append(source_project_id)

@@ -19,6 +19,7 @@ from text_cleaning import clean_text, sanitize_text_strict
 
 _LAST_USED_LOCAL_STRUCTURING = False
 _LAST_API_ERROR = ""
+_LAST_API_ERROR_TYPE = ""
 
 
 def _safe_secret_get(key: str) -> Optional[str]:
@@ -30,18 +31,52 @@ def _safe_session_state_set(key: str, value: Any) -> None:
     _ = (key, value)
 
 
+def _classify_ai_error(api_error: str) -> str:
+    message = clean_text(api_error or "", 240).lower()
+    if not message:
+        return ""
+    if "api key" in message or "未检测到 api key" in message:
+        return "missing_api_key"
+    if "429" in message or "rate" in message or "quota" in message:
+        return "rate_limited"
+    if "401" in message or "403" in message or "unauthorized" in message:
+        return "auth_failed"
+    if "timeout" in message or "timed out" in message:
+        return "upstream_timeout"
+    if "connect" in message or "connection" in message or "dns" in message or "network" in message:
+        return "upstream_network"
+    return "upstream_error"
+
+
+def _report_structuring_fallback(api_error: str) -> None:
+    category = _classify_ai_error(api_error)
+    print(
+        "[OneFile][AI-Fallback]"
+        f" provider=hunyuan"
+        f" base_url={get_base_url()}"
+        f" model={get_model_name()}"
+        f" category={category or 'unknown'}"
+        f" error={clean_text(api_error or '', 240)}"
+    )
+
+
 def _set_structuring_meta(used_local_structuring: bool, api_error: str = "") -> None:
-    global _LAST_USED_LOCAL_STRUCTURING, _LAST_API_ERROR
+    global _LAST_USED_LOCAL_STRUCTURING, _LAST_API_ERROR, _LAST_API_ERROR_TYPE
     _LAST_USED_LOCAL_STRUCTURING = bool(used_local_structuring)
     _LAST_API_ERROR = clean_text(api_error or "", 180)
+    _LAST_API_ERROR_TYPE = _classify_ai_error(_LAST_API_ERROR)
     _safe_session_state_set("used_local_structuring", _LAST_USED_LOCAL_STRUCTURING)
     _safe_session_state_set("last_api_error", _LAST_API_ERROR or None)
+    _safe_session_state_set("last_api_error_type", _LAST_API_ERROR_TYPE or None)
+    if _LAST_USED_LOCAL_STRUCTURING:
+        _report_structuring_fallback(_LAST_API_ERROR)
 
 
 def get_last_structuring_meta() -> Dict[str, Any]:
     return {
         "used_local_structuring": bool(_LAST_USED_LOCAL_STRUCTURING),
         "last_api_error": _LAST_API_ERROR or "",
+        "last_api_error_type": _LAST_API_ERROR_TYPE or "",
     }
 
 
@@ -469,23 +504,24 @@ def structure_project_object(raw_input: str, optional_title: str = "") -> Dict[s
         model_name = get_model_name()
         base_url = get_base_url()
         print(f"[OneFile] provider=hunyuan base_url={base_url} model={model_name}")
-        resp = client.responses.create(
+        schema_text = json.dumps(schema, ensure_ascii=False)
+        resp = client.chat.completions.create(
             model=model_name,
-            input=[
-                {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
-                {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        f"{user_prompt}\n\n"
+                        "你必须只返回一个 JSON 对象，不要解释，不要 markdown。\n"
+                        f"JSON Schema:\n{schema_text}"
+                    ),
+                },
             ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "onefile_project_object",
-                    "schema": schema,
-                    "strict": True,
-                }
-            },
+            extra_body={"enable_enhancement": True},
         )
-        output_text = _extract_response_output_text(resp)
-        parsed = extract_json_object(output_text or "{}")
+        parsed = extract_json_object((resp.choices[0].message.content or "{}").strip())
 
         result = {
             "name": sanitize_text_strict(parsed.get("name", ""), allow_empty=True, max_len=42),
