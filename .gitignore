@@ -20,3 +20,11 @@ data/*.tmp
 .DS_Store
 .vscode/
 .idea/
+
+# Local environment secrets
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example

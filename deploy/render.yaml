@@ -13,3 +13,5 @@ services:
         value: "1"
       - key: ONEFILE_SESSION_COOKIE_SECURE
         value: "1"
+      - key: HUNYUAN_API_KEY
+        sync: false

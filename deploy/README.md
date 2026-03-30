@@ -17,12 +17,18 @@ Required environment variables:
 - `ONEFILE_ENV=production`
 - `ONEFILE_AUTH_DEBUG_CODES=1`
 - `ONEFILE_SESSION_COOKIE_SECURE=1`
+- `HUNYUAN_API_KEY=...` (Render secret, required for cloud AI structuring)
 
 Optional (when switching to real email OTP):
 
 - `ONEFILE_AUTH_EMAIL_PROVIDER=resend`
 - `ONEFILE_RESEND_API_KEY=...`
 - `ONEFILE_RESEND_FROM_EMAIL=OneFile <noreply@yourdomain.com>`
+
+Optional AI override:
+
+- `HUNYUAN_BASE_URL=...` (defaults to `https://api.hunyuan.cloud.tencent.com/v1`)
+- `HUNYUAN_MODEL=...` (defaults to `hunyuan-turbos-latest`)
 
 ## 2) Frontend on Netlify
 
@@ -44,9 +50,17 @@ Optional (when switching to real email OTP):
 
 The script includes:
 - backend tests
+- backend AI readiness guard (fails release if structuring falls back to local rules)
 - frontend lint
 - frontend build
 - `frontend` impeccable UI gate (`npm run check:impeccable`)
+- repository secret scan before push
+
+Recommended once per local clone:
+
+```bash
+./scripts/install-git-hooks.sh
+```
 
 ## 4) Demo-tier data caveat
 

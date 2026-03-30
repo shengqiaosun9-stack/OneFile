@@ -140,7 +140,11 @@ def test_create_success_and_fallback_meta(client: TestClient, monkeypatch):
     assert response.status_code == 200
     assert response.json()["used_fallback"] is False
 
-    monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": True, "last_api_error": "api timeout"})
+    monkeypatch.setattr(
+        service,
+        "get_last_structuring_meta",
+        lambda: {"used_local_structuring": True, "last_api_error": "api timeout", "last_api_error_type": "upstream_timeout"},
+    )
     response2 = client.post(
         "/v1/projects",
         json={"email": "owner@example.com", "title": "Beta", "input_text": "另一个产品"},
@@ -148,6 +152,13 @@ def test_create_success_and_fallback_meta(client: TestClient, monkeypatch):
     assert response2.status_code == 200
     assert response2.json()["used_fallback"] is True
     assert response2.json()["warning"] == "AI 服务暂不可用，已自动使用本地规则完成结构化。"
+    store = storage.load_store()
+    assert any(
+        item.get("event_type") == "ai_structuring_fallback"
+        and item.get("source") == "create_structuring"
+        and (item.get("payload", {}) or {}).get("error_type") == "upstream_timeout"
+        for item in store.get("events", [])
+    )
 
 
 def test_create_merges_supplemental_text_into_structuring_input(client: TestClient, monkeypatch):
@@ -209,7 +220,11 @@ def test_generate_project_supports_raw_file_and_optional_title(client: TestClien
 
 def test_generate_project_supports_file_only_and_invalid_input(client: TestClient, monkeypatch):
     monkeypatch.setattr(service, "structure_project_object", lambda raw_input, optional_title="": _fake_generate_object("文件生成标题"))
-    monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": True, "last_api_error": "timeout"})
+    monkeypatch.setattr(
+        service,
+        "get_last_structuring_meta",
+        lambda: {"used_local_structuring": True, "last_api_error": "timeout", "last_api_error_type": "upstream_timeout"},
+    )
 
     file_only = client.post("/v1/project/generate", json={"file_text": "仅文件内容"})
     assert file_only.status_code == 200
@@ -217,6 +232,13 @@ def test_generate_project_supports_file_only_and_invalid_input(client: TestClien
     assert file_only_body["project"]["title"] == "文件生成标题"
     assert file_only_body["used_fallback"] is True
     assert file_only_body["warning"] == "AI 服务暂不可用，已自动使用本地规则完成结构化。"
+    store = storage.load_store()
+    assert any(
+        item.get("event_type") == "ai_structuring_fallback"
+        and item.get("source") == "generate_structuring"
+        and (item.get("payload", {}) or {}).get("error_type") == "upstream_timeout"
+        for item in store.get("events", [])
+    )
 
     invalid = client.post("/v1/project/generate", json={"raw_input": "", "file_text": ""})
     assert invalid.status_code == 400
@@ -276,6 +298,26 @@ def test_update_owner_only_and_latest_update_changes(client: TestClient, monkeyp
     )
     assert updated.status_code == 200
     assert updated.json()["project"]["latest_update"] == "新增3个客户"
+
+    monkeypatch.setattr(
+        service,
+        "get_last_structuring_meta",
+        lambda: {"used_local_structuring": True, "last_api_error": "missing api key", "last_api_error_type": "missing_api_key"},
+    )
+    updated_with_fallback = client.post(
+        f"/v1/projects/{project_id}/update",
+        json={"email": "owner@example.com", "update_text": "新增2个客户，继续推进"},
+    )
+    assert updated_with_fallback.status_code == 200
+    assert updated_with_fallback.json()["used_fallback"] is True
+    store = storage.load_store()
+    assert any(
+        item.get("event_type") == "ai_structuring_fallback"
+        and item.get("source") == "update_structuring"
+        and item.get("project_id") == project_id
+        and (item.get("payload", {}) or {}).get("error_type") == "missing_api_key"
+        for item in store.get("events", [])
+    )
 
 
 def test_share_access_public_private_owner_preview(client: TestClient, monkeypatch):
