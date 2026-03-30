@@ -331,3 +331,195 @@ JSON Schema:
     except Exception as exc:
         _set_structuring_meta(used_local_structuring=True, api_error=str(exc))
         return fallback_structure_project(raw_input, user_title=user_title)
+
+
+def _extract_response_output_text(resp: Any) -> str:
+    direct = getattr(resp, "output_text", "")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+
+    payload: Dict[str, Any] = {}
+    if hasattr(resp, "model_dump"):
+        try:
+            payload = resp.model_dump()  # type: ignore[assignment]
+        except Exception:
+            payload = {}
+    if not payload:
+        return ""
+
+    output_items = payload.get("output", [])
+    if not isinstance(output_items, list):
+        return ""
+    for item in output_items:
+        if not isinstance(item, dict):
+            continue
+        content_items = item.get("content", [])
+        if not isinstance(content_items, list):
+            continue
+        for part in content_items:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") in {"output_text", "text"}:
+                text = part.get("text", "")
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+    return ""
+
+
+def _normalize_generate_stage(value: Any) -> str:
+    stage = sanitize_text_strict(value, allow_empty=True, max_len=32).lower()
+    if stage == "idea":
+        return "idea"
+    if stage == "launched":
+        return "launched"
+    return "building"
+
+
+def _map_existing_stage_to_generate(value: Any) -> str:
+    stage = sanitize_text_strict(value, allow_empty=True, max_len=32).upper()
+    if stage == "IDEA":
+        return "idea"
+    if stage in {"EARLY_REVENUE", "SCALING", "MATURE"}:
+        return "launched"
+    return "building"
+
+
+def fallback_structure_project_object(raw_input: str, optional_title: str = "") -> Dict[str, Any]:
+    legacy = fallback_structure_project(raw_input, user_title=optional_title)
+    name = sanitize_text_strict(optional_title, allow_empty=True, max_len=42) or sanitize_text_strict(
+        legacy.get("title", ""),
+        allow_empty=True,
+        max_len=42,
+    )
+    if not name:
+        name = "未命名项目"
+
+    one_liner = sanitize_text_strict(legacy.get("summary", ""), allow_empty=True, max_len=140) or "项目摘要待补充"
+    core_problem = sanitize_text_strict(legacy.get("problem_statement", ""), allow_empty=True, max_len=220) or "核心问题待补充"
+    solution = sanitize_text_strict(legacy.get("solution_approach", ""), allow_empty=True, max_len=220) or "解决方案待补充"
+    target_user = sanitize_text_strict(legacy.get("users", ""), allow_empty=True, max_len=120) or "目标用户待补充"
+    use_case = sanitize_text_strict(legacy.get("use_cases", ""), allow_empty=True, max_len=220) or "使用场景待补充"
+    monetization = sanitize_text_strict(legacy.get("model_desc", legacy.get("model", "")), allow_empty=True, max_len=120) or "变现方式待补充"
+    progress_note = sanitize_text_strict(legacy.get("latest_update", ""), allow_empty=True, max_len=220) or "已完成首次结构化生成"
+    key_metric = sanitize_text_strict(legacy.get("stage_metric", ""), allow_empty=True, max_len=120) or "关键指标待补充"
+
+    return {
+        "name": name,
+        "one_liner": one_liner,
+        "core_problem": core_problem,
+        "solution": solution,
+        "target_user": target_user,
+        "use_case": use_case,
+        "monetization": monetization,
+        "current_stage": _map_existing_stage_to_generate(legacy.get("stage", "")),
+        "progress_note": progress_note,
+        "key_metric": key_metric,
+    }
+
+
+def structure_project_object(raw_input: str, optional_title: str = "") -> Dict[str, Any]:
+    _set_structuring_meta(used_local_structuring=False, api_error="")
+    safe_optional_title = sanitize_text_strict(optional_title, allow_empty=True, max_len=42)
+
+    schema: Dict[str, Any] = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "name": {"type": "string"},
+            "one_liner": {"type": "string"},
+            "core_problem": {"type": "string"},
+            "solution": {"type": "string"},
+            "target_user": {"type": "string"},
+            "use_case": {"type": "string"},
+            "monetization": {"type": "string"},
+            "current_stage": {"type": "string", "enum": ["idea", "building", "launched"]},
+            "progress_note": {"type": "string"},
+            "key_metric": {"type": "string"},
+        },
+        "required": [
+            "name",
+            "one_liner",
+            "core_problem",
+            "solution",
+            "target_user",
+            "use_case",
+            "monetization",
+            "current_stage",
+            "progress_note",
+            "key_metric",
+        ],
+    }
+
+    system_prompt = (
+        "你是 OneFile 的项目结构化引擎。"
+        "你的任务是把用户输入整理成标准项目对象。"
+        "你只能输出符合 schema 的 JSON，不要解释、不要闲聊、不要附加文本。"
+        "不要编造不存在的数据，信息不足时使用保守默认值。"
+    )
+    user_prompt = (
+        "请根据输入生成项目对象。\n"
+        f"optional_title={safe_optional_title or '(none)'}\n"
+        "规则：若 optional_title 非空，name 必须优先使用 optional_title。\n"
+        "current_stage 只能是 idea/building/launched。\n\n"
+        f"输入文本：\n{raw_input}"
+    )
+
+    try:
+        client = get_client()
+        model_name = get_model_name()
+        base_url = get_base_url()
+        print(f"[OneFile] provider=hunyuan base_url={base_url} model={model_name}")
+        resp = client.responses.create(
+            model=model_name,
+            input=[
+                {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "onefile_project_object",
+                    "schema": schema,
+                    "strict": True,
+                }
+            },
+        )
+        output_text = _extract_response_output_text(resp)
+        parsed = extract_json_object(output_text or "{}")
+
+        result = {
+            "name": sanitize_text_strict(parsed.get("name", ""), allow_empty=True, max_len=42),
+            "one_liner": sanitize_text_strict(parsed.get("one_liner", ""), allow_empty=True, max_len=140),
+            "core_problem": sanitize_text_strict(parsed.get("core_problem", ""), allow_empty=True, max_len=220),
+            "solution": sanitize_text_strict(parsed.get("solution", ""), allow_empty=True, max_len=220),
+            "target_user": sanitize_text_strict(parsed.get("target_user", ""), allow_empty=True, max_len=120),
+            "use_case": sanitize_text_strict(parsed.get("use_case", ""), allow_empty=True, max_len=220),
+            "monetization": sanitize_text_strict(parsed.get("monetization", ""), allow_empty=True, max_len=120),
+            "current_stage": _normalize_generate_stage(parsed.get("current_stage", "")),
+            "progress_note": sanitize_text_strict(parsed.get("progress_note", ""), allow_empty=True, max_len=220),
+            "key_metric": sanitize_text_strict(parsed.get("key_metric", ""), allow_empty=True, max_len=120),
+        }
+        if safe_optional_title:
+            result["name"] = safe_optional_title
+        if not result["name"]:
+            result["name"] = "未命名项目"
+        if not result["one_liner"]:
+            result["one_liner"] = "项目摘要待补充"
+        if not result["core_problem"]:
+            result["core_problem"] = "核心问题待补充"
+        if not result["solution"]:
+            result["solution"] = "解决方案待补充"
+        if not result["target_user"]:
+            result["target_user"] = "目标用户待补充"
+        if not result["use_case"]:
+            result["use_case"] = "使用场景待补充"
+        if not result["monetization"]:
+            result["monetization"] = "变现方式待补充"
+        if not result["progress_note"]:
+            result["progress_note"] = "已完成首次结构化生成"
+        if not result["key_metric"]:
+            result["key_metric"] = "关键指标待补充"
+        return result
+    except Exception as exc:
+        _set_structuring_meta(used_local_structuring=True, api_error=str(exc))
+        return fallback_structure_project_object(raw_input, optional_title=safe_optional_title)

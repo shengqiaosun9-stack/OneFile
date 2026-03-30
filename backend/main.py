@@ -7,6 +7,7 @@ from backend.config import get_settings
 from backend.schemas import (
     CreateProjectRequest,
     EditProjectRequest,
+    GenerateProjectRequest,
     LoginStartRequest,
     LoginVerifyRequest,
     LoginRequest,
@@ -19,6 +20,7 @@ from backend.pdf_extract import extract_pdf_text
 from backend.service import (
     ServiceError,
     create_project,
+    generate_project,
     delete_project,
     edit_project,
     export_user_backup,
@@ -171,6 +173,14 @@ def create_project_endpoint(payload: CreateProjectRequest, request: Request) -> 
     body = payload.model_dump()
     body["email"] = str(user.get("email", ""))
     return create_project(body)
+
+
+@app.post("/v1/project/generate")
+def generate_project_endpoint(payload: GenerateProjectRequest, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    body = payload.model_dump()
+    body["email"] = str(user.get("email", ""))
+    return generate_project(body)
 
 
 @app.get("/v1/projects/{project_id}")

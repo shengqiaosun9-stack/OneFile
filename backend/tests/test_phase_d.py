@@ -97,6 +97,7 @@ def test_portfolio_endpoint_returns_summary_and_stage_distribution(client: TestC
 def test_weekly_report_endpoint_generates_markdown_and_logs_event(client: TestClient, monkeypatch):
     monkeypatch.setattr(service, "structure_project", lambda raw_input, user_title="": _fake_schema(user_title or "项目"))
     monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": False, "last_api_error": ""})
+    monkeypatch.setattr(service, "_now_ts", lambda: "2026-03-25 10:00:00")
 
     created = client.post(
         "/v1/projects",

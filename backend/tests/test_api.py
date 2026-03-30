@@ -65,6 +65,21 @@ def _fake_schema(title: str) -> Dict[str, str]:
     )
 
 
+def _fake_generate_object(name: str) -> Dict[str, str]:
+    return {
+        "name": name,
+        "one_liner": "AI 自动生成项目档案",
+        "core_problem": "表达门槛高",
+        "solution": "自动结构化输入",
+        "target_user": "独立开发者",
+        "use_case": "快速成型项目档案",
+        "monetization": "B2B 订阅",
+        "current_stage": "building",
+        "progress_note": "已完成首版生成链路",
+        "key_metric": "首轮生成成功率 92%",
+    }
+
+
 def test_login_user_id_stable(client: TestClient):
     payload = {"email": "founder@example.com"}
     first = client.post("/v1/auth/login", json=payload)
@@ -159,6 +174,53 @@ def test_create_merges_supplemental_text_into_structuring_input(client: TestClie
     assert "这是 BP 解析文本" in captured.get("raw_input", "")
     assert "\n\n" in captured.get("raw_input", "")
     assert response.json()["project"]["updates"][0]["input_meta"]["has_file"] is True
+
+
+def test_generate_project_supports_raw_file_and_optional_title(client: TestClient, monkeypatch):
+    captured: Dict[str, str] = {}
+
+    def fake_generate(raw_input: str, optional_title: str = "") -> Dict[str, str]:
+        captured["raw_input"] = raw_input
+        captured["optional_title"] = optional_title
+        return _fake_generate_object(optional_title or "自动标题")
+
+    monkeypatch.setattr(service, "structure_project_object", fake_generate)
+    monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": False, "last_api_error": ""})
+
+    response = client.post(
+        "/v1/project/generate",
+        json={
+            "raw_input": "一句话输入",
+            "file_text": "BP 提取文本",
+            "optional_title": "指定标题",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project"]["title"] == "指定标题"
+    assert body["project"]["summary"] == "AI 自动生成项目档案"
+    assert body["project"]["model_desc"] == "B2B 订阅"
+    assert body["project"]["latest_update"] == "已完成首版生成链路"
+    assert body["project"]["stage_metric"] == "当前阶段：首轮生成成功率 92%"
+    assert "BP 提取文本" in captured.get("raw_input", "")
+    assert "一句话输入" in captured.get("raw_input", "")
+    assert captured.get("optional_title", "") == "指定标题"
+
+
+def test_generate_project_supports_file_only_and_invalid_input(client: TestClient, monkeypatch):
+    monkeypatch.setattr(service, "structure_project_object", lambda raw_input, optional_title="": _fake_generate_object("文件生成标题"))
+    monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": True, "last_api_error": "timeout"})
+
+    file_only = client.post("/v1/project/generate", json={"file_text": "仅文件内容"})
+    assert file_only.status_code == 200
+    file_only_body = file_only.json()
+    assert file_only_body["project"]["title"] == "文件生成标题"
+    assert file_only_body["used_fallback"] is True
+    assert file_only_body["warning"] == "AI 服务暂不可用，已自动使用本地规则完成结构化。"
+
+    invalid = client.post("/v1/project/generate", json={"raw_input": "", "file_text": ""})
+    assert invalid.status_code == 400
+    assert invalid.json()["error"] == "invalid_input"
 
 
 def test_visibility_rules_owner_public(client: TestClient, monkeypatch):
