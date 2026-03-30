@@ -33,6 +33,14 @@ class CreateProjectRequest(BaseModel):
     modelType: str = Field(default="UNKNOWN", max_length=40)
 
 
+class GenerateProjectRequest(BaseModel):
+    raw_input: str = Field(default="", max_length=12000)
+    optional_title: str = Field(default="", max_length=80)
+    file_text: str = Field(default="", max_length=12000)
+    cta_token: str = Field(default="", max_length=40)
+    ctaToken: str = Field(default="", max_length=40)
+
+
 class EditProjectRequest(BaseModel):
     email: str = Field(default="", max_length=120)
     title: Optional[str] = Field(default=None, max_length=80)
@@ -43,6 +51,7 @@ class EditProjectRequest(BaseModel):
     solution_approach: Optional[str] = Field(default=None, max_length=280)
     model_desc: Optional[str] = Field(default=None, max_length=180)
     latest_update: Optional[str] = Field(default=None, max_length=300)
+    stage_metric: Optional[str] = Field(default=None, max_length=120)
     stage: Optional[str] = Field(default=None, max_length=40)
     form_type: Optional[str] = Field(default=None, max_length=40)
     model_type: Optional[str] = Field(default=None, max_length=40)

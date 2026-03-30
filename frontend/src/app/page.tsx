@@ -13,63 +13,110 @@ import { copyZh } from "@/lib/copy-zh";
 import { getApiErrorMessage, resolveApiError } from "@/lib/error-zh";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { saveEmail } from "@/lib/session";
-import type { AuthResponse, AuthStartResponse, ListResponse, OneFileProject } from "@/lib/types";
+import type { AuthResponse, AuthStartResponse } from "@/lib/types";
 
-type ShowcaseBlueprint = {
-  key: string;
+type LandingUsecase = {
+  id: string;
   title: string;
-  audience: string;
-  updatedText: string;
-  summary: string;
-  preferredProjectIds: string[];
+  one_liner: string;
+  description: string;
+  business_model: string;
+  target_user: string;
+  stage: string;
+  recent_update: string;
+  key_metric: string;
 };
 
-type ShowcaseCard = ShowcaseBlueprint & {
-  projectId?: string;
-};
-
-const SHOWCASE_BLUEPRINTS: ShowcaseBlueprint[] = [
+const LANDING_USECASES: LandingUsecase[] = [
   {
-    key: "solotax",
-    title: "SoloTax Studio",
-    audience: "SaaS创始人",
-    updatedText: "3.27",
-    summary: "自动生成税务整理建议，降低一人团队财务决策成本。",
-    preferredProjectIds: ["p_demo_001", "p_demo_002"],
+    id: "1",
+    title: "AutoDeck",
+    one_liner: "AI自动生成融资Deck",
+    description: "帮助早期创业者快速生成结构化融资材料，从想法到完整Pitch Deck只需几分钟。",
+    business_model: "按次收费 + 订阅制",
+    target_user: "早期创业者",
+    stage: "已上线",
+    recent_update: "刚刚 · 模板优化完成，生成成功率提升到92%",
+    key_metric: "生成成功率92%",
   },
   {
-    key: "writer",
-    title: "云笔工作室",
-    audience: "自由职业者",
-    updatedText: "3.25",
-    summary: "围绕内容产出和交付节奏，沉淀可复用的写作工作流。",
-    preferredProjectIds: ["p_demo_002", "p_demo_001"],
+    id: "2",
+    title: "LegalFlow",
+    one_liner: "AI自动生成标准合同",
+    description: "为中小企业提供低成本、可定制的法律合同生成服务，降低对律师的依赖。",
+    business_model: "按合同生成收费",
+    target_user: "中小企业",
+    stage: "测试中",
+    recent_update: "2天前 · 上线合同模板库第一版",
+    key_metric: "生成时间小于30秒",
   },
   {
-    key: "opc-dash",
-    title: "星云增长实验室",
-    audience: "独立开发者",
-    updatedText: "3.20",
-    summary: "统一追踪获客、转化和版本节奏，形成可分享的增长视图。",
-    preferredProjectIds: ["p_demo_003", "p_demo_001", "p_demo_002"],
+    id: "3",
+    title: "FounderOS",
+    one_liner: "一人创业操作系统",
+    description: "整合项目管理、融资和用户反馈的一体化工具，专为独立创业者设计。",
+    business_model: "SaaS订阅",
+    target_user: "独立开发者",
+    stage: "构思阶段",
+    recent_update: "3天前 · 完成产品结构设计",
+    key_metric: "暂无",
+  },
+  {
+    id: "4",
+    title: "ComputeX",
+    one_liner: "AI算力匹配平台",
+    description: "连接算力供需双方，动态匹配训练与推理需求，帮助企业降低成本。",
+    business_model: "撮合佣金 + 企业订阅",
+    target_user: "AI公司",
+    stage: "开发中",
+    recent_update: "1天前 · 已接入第3家算力供应商",
+    key_metric: "成本降低40%",
+  },
+  {
+    id: "5",
+    title: "InsightFeed",
+    one_liner: "结构化行业研究流",
+    description: "通过AI整理碎片信息，输出可直接用于决策的结构化行业洞察。",
+    business_model: "订阅制 + 数据服务",
+    target_user: "投资人",
+    stage: "已上线",
+    recent_update: "刚刚 · 日活用户突破500",
+    key_metric: "留存率35%",
+  },
+  {
+    id: "6",
+    title: "CreatorGraph",
+    one_liner: "创作者关系网络图谱",
+    description: "帮助品牌和MCN快速找到合适创作者，建立更高效的合作关系。",
+    business_model: "撮合佣金",
+    target_user: "MCN机构",
+    stage: "原型阶段",
+    recent_update: "4天前 · 完成关系图谱模型设计",
+    key_metric: "暂无",
+  },
+  {
+    id: "7",
+    title: "FactoryMind",
+    one_liner: "工厂AI质量监控系统",
+    description: "通过实时数据分析与预测模型，降低生产过程中的质量波动风险。",
+    business_model: "企业SaaS + 定制部署",
+    target_user: "制造企业",
+    stage: "试点中",
+    recent_update: "2天前 · 完成第一家工厂试点部署",
+    key_metric: "良率提升15%",
+  },
+  {
+    id: "8",
+    title: "FundSignal",
+    one_liner: "VC投资信号捕捉工具",
+    description: "通过数据分析识别潜在融资机会，帮助投资人提高决策效率。",
+    business_model: "订阅制",
+    target_user: "投资人",
+    stage: "已上线",
+    recent_update: "刚刚 · 覆盖项目数量突破200个",
+    key_metric: "信号准确率68%",
   },
 ];
-
-function resolveShowcaseCards(publicProjects: OneFileProject[]): ShowcaseCard[] {
-  const byId = new Map(publicProjects.map((item) => [item.id, item]));
-  const used = new Set<string>();
-  return SHOWCASE_BLUEPRINTS.map((card, index) => {
-    let selected = card.preferredProjectIds.map((id) => byId.get(id)).find(Boolean);
-    if (!selected && publicProjects.length > 0) {
-      selected = publicProjects.find((item) => !used.has(item.id)) || publicProjects[index % publicProjects.length];
-    }
-    if (selected) used.add(selected.id);
-    return {
-      ...card,
-      projectId: selected?.id,
-    };
-  });
-}
 
 export default function LandingPage() {
   const t = copyZh.landing;
@@ -85,8 +132,7 @@ export default function LandingPage() {
   const [resendCooldown, setResendCooldown] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [showcaseCards, setShowcaseCards] = useState<ShowcaseCard[]>(() => resolveShowcaseCards([]));
-  const [cardsLoading, setCardsLoading] = useState(true);
+  const showcaseCards = LANDING_USECASES;
   const [activeShowcaseIndex, setActiveShowcaseIndex] = useState(0);
   const [nextPathRaw, setNextPathRaw] = useState("");
   const [reasonRaw, setReasonRaw] = useState("");
@@ -104,25 +150,6 @@ export default function LandingPage() {
     const query = new URLSearchParams(window.location.search);
     setNextPathRaw(query.get("next") || "");
     setReasonRaw((query.get("reason") || "").trim());
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/projects", { cache: "no-store" });
-        if (!res.ok) {
-          setCardsLoading(false);
-          return;
-        }
-        const body = (await res.json()) as ListResponse;
-        const publics = (body.projects || []).filter((item) => Boolean(item.share?.is_public));
-        setShowcaseCards(resolveShowcaseCards(publics));
-      } catch {
-        setShowcaseCards(resolveShowcaseCards([]));
-      } finally {
-        setCardsLoading(false);
-      }
-    })();
   }, []);
 
   useEffect(() => {
@@ -343,6 +370,8 @@ export default function LandingPage() {
   }
 
   const guestLibraryHref = useMemo(() => "/library?mode=guest", []);
+  const canStepPrev = activeShowcaseIndex > 0;
+  const canStepNext = activeShowcaseIndex < showcaseCards.length - 1;
 
   return (
     <main ref={mainRef} className="landing-premium min-h-screen px-6 py-7 sm:px-8 sm:py-9">
@@ -405,15 +434,15 @@ export default function LandingPage() {
 
         <section id="landing-showcase" data-reveal>
           <div className="flex items-center justify-between gap-3">
-            <h2 className="landing-section-title">示例项目</h2>
-            <div className="hidden items-center gap-2 md:flex">
+            <h2 className="landing-section-title">{t.exampleTitle}</h2>
+            <div className="flex items-center gap-2">
               <Button
                 type="button"
                 variant="ghost"
                 className="landing-showcase-nav-btn"
                 onClick={() => onShowcaseStep(-1)}
-                disabled={cardsLoading}
-                aria-label="查看上一个案例"
+                disabled={!canStepPrev}
+                aria-label={t.showcasePrevAria}
               >
                 ←
               </Button>
@@ -422,8 +451,8 @@ export default function LandingPage() {
                 variant="ghost"
                 className="landing-showcase-nav-btn"
                 onClick={() => onShowcaseStep(1)}
-                disabled={cardsLoading}
-                aria-label="查看下一个案例"
+                disabled={!canStepNext}
+                aria-label={t.showcaseNextAria}
               >
                 →
               </Button>
@@ -434,7 +463,7 @@ export default function LandingPage() {
               ref={showcaseTrackRef}
               className="landing-showcase-track"
               tabIndex={0}
-              aria-label="示例项目案例带"
+              aria-label={t.showcaseTrackAria}
               onKeyDown={(event) => {
                 if (event.key === "ArrowRight") {
                   event.preventDefault();
@@ -445,57 +474,60 @@ export default function LandingPage() {
                 }
               }}
             >
-            {cardsLoading
-              ? SHOWCASE_BLUEPRINTS.map((item) => (
-                  <article key={`skeleton-${item.key}`} className="landing-card landing-showcase-item skeleton-card">
-                    <div className="skeleton-line h-5 w-2/3" />
-                    <div className="skeleton-line h-4 w-1/2" />
-                    <div className="skeleton-line h-4 w-full" />
-                    <div className="skeleton-line h-4 w-5/6" />
-                    <div className="skeleton-line h-9 w-full" />
-                  </article>
-                ))
-              : showcaseCards.map((card, index) => {
-                  const detailHref = card.projectId ? `/projects/${card.projectId}` : guestLibraryHref;
-                  const shareHref = card.projectId ? `/share/${card.projectId}` : guestLibraryHref;
-                  return (
-                    <article
-                      key={card.key}
-                      className="landing-card landing-showcase-card landing-showcase-item"
-                      ref={(node) => {
-                        showcaseCardRefs.current[index] = node;
-                      }}
-                    >
-                      <div className="flex items-center justify-between gap-2">
+              {showcaseCards.map((card, index) => (
+                <article
+                  key={card.id}
+                  className="landing-card landing-showcase-card landing-showcase-item"
+                  ref={(node) => {
+                    showcaseCardRefs.current[index] = node;
+                  }}
+                >
+                  <Link
+                    href={guestLibraryHref}
+                    className="landing-showcase-card-link"
+                    aria-label={`${t.showcaseOpenAriaPrefix}：${card.title}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
                         <h3 className="landing-card-title">{card.title}</h3>
-                        <span className="landing-update-tag">最近更新 · {card.updatedText}</span>
+                        <p className="landing-card-text mt-1">{card.one_liner}</p>
                       </div>
-                      <p className="landing-card-text">用户：{card.audience}</p>
-                      <p className="landing-card-text">{card.summary}</p>
-                      <div className="mt-4 flex items-center gap-4 text-sm">
-                        <Link className="landing-link-sweep" href={detailHref}>
-                          查看档案 →
-                        </Link>
-                        <Link className="landing-link-sweep" href={shareHref}>
-                          分享页 →
-                        </Link>
-                      </div>
-                    </article>
-                  );
-                })}
+                      <span className="landing-update-tag">{card.stage}</span>
+                    </div>
+                    <p className="landing-card-text">{card.description}</p>
+                    <div className="landing-showcase-meta">
+                      <p className="landing-card-text">
+                        <span className="font-medium">目标用户：</span>
+                        {card.target_user}
+                      </p>
+                      <p className="landing-card-text">
+                        <span className="font-medium">商业模式：</span>
+                        {card.business_model}
+                      </p>
+                    </div>
+                    <p className="landing-card-text">
+                      <span className="font-medium">最近进展：</span>
+                      {card.recent_update}
+                    </p>
+                    <p className="landing-card-text">
+                      <span className="font-medium">关键指标：</span>
+                      {card.key_metric}
+                    </p>
+                  </Link>
+                </article>
+              ))}
             </div>
             <div className="landing-showcase-edge left" aria-hidden />
             <div className="landing-showcase-edge right" aria-hidden />
           </div>
           <div className="landing-showcase-dots" aria-label="案例位置指示">
-            {(cardsLoading ? SHOWCASE_BLUEPRINTS : showcaseCards).map((item, index) => (
+            {showcaseCards.map((item, index) => (
               <button
-                key={`dot-${item.key}`}
+                key={`dot-${item.id}`}
                 type="button"
                 className={`landing-showcase-dot ${index === activeShowcaseIndex ? "is-active" : ""}`}
-                aria-label={`查看第 ${index + 1} 个案例`}
+                aria-label={t.showcaseDotAria(index + 1)}
                 onClick={() => scrollToShowcaseIndex(index)}
-                disabled={cardsLoading}
               />
             ))}
           </div>

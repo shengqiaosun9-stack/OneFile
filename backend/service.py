@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from ai_service import build_update_input, get_last_structuring_meta, structure_project
+from ai_service import build_update_input, get_last_structuring_meta, structure_project, structure_project_object
 from backend.config import get_settings
 from backend.email_sender import EmailSendError, build_email_sender
 from project_model import (
@@ -876,6 +876,88 @@ def login(email: str) -> Dict[str, Any]:
     return {"user": user, "projects": _get_visible_projects(state, user["id"])}
 
 
+def _merge_generate_input(raw_input: str, file_text: str) -> str:
+    if file_text and raw_input:
+        return f"{file_text}\n\n{raw_input}"
+    if file_text:
+        return file_text
+    return raw_input
+
+
+def _map_generate_stage_to_project(value: str) -> str:
+    safe = sanitize_text_strict(value, allow_empty=True, max_len=24).lower()
+    if safe == "idea":
+        return "IDEA"
+    if safe == "launched":
+        return "EARLY_REVENUE"
+    return "BUILDING"
+
+
+def _materialize_structured_project(
+    *,
+    state: Dict[str, Any],
+    user: Dict[str, Any],
+    schema: Dict[str, Any],
+    merged_input: str,
+    has_file: bool,
+    cta_token: str,
+    source: str,
+) -> Dict[str, Any]:
+    project = enrich_generated_project(schema)
+    project["desc"] = merged_input
+    project["owner_user_id"] = user["id"]
+    created_ts = _now_ts()
+    project["share"] = {
+        "is_public": True,
+        "published_at": created_ts,
+        "last_shared_at": created_ts,
+    }
+    project["updates"] = [
+        build_update_entry(
+            project_id=project.get("id", ""),
+            author_user_id=user["id"],
+            content=project.get("latest_update", project.get("version_footprint", "")),
+            source=source,
+            created_at=project.get("updated_at", get_now_str()),
+            input_meta={"has_text": True, "has_file": has_file, "merged_chars": len(merged_input)},
+            next_action_text=(project.get("next_action", {}) or {}).get("text", ""),
+        )
+    ]
+
+    normalized = normalize_project(project)
+    state["projects"].append(normalized)
+    state["projects"] = _sort_projects(state["projects"])
+
+    project_id = sanitize_text_strict(normalized.get("id", ""), allow_empty=True, max_len=24)
+    if project_id:
+        _append_event(
+            state=state,
+            event_type="project_created",
+            source="create_api",
+            project_id=project_id,
+            user_id=user["id"],
+            payload={
+                "stage": normalized.get("stage", ""),
+                "has_file": has_file,
+                "merged_chars": len(merged_input),
+            },
+        )
+        source_project_id = _attribute_conversion_from_cta(
+            state=state,
+            cta_token=cta_token,
+            conversion_kind="create",
+            converted_project_id=project_id,
+            actor_user_id=user["id"],
+            source="share_cta_create",
+            timestamp=_now_ts(),
+        )
+        refresh_ids = [project_id]
+        if source_project_id:
+            refresh_ids.append(source_project_id)
+        _refresh_ops_signals(state, project_ids=refresh_ids)
+    return normalized
+
+
 def create_project(payload: Dict[str, Any]) -> Dict[str, Any]:
     state = load_state()
     user = _ensure_user(state, str(payload.get("email", "")))
@@ -918,59 +1000,86 @@ def create_project(payload: Dict[str, Any]) -> Dict[str, Any]:
     if model_override:
         schema["model_type"] = normalize_model_type(model_override, model_desc=schema.get("model_desc", schema.get("model", "")))
 
-    project = enrich_generated_project(schema)
-    project["desc"] = merged_input
-    project["owner_user_id"] = user["id"]
-    created_ts = _now_ts()
-    project["share"] = {
-        "is_public": True,
-        "published_at": created_ts,
-        "last_shared_at": created_ts,
-    }
     cta_token = _sanitize_cta_token(payload.get("cta_token", payload.get("ctaToken", "")))
-    project["updates"] = [
-        build_update_entry(
-            project_id=project.get("id", ""),
-            author_user_id=user["id"],
-            content=project.get("latest_update", project.get("version_footprint", "")),
-            source="create",
-            created_at=project.get("updated_at", get_now_str()),
-            input_meta={"has_text": True, "has_file": bool(supplemental_text), "merged_chars": len(merged_input)},
-            next_action_text=(project.get("next_action", {}) or {}).get("text", ""),
-        )
-    ]
+    normalized = _materialize_structured_project(
+        state=state,
+        user=user,
+        schema=schema,
+        merged_input=merged_input,
+        has_file=bool(supplemental_text),
+        cta_token=cta_token,
+        source="create",
+    )
 
-    normalized = normalize_project(project)
-    state["projects"].append(normalized)
-    state["projects"] = _sort_projects(state["projects"])
+    save_state(state)
+    return {
+        "project": normalized,
+        "used_fallback": bool(meta.get("used_local_structuring", False)),
+        "warning": _build_structuring_warning(meta),
+    }
 
-    project_id = sanitize_text_strict(normalized.get("id", ""), allow_empty=True, max_len=24)
-    if project_id:
-        _append_event(
-            state=state,
-            event_type="project_created",
-            source="create_api",
-            project_id=project_id,
-            user_id=user["id"],
-            payload={
-                "stage": normalized.get("stage", ""),
-                "has_file": bool(supplemental_text),
-                "merged_chars": len(merged_input),
-            },
-        )
-        source_project_id = _attribute_conversion_from_cta(
-            state=state,
-            cta_token=cta_token,
-            conversion_kind="create",
-            converted_project_id=project_id,
-            actor_user_id=user["id"],
-            source="share_cta_create",
-            timestamp=_now_ts(),
-        )
-        refresh_ids = [project_id]
-        if source_project_id:
-            refresh_ids.append(source_project_id)
-        _refresh_ops_signals(state, project_ids=refresh_ids)
+
+def generate_project(payload: Dict[str, Any]) -> Dict[str, Any]:
+    state = load_state()
+    user = _ensure_user(state, str(payload.get("email", "")))
+    _migrate_unowned_projects(state, user["id"])
+
+    raw_input = sanitize_text_strict(payload.get("raw_input", ""), allow_empty=True, max_len=12000)
+    file_text = sanitize_text_strict(payload.get("file_text", ""), allow_empty=True, max_len=12000)
+    optional_title = sanitize_text_strict(payload.get("optional_title", ""), allow_empty=True, max_len=42)
+    if not raw_input and not file_text:
+        raise ServiceError(400, "invalid_input", "请先输入项目描述或添加材料。")
+
+    merged_input = _merge_generate_input(raw_input=raw_input, file_text=file_text)
+
+    generated = structure_project_object(merged_input, optional_title=optional_title)
+    meta = get_last_structuring_meta()
+
+    generated_name = sanitize_text_strict(generated.get("name", ""), allow_empty=True, max_len=42)
+    project_title = optional_title or generated_name or "未命名项目"
+    project_title = sanitize_text_strict(project_title, allow_empty=True, max_len=42) or "未命名项目"
+
+    one_liner = sanitize_text_strict(generated.get("one_liner", ""), allow_empty=True, max_len=140) or "项目摘要待补充"
+    core_problem = sanitize_text_strict(generated.get("core_problem", ""), allow_empty=True, max_len=220) or "核心问题待补充"
+    solution = sanitize_text_strict(generated.get("solution", ""), allow_empty=True, max_len=220) or "解决方案待补充"
+    target_user = sanitize_text_strict(generated.get("target_user", ""), allow_empty=True, max_len=120) or "目标用户待补充"
+    use_case = sanitize_text_strict(generated.get("use_case", ""), allow_empty=True, max_len=220) or "使用场景待补充"
+    monetization = sanitize_text_strict(generated.get("monetization", ""), allow_empty=True, max_len=120) or "变现方式待补充"
+    progress_note = sanitize_text_strict(generated.get("progress_note", ""), allow_empty=True, max_len=220) or "已完成首次结构化生成"
+    key_metric = sanitize_text_strict(generated.get("key_metric", ""), allow_empty=True, max_len=120) or "关键指标待补充"
+    stage = _map_generate_stage_to_project(sanitize_text_strict(generated.get("current_stage", ""), allow_empty=True, max_len=24))
+
+    schema = sanitize_schema(
+        {
+            "title": project_title,
+            "desc": merged_input,
+            "users": target_user,
+            "use_cases": use_case,
+            "problem_statement": core_problem,
+            "solution_approach": solution,
+            "model": monetization,
+            "model_desc": monetization,
+            "model_type": normalize_model_type("", model_desc=monetization),
+            "pricing_strategy": "",
+            "form_type": "OTHER",
+            "stage": stage,
+            "latest_update": progress_note,
+            "version_footprint": progress_note,
+            "summary": one_liner,
+            "stage_metric": key_metric,
+        }
+    )
+
+    cta_token = _sanitize_cta_token(payload.get("cta_token", payload.get("ctaToken", "")))
+    normalized = _materialize_structured_project(
+        state=state,
+        user=user,
+        schema=schema,
+        merged_input=merged_input,
+        has_file=bool(file_text),
+        cta_token=cta_token,
+        source="create",
+    )
 
     save_state(state)
     return {
@@ -1014,6 +1123,7 @@ def edit_project(project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     next_project["users"] = sanitize_text_strict(payload.get("users", current.get("users", "")), allow_empty=True, max_len=120) or current.get("users", "")
     next_project["use_cases"] = sanitize_text_strict(payload.get("use_cases", current.get("use_cases", "")), allow_empty=True, max_len=220)
     next_project["latest_update"] = latest_update
+    next_project["stage_metric"] = sanitize_text_strict(payload.get("stage_metric", current.get("stage_metric", "")), allow_empty=True, max_len=120)
     next_project["stage"] = normalize_stage_value(payload.get("stage", current.get("stage", "")))
     next_project["model_type"] = normalize_model_type(payload.get("model_type", current.get("model_type", "")), model_desc=next_project.get("model_desc", current.get("model", "")))
     next_project["form_type"] = normalize_form_type(payload.get("form_type", current.get("form_type", "")), context=f"{title} {next_project.get('summary', '')} {next_project.get('model_desc', '')}")

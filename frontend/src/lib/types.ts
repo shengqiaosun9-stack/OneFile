@@ -19,6 +19,7 @@ export type OneFileProject = {
   solution_approach?: string;
   use_cases?: string;
   latest_update?: string;
+  stage_metric?: string;
   updated_at?: string;
   owner_user_id?: string;
   share?: {
