@@ -1,12 +1,20 @@
-# OneFile Impeccable Gate
+# OnePitch Impeccable Gate
 
-This folder defines the local "impeccable gate" for OneFile UI quality checks.
+This folder defines the local "impeccable gate" for OnePitch UI quality checks.
 
 ## Files
 
 - `gate.rules.json`: machine-readable rules for core page consistency checks
 - `baseline.json`: accepted baseline fingerprints (used to block only new regressions)
 - `baseline-report.json`: current baseline issue snapshot (human-readable)
+
+The gate is paired with repo-local design truth in `frontend/design-system/`:
+
+- `design-tokens.ts`
+- `object-grammar.md`
+- `page-rules.md`
+- `interaction-states.md`
+- `brand-copy-rules.md`
 
 ## Commands
 
@@ -40,8 +48,9 @@ Use both in the same release gate:
 The gate currently enforces:
 
 - visual token presence for Landing/Library/Detail/Share
+- design-system truth files exist and retain required object-language anchors
 - CSS semantic rule presence for onefile/landing styles
-- anti-dashboard wording drift in core pages
+- anti-dashboard and anti-template wording drift in core pages
 - allowed hex palette in `src/app/globals.css`
 
 This is a quality gate only. It does not auto-fix code.

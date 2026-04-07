@@ -7,10 +7,16 @@ export type OneFileProject = {
   id: string;
   title: string;
   summary?: string;
+  entity_type?: "temporary_card" | "claimed_project" | string;
+  claim_status?: "unclaimed" | "claimed" | string;
+  visible_in_library?: boolean;
+  claimed_by_user_id?: string;
   stage?: string;
   stage_label?: string;
   form_type?: string;
   form_type_label?: string;
+  business_model_type?: string;
+  business_model_type_label?: string;
   model_type?: string;
   model_type_label?: string;
   users?: string;
@@ -90,6 +96,7 @@ export type MutationResponse = {
   project: OneFileProject;
   used_fallback?: boolean;
   warning?: string;
+  idempotent_replay?: boolean;
 };
 
 export type BpExtractResponse = {

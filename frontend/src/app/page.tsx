@@ -1,9 +1,8 @@
 "use client";
 
+import { FormEvent, KeyboardEvent, PointerEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileTextIcon, PenLineIcon, RefreshCwIcon, Share2Icon, SparklesIcon, WaypointsIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -12,117 +11,323 @@ import { Input } from "@/components/ui/input";
 import { copyZh } from "@/lib/copy-zh";
 import { getApiErrorMessage, resolveApiError } from "@/lib/error-zh";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
+import { saveLastGeneratedCardId } from "@/lib/last-generated-card";
+import { createRequestId } from "@/lib/request-id";
 import { saveEmail } from "@/lib/session";
-import type { AuthResponse, AuthStartResponse } from "@/lib/types";
+import type { AuthResponse, AuthStartResponse, MutationResponse } from "@/lib/types";
 
-type LandingUsecase = {
-  id: string;
+type ExampleCard = {
+  cardId: string;
   title: string;
-  one_liner: string;
-  description: string;
-  business_model: string;
-  target_user: string;
-  stage: string;
-  recent_update: string;
-  key_metric: string;
+  audience: string;
+  input: string;
+  summary: string;
+  scenario: string;
 };
 
-const LANDING_USECASES: LandingUsecase[] = [
+type PromptBarState = "idle" | "focused" | "typing" | "submitting" | "failed";
+
+const EXAMPLES: ExampleCard[] = [
   {
-    id: "1",
-    title: "AutoDeck",
-    one_liner: "AI自动生成融资Deck",
-    description: "帮助早期创业者快速生成结构化融资材料，从想法到完整Pitch Deck只需几分钟。",
-    business_model: "按次收费 + 订阅制",
-    target_user: "早期创业者",
-    stage: "已上线",
-    recent_update: "刚刚 · 模板优化完成，生成成功率提升到92%",
-    key_metric: "生成成功率92%",
+    cardId: "7451c54f",
+    title: "北极星协作",
+    audience: "早期 SaaS 团队",
+    input: "帮早期 SaaS 团队把客户反馈、当前验证状态和下一步动作收进一个共享工作区，让潜在客户和投资人能快速判断这个产品现在值不值得继续跟进。",
+    summary: "让外部人用几分钟就能判断一个早期 SaaS 项目现在值不值得继续跟进。",
+    scenario: "发给投资人或潜在客户，对方会立刻知道你验证到了哪一步。",
   },
   {
-    id: "2",
-    title: "LegalFlow",
-    one_liner: "AI自动生成标准合同",
-    description: "为中小企业提供低成本、可定制的法律合同生成服务，降低对律师的依赖。",
-    business_model: "按合同生成收费",
-    target_user: "中小企业",
-    stage: "测试中",
-    recent_update: "2天前 · 上线合同模板库第一版",
-    key_metric: "生成时间小于30秒",
+    cardId: "9c28454f",
+    title: "画境工作室",
+    audience: "国风游戏美术团队",
+    input: "给国风游戏美术团队做一个 AI 绘画工作台，让制作人不用看长文档也能快速判断这套风格方案是否适合当前项目。",
+    summary: "让游戏制作团队先看懂风格方向和合作价值，再决定要不要继续推进合作。",
+    scenario: "发给制作人或外包合作方，对方能一眼判断风格和合作切入点。",
   },
   {
-    id: "3",
-    title: "FounderOS",
-    one_liner: "一人创业操作系统",
-    description: "整合项目管理、融资和用户反馈的一体化工具，专为独立创业者设计。",
-    business_model: "SaaS订阅",
-    target_user: "独立开发者",
-    stage: "构思阶段",
-    recent_update: "3天前 · 完成产品结构设计",
-    key_metric: "暂无",
-  },
-  {
-    id: "4",
-    title: "ComputeX",
-    one_liner: "AI算力匹配平台",
-    description: "连接算力供需双方，动态匹配训练与推理需求，帮助企业降低成本。",
-    business_model: "撮合佣金 + 企业订阅",
-    target_user: "AI公司",
-    stage: "开发中",
-    recent_update: "1天前 · 已接入第3家算力供应商",
-    key_metric: "成本降低40%",
-  },
-  {
-    id: "5",
-    title: "InsightFeed",
-    one_liner: "结构化行业研究流",
-    description: "通过AI整理碎片信息，输出可直接用于决策的结构化行业洞察。",
-    business_model: "订阅制 + 数据服务",
-    target_user: "投资人",
-    stage: "已上线",
-    recent_update: "刚刚 · 日活用户突破500",
-    key_metric: "留存率35%",
-  },
-  {
-    id: "6",
-    title: "CreatorGraph",
-    one_liner: "创作者关系网络图谱",
-    description: "帮助品牌和MCN快速找到合适创作者，建立更高效的合作关系。",
-    business_model: "撮合佣金",
-    target_user: "MCN机构",
-    stage: "原型阶段",
-    recent_update: "4天前 · 完成关系图谱模型设计",
-    key_metric: "暂无",
-  },
-  {
-    id: "7",
-    title: "FactoryMind",
-    one_liner: "工厂AI质量监控系统",
-    description: "通过实时数据分析与预测模型，降低生产过程中的质量波动风险。",
-    business_model: "企业SaaS + 定制部署",
-    target_user: "制造企业",
-    stage: "试点中",
-    recent_update: "2天前 · 完成第一家工厂试点部署",
-    key_metric: "良率提升15%",
-  },
-  {
-    id: "8",
-    title: "FundSignal",
-    one_liner: "VC投资信号捕捉工具",
-    description: "通过数据分析识别潜在融资机会，帮助投资人提高决策效率。",
-    business_model: "订阅制",
-    target_user: "投资人",
-    stage: "已上线",
-    recent_update: "刚刚 · 覆盖项目数量突破200个",
-    key_metric: "信号准确率68%",
+    cardId: "c36ea7f2",
+    title: "合同快线",
+    audience: "中小企业法务负责人",
+    input: "做一个帮助中小企业快速生成标准合同初稿的服务，让法务负责人在第一次看到时就知道这套方案能不能缩短签约流程。",
+    summary: "让法务负责人快速判断这套合同服务能不能缩短签约流程和沟通成本。",
+    scenario: "发给企业法务或创始人，对方会立刻知道适不适合进入试用。",
   },
 ];
+
+function getCarouselOffset(index: number, activeIndex: number, total: number) {
+  let offset = index - activeIndex;
+  const midpoint = Math.floor(total / 2);
+  if (offset > midpoint) offset -= total;
+  if (offset < -midpoint) offset += total;
+  return offset;
+}
+
+function HeroPoster({
+  titleLines,
+  subtitle,
+  socialProof,
+  promptBar,
+}: {
+  titleLines: readonly [string, string, string];
+  subtitle: string;
+  socialProof: string;
+  promptBar: ReactNode;
+}) {
+  const title = Array.isArray(titleLines) ? titleLines.join("") : String(titleLines);
+
+  return (
+    <section className="landing-reset-hero" data-landing-hero-poster>
+      <header className="landing-reset-brandbar">
+        <div className="landing-reset-brandlockup">
+          <span className="landing-reset-brand">OnePitch</span>
+          <span className="landing-reset-brand-sub">· 一眼项目</span>
+        </div>
+      </header>
+
+      <div className="landing-reset-hero-copy">
+        <p className="landing-reset-overline">Shareable project object</p>
+        <h1 className="landing-reset-title" suppressHydrationWarning>
+          {title}
+        </h1>
+        <p className="landing-reset-subtitle">{subtitle}</p>
+        {promptBar}
+        <p className="landing-reset-proof">{socialProof}</p>
+      </div>
+    </section>
+  );
+}
+
+function PromptBar({
+  value,
+  onChange,
+  onSubmit,
+  onFocus,
+  onBlur,
+  state,
+  loading,
+  error,
+  hint,
+  emptyHint,
+  onHintClick,
+  inputRef,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: (event: FormEvent) => void;
+  onFocus: () => void;
+  onBlur: () => void;
+  state: PromptBarState;
+  loading: boolean;
+  error: string;
+  hint: string;
+  emptyHint: string;
+  onHintClick: () => void;
+  inputRef: React.RefObject<HTMLTextAreaElement | null>;
+  placeholder: string;
+}) {
+  return (
+    <form className="landing-prompt-bar" data-prompt-bar data-state={state} onSubmit={onSubmit}>
+      <div className="landing-prompt-shell">
+        <textarea
+          ref={inputRef}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onFocus={onFocus}
+          onBlur={onBlur}
+          placeholder={placeholder}
+          className="landing-prompt-input"
+          maxLength={300}
+          rows={3}
+          aria-label="项目一句话输入"
+        />
+        <button type="submit" className="landing-prompt-submit" disabled={loading || !value.trim()}>
+          {loading ? "正在生成项目卡..." : "生成项目卡"}
+        </button>
+      </div>
+      <div className="landing-prompt-support">
+        <button type="button" className="landing-prompt-hint" onClick={onHintClick}>
+          {hint}
+        </button>
+        <span className="landing-prompt-count">{value.length}/300</span>
+      </div>
+      {!error && !value.trim() ? <p className="landing-prompt-empty-hint">{emptyHint}</p> : null}
+      {error ? <p className="landing-prompt-error">{error}</p> : null}
+    </form>
+  );
+}
+
+function ExampleObjectCard({
+  example,
+  selected,
+  position,
+  offset,
+  onSelect,
+  onGenerate,
+}: {
+  example: ExampleCard;
+  selected: boolean;
+  position: "center" | "left" | "right";
+  offset: number;
+  onSelect: () => void;
+  onGenerate: () => void;
+}) {
+  const preview = !selected;
+  return (
+    <article
+      className="landing-example-object"
+      data-showcase-card
+      data-state={selected ? "selected" : "rest"}
+      data-density={selected ? "full" : "preview"}
+      data-position={position}
+      style={{ ["--showcase-offset" as string]: String(offset) }}
+      onClick={selected ? undefined : onSelect}
+      tabIndex={selected ? 0 : -1}
+    >
+      <div className="landing-example-object-inner">
+        <div className="landing-example-copy">
+          <p className="landing-example-summary">{example.summary}</p>
+          <p className="landing-example-meta">
+            {example.title} · 面向 {example.audience}
+          </p>
+          {!preview ? <p className="landing-example-scenario">{example.scenario}</p> : null}
+        </div>
+        {!preview ? (
+          <div className="landing-example-actions">
+            <button
+              type="button"
+              className="landing-example-primary"
+              onClick={(event) => {
+                event.stopPropagation();
+                onGenerate();
+              }}
+            >
+              用一句话生成我的项目卡
+            </button>
+            <Link
+              href={`/card/${example.cardId}?from=landing-example`}
+              className="landing-example-link"
+              onClick={(event) => event.stopPropagation()}
+            >
+              查看项目卡
+            </Link>
+          </div>
+        ) : (
+          <p className="landing-example-preview-note">示例预览</p>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function ShowcaseCarousel({
+  title,
+  subtitle,
+  examples,
+  activeIndex,
+  onCycle,
+  onSelect,
+  onGenerate,
+  onKeyDown,
+  onPointerDown,
+  onPointerUp,
+}: {
+  title: string;
+  subtitle: string;
+  examples: ExampleCard[];
+  activeIndex: number;
+  onCycle: (direction: 1 | -1) => void;
+  onSelect: (index: number) => void;
+  onGenerate: (example: ExampleCard) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+  onPointerDown: (event: PointerEvent<HTMLElement>) => void;
+  onPointerUp: (event: PointerEvent<HTMLElement>) => void;
+}) {
+  return (
+    <section
+      className="landing-showcase-carousel"
+      aria-label="示例项目轮播区"
+      tabIndex={0}
+      onKeyDown={onKeyDown}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+    >
+      <div className="landing-showcase-head">
+        <div>
+          <p className="landing-showcase-kicker">Result showcase</p>
+          <h2 className="landing-showcase-title">{title}</h2>
+          <p className="landing-showcase-subtitle">{subtitle}</p>
+        </div>
+        <div className="landing-showcase-controls" aria-label="showcase controls">
+          <button type="button" className="landing-showcase-control" onClick={() => onCycle(-1)} aria-label="查看上一个案例">
+            ←
+          </button>
+          <button type="button" className="landing-showcase-control landing-showcase-control--active" onClick={() => onCycle(1)} aria-label="查看下一个案例">
+            →
+          </button>
+        </div>
+      </div>
+      <div className="landing-showcase-stage">
+        {examples.map((example, index) => {
+          const offset = getCarouselOffset(index, activeIndex, examples.length);
+          const position = offset === 0 ? "center" : offset < 0 ? "left" : "right";
+          return (
+            <ExampleObjectCard
+              key={example.cardId}
+              example={example}
+              selected={offset === 0}
+              position={position}
+              offset={offset}
+              onSelect={() => onSelect(index)}
+              onGenerate={() => onGenerate(example)}
+            />
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function NarrativeRail({
+  title,
+  lead,
+  items,
+}: {
+  title: string;
+  lead: string;
+  items: readonly { title: string; desc: string }[];
+}) {
+  return (
+    <section className="landing-narrative-rail" data-narrative-rail>
+      <div className="landing-narrative-intro">
+        <p className="landing-narrative-kicker">Usage framing</p>
+        <h2 className="landing-narrative-title">{title}</h2>
+        <p className="landing-narrative-lead">{lead}</p>
+      </div>
+      <div className="landing-narrative-track">
+        {items.map((item, index) => (
+          <article key={item.title} className="landing-narrative-step">
+            <div className="landing-narrative-node">{String(index + 1).padStart(2, "0")}</div>
+            <div className="landing-narrative-step-copy">
+              <h3 className="landing-narrative-step-title">{item.title}</h3>
+              <p className="landing-narrative-step-text">{item.desc}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 export default function LandingPage() {
   const t = copyZh.landing;
   const router = useRouter();
-  const mainRef = useRef<HTMLElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const dragStartRef = useRef<number | null>(null);
 
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [loginOpen, setLoginOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -130,14 +335,14 @@ export default function LandingPage() {
   const [authStep, setAuthStep] = useState<"email" | "code">("email");
   const [debugCode, setDebugCode] = useState("");
   const [resendCooldown, setResendCooldown] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const showcaseCards = LANDING_USECASES;
-  const [activeShowcaseIndex, setActiveShowcaseIndex] = useState(0);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState("");
   const [nextPathRaw, setNextPathRaw] = useState("");
   const [reasonRaw, setReasonRaw] = useState("");
-  const showcaseTrackRef = useRef<HTMLDivElement | null>(null);
-  const showcaseCardRefs = useRef<Array<HTMLElement | null>>([]);
+  const [ctaToken, setCtaToken] = useState("");
+  const [promptFocused, setPromptFocused] = useState(false);
+  const [activeExampleIndex, setActiveExampleIndex] = useState(0);
+
   const nextPath = useMemo(() => {
     const candidate = nextPathRaw.trim();
     if (!candidate) return "/library";
@@ -145,23 +350,25 @@ export default function LandingPage() {
     return candidate;
   }, [nextPathRaw]);
 
+  const activeExample = EXAMPLES[activeExampleIndex] ?? EXAMPLES[0];
+  const promptState: PromptBarState = loading ? "submitting" : promptFocused ? "focused" : input.trim() ? "typing" : error ? "failed" : "idle";
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const query = new URLSearchParams(window.location.search);
     setNextPathRaw(query.get("next") || "");
     setReasonRaw((query.get("reason") || "").trim());
+    setCtaToken(query.get("cta_token") || "");
   }, []);
 
   useEffect(() => {
-    if (nextPathRaw) {
-      setLoginOpen(true);
-    }
+    if (nextPathRaw) setLoginOpen(true);
   }, [nextPathRaw]);
 
   useEffect(() => {
     if (!reasonRaw) return;
     const message = getApiErrorMessage({ error: reasonRaw, message: "" }, t.loginFailed);
-    setError(message);
+    setAuthError(message);
     setLoginOpen(true);
     toast.error(message);
   }, [reasonRaw, t.loginFailed]);
@@ -174,99 +381,83 @@ export default function LandingPage() {
     return () => window.clearInterval(timer);
   }, [authStep, resendCooldown]);
 
-  const getShowcaseItems = useCallback(() => showcaseCardRefs.current.filter(Boolean) as HTMLElement[], []);
+  function fillExample(example: ExampleCard) {
+    setInput(example.input);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.setTimeout(() => composerRef.current?.focus(), 220);
+  }
 
-  const syncShowcaseIndex = useCallback(() => {
-    const track = showcaseTrackRef.current;
-    const items = getShowcaseItems();
-    if (!track || items.length === 0) return;
-    const viewportCenter = track.scrollLeft + track.clientWidth / 2;
-    let nearest = 0;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    items.forEach((item, index) => {
-      const center = item.offsetLeft + item.offsetWidth / 2;
-      const distance = Math.abs(center - viewportCenter);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearest = index;
+  function selectExample(index: number) {
+    setActiveExampleIndex((index + EXAMPLES.length) % EXAMPLES.length);
+  }
+
+  function cycleExample(direction: 1 | -1) {
+    setActiveExampleIndex((current) => (current + direction + EXAMPLES.length) % EXAMPLES.length);
+  }
+
+  function handleShowcaseKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      cycleExample(-1);
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      cycleExample(1);
+    }
+  }
+
+  function handleShowcasePointerDown(event: PointerEvent<HTMLElement>) {
+    dragStartRef.current = event.clientX;
+  }
+
+  function handleShowcasePointerUp(event: PointerEvent<HTMLElement>) {
+    if (dragStartRef.current === null) return;
+    const delta = event.clientX - dragStartRef.current;
+    dragStartRef.current = null;
+    if (Math.abs(delta) < 40) return;
+    cycleExample(delta < 0 ? 1 : -1);
+  }
+
+  async function handleGenerate(event: FormEvent) {
+    event.preventDefault();
+    if (!input.trim() || loading) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetchWithTimeout(
+        "/api/cards/generate",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            raw_input: input.trim(),
+            optional_title: "",
+            cta_token: ctaToken,
+            request_id: createRequestId("card"),
+          }),
+        },
+        60_000,
+      );
+      if (!res.ok) {
+        const failure = await resolveApiError(res, "生成失败，请稍后重试。");
+        setError(failure.message);
+        toast.error(failure.message);
+        return;
       }
-    });
-    setActiveShowcaseIndex(nearest);
-  }, [getShowcaseItems]);
-
-  const scrollToShowcaseIndex = useCallback(
-    (index: number) => {
-      const items = getShowcaseItems();
-      if (!items.length) return;
-      const safeIndex = Math.max(0, Math.min(index, items.length - 1));
-      const target = items[safeIndex];
-      target.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
-      setActiveShowcaseIndex(safeIndex);
-    },
-    [getShowcaseItems]
-  );
-
-  const onShowcaseStep = useCallback(
-    (direction: -1 | 1) => {
-      const items = getShowcaseItems();
-      if (!items.length) return;
-      scrollToShowcaseIndex(activeShowcaseIndex + direction);
-    },
-    [activeShowcaseIndex, getShowcaseItems, scrollToShowcaseIndex]
-  );
-
-  useEffect(() => {
-    const track = showcaseTrackRef.current;
-    if (!track) return;
-    let rafId = 0;
-    const onScroll = () => {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(syncShowcaseIndex);
-    };
-    onScroll();
-    track.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      cancelAnimationFrame(rafId);
-      track.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-    };
-  }, [syncShowcaseIndex]);
-
-  useEffect(() => {
-    const nodes = document.querySelectorAll<HTMLElement>("[data-reveal]");
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (!entry.isIntersecting) return;
-          entry.target.classList.add("is-visible");
-          observer.unobserve(entry.target);
-        });
-      },
-      { threshold: 0.18, rootMargin: "0px 0px -10% 0px" }
-    );
-    nodes.forEach((node) => observer.observe(node));
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const main = mainRef.current;
-    if (!main) return;
-
-    let rafId = 0;
-    const onScroll = () => {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        main.style.setProperty("--landing-parallax", `${Math.round(window.scrollY * 0.7)}px`);
-      });
-    };
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      cancelAnimationFrame(rafId);
-      window.removeEventListener("scroll", onScroll);
-    };
-  }, []);
+      const body = (await res.json()) as MutationResponse;
+      if (body.project?.id) {
+        saveLastGeneratedCardId(body.project.id);
+        router.push(`/card/${body.project.id}`);
+        return;
+      }
+      setError("生成结果异常，请稍后重试。");
+    } catch {
+      setError("服务暂时不可用，请稍后重试。");
+      toast.error("服务暂时不可用，请稍后重试。");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   function resetLoginFlow() {
     setCode("");
@@ -274,8 +465,8 @@ export default function LandingPage() {
     setAuthStep("email");
     setDebugCode("");
     setResendCooldown(0);
-    setError("");
-    setLoading(false);
+    setAuthError("");
+    setAuthLoading(false);
   }
 
   async function requestLoginCode(targetEmail: string): Promise<boolean> {
@@ -286,11 +477,11 @@ export default function LandingPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: targetEmail }),
       },
-      10_000,
+      30_000,
     );
     if (!res.ok) {
       const failure = await resolveApiError(res, t.loginFailed);
-      setError(failure.message);
+      setAuthError(failure.message);
       toast.error(failure.message);
       return false;
     }
@@ -302,44 +493,18 @@ export default function LandingPage() {
     return true;
   }
 
-  async function onResendCode() {
-    if (loading || resendCooldown > 0 || !email.trim()) return;
-    setLoading(true);
-    setError("");
-    try {
-      const ok = await requestLoginCode(email);
-      if (ok) {
-        toast.success(t.codeResentHint);
-      }
-    } catch {
-      setError(t.loginTimeout);
-      toast.error(t.loginTimeout);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function onLogin(event: FormEvent) {
+  async function handleLoginSubmit(event: FormEvent) {
     event.preventDefault();
-    setLoading(true);
-    setError("");
-
-    if (authStep === "email") {
-      try {
-        const ok = await requestLoginCode(email);
-        if (ok) {
-          toast.success(t.codeSentHint);
-        }
-      } catch {
-        setError(t.loginTimeout);
-        toast.error(t.loginTimeout);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
+    if (authLoading) return;
+    setAuthLoading(true);
+    setAuthError("");
     try {
+      if (authStep === "email") {
+        const ok = await requestLoginCode(email);
+        if (ok) toast.success(t.codeSentHint);
+        return;
+      }
+
       const res = await fetchWithTimeout(
         "/api/auth/login/verify",
         {
@@ -347,310 +512,160 @@ export default function LandingPage() {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email, challenge_id: challengeId, code }),
         },
-        10_000,
+        30_000,
       );
       if (!res.ok) {
         const failure = await resolveApiError(res, t.loginFailed);
-        setError(failure.message);
+        setAuthError(failure.message);
         toast.error(failure.message);
         return;
       }
-
       const body = (await res.json()) as AuthResponse;
-      saveEmail(body.user.email);
+      saveEmail(body.user?.email || email);
       setLoginOpen(false);
       resetLoginFlow();
       router.push(nextPath);
     } catch {
-      setError(t.loginTimeout);
+      setAuthError(t.loginTimeout);
       toast.error(t.loginTimeout);
     } finally {
-      setLoading(false);
+      setAuthLoading(false);
     }
   }
 
-  const guestLibraryHref = useMemo(() => "/library?mode=guest", []);
-  const canStepPrev = activeShowcaseIndex > 0;
-  const canStepNext = activeShowcaseIndex < showcaseCards.length - 1;
+  async function onResendCode() {
+    if (authLoading || resendCooldown > 0 || !email.trim()) return;
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const ok = await requestLoginCode(email);
+      if (ok) toast.success(t.codeResentHint);
+    } catch {
+      setAuthError(t.loginTimeout);
+      toast.error(t.loginTimeout);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
 
   return (
-    <main ref={mainRef} className="landing-premium min-h-screen px-6 py-7 sm:px-8 sm:py-9">
-      <div className="mx-auto w-full max-w-6xl space-y-14 sm:space-y-16 lg:space-y-[72px]">
-        <header className="landing-nav">
-          <div className="flex items-center gap-2">
-            <p className="landing-brand">OneFile</p>
-            <span className="landing-brand-sub">· 一人档</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <a href="#landing-showcase" className="landing-mini-link">
-              浏览案例
-            </a>
-            <Button variant="ghost" className="landing-secondary-btn h-10 px-5" onClick={() => setLoginOpen(true)}>
-              开始使用 →
-            </Button>
-          </div>
-        </header>
+    <main className="landing-reset-page">
+      <div className="landing-reset-backdrop" aria-hidden="true" />
+      <div className="landing-reset-stack">
+        <HeroPoster
+          titleLines={t.heroTitleLines as [string, string, string]}
+          subtitle={t.heroSubtitle}
+          socialProof={t.socialProof}
+          promptBar={
+            <PromptBar
+              value={input}
+              onChange={setInput}
+              onSubmit={handleGenerate}
+              onFocus={() => setPromptFocused(true)}
+              onBlur={() => setPromptFocused(false)}
+              state={promptState}
+              loading={loading}
+              error={error}
+              hint={t.promptHint}
+              emptyHint={t.promptEmptyHint}
+              onHintClick={() => fillExample(activeExample)}
+              inputRef={composerRef}
+              placeholder={t.promptPlaceholder}
+            />
+          }
+        />
 
-        <section className="landing-hero" data-reveal>
-          <div>
-            <h1 className="landing-hero-title">把想法变成可演化的OPC项目资产</h1>
-            <p className="landing-hero-subtitle">一人公司 / 早期创业者专属，把零散灵感沉淀成可展示、可持续更新的项目档案。</p>
-            <p className="landing-proof">已服务 50+ OPC 项目</p>
-          </div>
-          <aside className="landing-hero-panel landing-surface">
-            <p className="landing-panel-title">从一个邮箱开始，进入你的项目空间</p>
-            <p className="landing-panel-text">统一创建、更新、分享，形成可演化的项目记录闭环。</p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Button className="landing-cta-btn h-11 px-6" onClick={() => setLoginOpen(true)}>
-                开始使用 →
-              </Button>
-              <Button variant="ghost" className="landing-secondary-btn h-11 px-5" onClick={() => router.push(guestLibraryHref)}>
-                浏览公开项目
-              </Button>
-            </div>
-          </aside>
-        </section>
+        <ShowcaseCarousel
+          title={t.exampleTitle}
+          subtitle={t.exampleSubtitle}
+          examples={EXAMPLES}
+          activeIndex={activeExampleIndex}
+          onCycle={cycleExample}
+          onSelect={selectExample}
+          onGenerate={fillExample}
+          onKeyDown={handleShowcaseKeyDown}
+          onPointerDown={handleShowcasePointerDown}
+          onPointerUp={handleShowcasePointerUp}
+        />
 
-        <section data-reveal>
-          <h2 className="landing-section-title">核心价值</h2>
-          <div className="landing-value-grid">
-            <article className="landing-card">
-              <FileTextIcon className="landing-icon" />
-              <h3 className="landing-card-title">结构化表达</h3>
-              <p className="landing-card-text">OPC 标准 Schema 拆解，让项目目标、用户、商业模式一眼可读。</p>
-            </article>
-            <article className="landing-card">
-              <RefreshCwIcon className="landing-icon" />
-              <h3 className="landing-card-title">持续演化</h3>
-              <p className="landing-card-text">更新自动沉淀到时间线，项目变化路径可追溯、可回放。</p>
-            </article>
-            <article className="landing-card">
-              <Share2Icon className="landing-icon" />
-              <h3 className="landing-card-title">传播回流</h3>
-              <p className="landing-card-text">分享即形成增长闭环，把外部访问转化为新的项目创建。</p>
-            </article>
-          </div>
-        </section>
+        <NarrativeRail title={t.valueTitle} lead={t.valueLead} items={t.valueItems} />
 
-        <section id="landing-showcase" data-reveal>
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="landing-section-title">{t.exampleTitle}</h2>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                className="landing-showcase-nav-btn"
-                onClick={() => onShowcaseStep(-1)}
-                disabled={!canStepPrev}
-                aria-label={t.showcasePrevAria}
-              >
-                ←
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="landing-showcase-nav-btn"
-                onClick={() => onShowcaseStep(1)}
-                disabled={!canStepNext}
-                aria-label={t.showcaseNextAria}
-              >
-                →
-              </Button>
-            </div>
+        <section className="landing-reset-final-cta">
+          <div className="landing-reset-final-copy">
+            <p className="landing-reset-final-kicker">Ready to send</p>
+            <h2 className="landing-reset-final-title">{t.ctaTitle}</h2>
+            <p className="landing-reset-final-text">{t.ctaDesc}</p>
           </div>
-          <div className="landing-showcase-track-wrap">
-            <div
-              ref={showcaseTrackRef}
-              className="landing-showcase-track"
-              tabIndex={0}
-              aria-label={t.showcaseTrackAria}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowRight") {
-                  event.preventDefault();
-                  onShowcaseStep(1);
-                } else if (event.key === "ArrowLeft") {
-                  event.preventDefault();
-                  onShowcaseStep(-1);
-                }
-              }}
-            >
-              {showcaseCards.map((card, index) => (
-                <article
-                  key={card.id}
-                  className="landing-card landing-showcase-card landing-showcase-item"
-                  ref={(node) => {
-                    showcaseCardRefs.current[index] = node;
-                  }}
-                >
-                  <Link
-                    href={guestLibraryHref}
-                    className="landing-showcase-card-link"
-                    aria-label={`${t.showcaseOpenAriaPrefix}：${card.title}`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h3 className="landing-card-title">{card.title}</h3>
-                        <p className="landing-card-text mt-1">{card.one_liner}</p>
-                      </div>
-                      <span className="landing-update-tag">{card.stage}</span>
-                    </div>
-                    <p className="landing-card-text">{card.description}</p>
-                    <div className="landing-showcase-meta">
-                      <p className="landing-card-text">
-                        <span className="font-medium">目标用户：</span>
-                        {card.target_user}
-                      </p>
-                      <p className="landing-card-text">
-                        <span className="font-medium">商业模式：</span>
-                        {card.business_model}
-                      </p>
-                    </div>
-                    <p className="landing-card-text">
-                      <span className="font-medium">最近进展：</span>
-                      {card.recent_update}
-                    </p>
-                    <p className="landing-card-text">
-                      <span className="font-medium">关键指标：</span>
-                      {card.key_metric}
-                    </p>
-                  </Link>
-                </article>
-              ))}
-            </div>
-            <div className="landing-showcase-edge left" aria-hidden />
-            <div className="landing-showcase-edge right" aria-hidden />
-          </div>
-          <div className="landing-showcase-dots" aria-label="案例位置指示">
-            {showcaseCards.map((item, index) => (
-              <button
-                key={`dot-${item.id}`}
-                type="button"
-                className={`landing-showcase-dot ${index === activeShowcaseIndex ? "is-active" : ""}`}
-                aria-label={t.showcaseDotAria(index + 1)}
-                onClick={() => scrollToShowcaseIndex(index)}
-              />
-            ))}
+          <div className="landing-reset-final-actions">
+            <button type="button" className="landing-final-primary" onClick={() => composerRef.current?.focus()}>
+              现在生成一张项目卡
+            </button>
+            <button type="button" className="landing-final-link" onClick={() => setLoginOpen(true)}>
+              登录后继续编辑
+            </button>
           </div>
         </section>
 
-        <section data-reveal>
-          <h2 className="landing-section-title">三步流程</h2>
-          <div className="landing-flow-shell">
-            <article className="landing-flow-item">
-              <PenLineIcon className="landing-icon" />
-              <h3 className="landing-card-title">输入想法</h3>
-              <p className="landing-card-text">自然语言描述项目方向和当前阶段。</p>
-            </article>
-            <WaypointsIcon className="landing-flow-arrow" />
-            <article className="landing-flow-item">
-              <SparklesIcon className="landing-icon" />
-              <h3 className="landing-card-title">AI结构化</h3>
-              <p className="landing-card-text">自动生成标准 OPC 档案并给出下一步建议。</p>
-            </article>
-            <WaypointsIcon className="landing-flow-arrow" />
-            <article className="landing-flow-item">
-              <Share2Icon className="landing-icon" />
-              <h3 className="landing-card-title">分享迭代</h3>
-              <p className="landing-card-text">对外分享并持续更新，形成可验证的增长路径。</p>
-            </article>
-          </div>
-        </section>
-
-        <section className="landing-bottom-cta landing-surface" data-reveal>
-          <p className="landing-bottom-title">开启你的 OPC 标准化项目记录</p>
-          <Button className="landing-cta-btn h-11 px-7" onClick={() => setLoginOpen(true)}>
-            开始使用 →
-          </Button>
-        </section>
-
-        <footer className="landing-footer">
-          <p>© 2026 OneFile · 一人档</p>
-          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-            <a href="mailto:hello@onefile.app" className="landing-mini-link">
-              商务合作：hello@onefile.app
-            </a>
-            <span className="text-slate-300">|</span>
-            <a href="/privacy" className="landing-mini-link">
-              隐私政策
-            </a>
-            <span className="text-slate-300">|</span>
-            <a href="/terms" className="landing-mini-link">
-              用户协议
-            </a>
+        <footer className="landing-reset-footer">
+          <span className="landing-reset-footer-brand">OnePitch · 一眼项目</span>
+          <div className="landing-reset-footer-links">
+            <button type="button" className="landing-reset-footer-link" onClick={() => router.push("/library")}>
+              查看项目库
+            </button>
+            <Link href="/privacy" className="landing-reset-footer-link">
+              隐私
+            </Link>
+            <Link href="/terms" className="landing-reset-footer-link">
+              条款
+            </Link>
           </div>
         </footer>
       </div>
 
       <Dialog
         open={loginOpen}
-        onOpenChange={(next) => {
-          setLoginOpen(next);
-          if (!next) {
-            resetLoginFlow();
-          }
+        onOpenChange={(open) => {
+          setLoginOpen(open);
+          if (!open) resetLoginFlow();
         }}
       >
-        <DialogContent className="landing-login-modal max-w-md border-0 bg-white p-6 shadow-xl">
+        <DialogContent className="auth-dialog-sheet data-[open]:auth-dialog-sheet border-white/12 bg-[var(--bg-surface-2)] text-[var(--text-primary)] sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-xl text-slate-800">开始使用 OneFile</DialogTitle>
-            <DialogDescription className="text-slate-500">输入邮箱，立即进入你的项目库并创建第一份档案。</DialogDescription>
+            <DialogTitle>登录后继续编辑</DialogTitle>
+            <DialogDescription>生成和分享不需要登录，只有认领和编辑才需要。</DialogDescription>
           </DialogHeader>
-          <form onSubmit={onLogin} className="space-y-3">
+          <form className="space-y-4" onSubmit={handleLoginSubmit}>
             <Input
               type="email"
-              placeholder={t.emailPlaceholder}
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              required
-              className="h-11 border-slate-200 bg-white text-slate-800 focus-visible:ring-[3px] focus-visible:ring-blue-500/30"
+              placeholder={t.emailPlaceholder}
+              className="field-input h-12"
             />
             {authStep === "code" ? (
               <Input
-                type="text"
-                inputMode="numeric"
-                placeholder={t.codePlaceholder}
                 value={code}
-                onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                required
-                className="h-11 border-slate-200 bg-white text-slate-800 focus-visible:ring-[3px] focus-visible:ring-blue-500/30"
+                onChange={(event) => setCode(event.target.value)}
+                placeholder={t.codePlaceholder}
+                className="field-input h-12"
               />
             ) : null}
-            <Button type="submit" className="landing-cta-btn h-11 w-full" disabled={loading}>
-              {loading ? (authStep === "email" ? t.sendingCode : t.verifyingCode) : authStep === "email" ? t.sendCode : t.verifyCode}
+            {debugCode ? <p className="text-xs content-caption">{t.debugCodeHint} {debugCode}</p> : null}
+            {authError ? <p className="text-sm text-red-500">{authError}</p> : null}
+            <Button type="submit" className="action-primary-btn h-11 w-full" disabled={authLoading}>
+              {authLoading ? (authStep === "email" ? t.sendingCode : t.verifyingCode) : authStep === "email" ? t.sendCode : t.verifyCode}
             </Button>
-            {authStep === "code" ? <p className="text-xs text-slate-500">{t.codeSentHint}</p> : null}
             {authStep === "code" ? (
-              <p className="text-xs text-slate-500">
-                {resendCooldown > 0 ? t.resendIn(resendCooldown) : t.resendReady}
-              </p>
-            ) : null}
-            {authStep === "code" && debugCode ? (
-              <p className="text-xs text-slate-500">
-                {t.debugCodeHint}
-                <span className="ml-1 font-semibold text-slate-700">{debugCode}</span>
-              </p>
-            ) : null}
-            {authStep === "code" ? (
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="landing-secondary-btn h-10 w-full"
-                  onClick={onResendCode}
-                  disabled={loading || resendCooldown > 0}
-                >
-                  {t.resendCode}
-                </Button>
-                <Button type="button" variant="ghost" className="landing-secondary-btn h-10 w-full" onClick={resetLoginFlow}>
+              <div className="flex items-center justify-between text-sm">
+                <button type="button" className="inline-nav-link" onClick={onResendCode} disabled={resendCooldown > 0 || authLoading}>
+                  {resendCooldown > 0 ? t.resendIn(resendCooldown) : t.resendCode}
+                </button>
+                <button type="button" className="inline-nav-link" onClick={resetLoginFlow}>
                   {t.switchEmail}
-                </Button>
+                </button>
               </div>
             ) : null}
-            {error ? <p className="text-sm text-red-500">{error}</p> : null}
           </form>
-          <Button variant="ghost" className="landing-secondary-btn h-10 w-full" onClick={() => router.push(guestLibraryHref)}>
-            先浏览公开项目
-          </Button>
         </DialogContent>
       </Dialog>
     </main>

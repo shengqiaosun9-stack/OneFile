@@ -12,6 +12,7 @@ import { buildLoginRedirectPath, currentPathWithQuery } from "@/lib/auth-redirec
 import { copyZh } from "@/lib/copy-zh";
 import { resolveApiError } from "@/lib/error-zh";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
+import { createRequestId } from "@/lib/request-id";
 import { saveEmail } from "@/lib/session";
 import type { AuthMeResponse, BpExtractResponse, MutationResponse, OneFileProject } from "@/lib/types";
 
@@ -121,6 +122,7 @@ export default function NewProjectPage() {
   const [draft, setDraft] = useState<DraftFields | null>(null);
   const [savedDraft, setSavedDraft] = useState<DraftFields | null>(null);
   const [savingField, setSavingField] = useState<EditableField | "">("");
+  const [savedField, setSavedField] = useState<EditableField | "">("");
   const [activeEditableField, setActiveEditableField] = useState<EditableField | "">("");
   const [firstClickHintSeen, setFirstClickHintSeen] = useState(false);
 
@@ -130,7 +132,7 @@ export default function NewProjectPage() {
       setAuthReady(false);
       setAuthProbeError("");
       try {
-        const meRes = await fetchWithTimeout("/api/auth/me", { cache: "no-store" }, 10_000);
+        const meRes = await fetchWithTimeout("/api/auth/me", { cache: "no-store" }, 30_000);
         if (!meRes.ok) {
           setAuthReady(true);
           return;
@@ -176,7 +178,7 @@ export default function NewProjectPage() {
           method: "POST",
           body: formData,
         },
-        12_000,
+        60_000,
       );
       if (!res.ok) {
         const failure = await resolveApiError(res, t.uploadFailed);
@@ -250,9 +252,10 @@ export default function NewProjectPage() {
             optional_title: inferOptionalTitle(rawInput),
             file_text: supplementalText,
             cta_token: ctaToken,
+            request_id: createRequestId("generate"),
           }),
         },
-        15_000,
+        60_000,
       );
 
       if (!res.ok) {
@@ -273,6 +276,9 @@ export default function NewProjectPage() {
         const warningMessage = body.warning || t.fallbackWarning;
         setWarning(warningMessage);
         toast.warning(warningMessage);
+      }
+      if (body.idempotent_replay) {
+        toast.message("重复提交已合并，已返回上一次成功结果。");
       }
       const nextDraft = projectToDraft(body.project);
       setDraft(nextDraft);
@@ -310,7 +316,7 @@ export default function NewProjectPage() {
           headers: { "content-type": "application/json" },
           body: JSON.stringify(payload),
         },
-        12_000,
+        45_000,
       );
       if (!res.ok) {
         const failure = await resolveApiError(res, t.saveFailed);
@@ -328,6 +334,10 @@ export default function NewProjectPage() {
       const nextDraft = projectToDraft(body.project);
       setDraft(nextDraft);
       setSavedDraft(nextDraft);
+      setSavedField(field);
+      window.setTimeout(() => {
+        setSavedField((current) => (current === field ? "" : current));
+      }, 1600);
     } catch {
       setError(t.saveFailed);
       toast.error(t.saveFailed);
@@ -343,6 +353,7 @@ export default function NewProjectPage() {
 
   function activateField(field: EditableField) {
     if (field === "title") setFirstClickHintSeen(true);
+    setSavedField("");
     setActiveEditableField(field);
   }
 
@@ -380,7 +391,7 @@ export default function NewProjectPage() {
   async function copyShareLink() {
     if (!draft?.id || typeof window === "undefined") return;
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}/share/${draft.id}`);
+      await navigator.clipboard.writeText(`${window.location.origin}/card/${draft.id}`);
       toast.success(t.copied);
     } catch {
       toast.error(t.saveFailed);
@@ -391,18 +402,18 @@ export default function NewProjectPage() {
     const ctaToken = readCtaTokenFromUrl();
     const loginNext = ctaToken ? `/projects/new?cta_token=${encodeURIComponent(ctaToken)}` : "/projects/new";
     return (
-      <main className="landing-premium min-h-screen px-6 py-8 sm:px-8 sm:py-10">
+      <main className="app-shell app-shell--work min-h-screen px-6 py-8 sm:px-8 sm:py-10">
         <div className="mx-auto max-w-3xl space-y-6">
-          <section className="onefile-panel space-y-3 p-5 sm:p-6">
+          <section className="content-panel space-y-3 p-5 sm:p-6">
             <h1 className="text-xl font-semibold text-[var(--landing-title)]">{t.needLoginTitle}</h1>
-            <p className="text-sm onefile-subtle">{t.needLoginDesc}</p>
+            <p className="text-sm content-subtle">{t.needLoginDesc}</p>
             {authProbeError ? <p className="text-sm text-destructive">{authProbeError}</p> : null}
             {authProbeError ? (
-              <Button variant="ghost" className="landing-secondary-btn h-10 px-4" onClick={() => setAuthProbeTick((prev) => prev + 1)}>
+              <Button variant="ghost" className="action-secondary-btn h-10 px-4" onClick={() => setAuthProbeTick((prev) => prev + 1)}>
                 {t.retryAuthCheck}
               </Button>
             ) : null}
-            <Button className="landing-cta-btn h-10 px-5" onClick={() => router.push(`/?next=${encodeURIComponent(loginNext)}`)}>
+            <Button className="action-primary-btn h-10 px-5" onClick={() => router.push(`/?next=${encodeURIComponent(loginNext)}`)}>
               {t.goLogin}
             </Button>
           </section>
@@ -413,10 +424,10 @@ export default function NewProjectPage() {
 
   if (!authReady) {
     return (
-      <main className="landing-premium min-h-screen px-6 py-8 sm:px-8 sm:py-10">
+      <main className="app-shell app-shell--work min-h-screen px-6 py-8 sm:px-8 sm:py-10">
         <div className="mx-auto max-w-3xl">
-          <section className="onefile-panel p-5 sm:p-6">
-            <p className="text-sm onefile-subtle">{copyZh.common.loading}</p>
+          <section className="content-panel p-5 sm:p-6">
+            <p className="text-sm content-subtle">{copyZh.common.loading}</p>
           </section>
         </div>
       </main>
@@ -424,19 +435,19 @@ export default function NewProjectPage() {
   }
 
   return (
-    <main className="landing-premium min-h-screen px-6 py-8 sm:px-8 sm:py-10">
+    <main className="app-shell app-shell--work min-h-screen px-6 py-8 sm:px-8 sm:py-10">
       <div className="mx-auto max-w-4xl">
-        <section className="onefile-create-shell">
+        <section className="compose-shell">
           <header className="space-y-2 text-center">
-            <p className="text-xs uppercase tracking-[0.16em] text-[var(--landing-caption)]">OneFile</p>
-            <h1 className="onefile-create-title">{t.title}</h1>
-            <p className="onefile-create-subtitle">{viewState === "draft" ? t.draftSubtitle : t.subtitle}</p>
+            <p className="text-xs uppercase tracking-[0.16em] text-[var(--landing-caption)]">OnePitch · 一眼项目</p>
+            <h1 className="compose-title">{t.title}</h1>
+            <p className="compose-subtitle">{viewState === "draft" ? t.draftSubtitle : t.subtitle}</p>
           </header>
 
           {viewState !== "draft" ? (
-            <div className="onefile-create-composer">
+            <div className="compose-composer">
               <div
-                className={`onefile-create-textarea-wrap ${dragActive ? "is-drag-active" : ""}`}
+                className={`compose-textarea-wrap ${dragActive ? "is-drag-active" : ""}`}
                 onDragOver={(event) => {
                   event.preventDefault();
                   setDragActive(true);
@@ -455,7 +466,7 @@ export default function NewProjectPage() {
                 }}
               >
                 <Textarea
-                  className="onefile-create-textarea"
+                  className="compose-textarea"
                   placeholder={t.inputPlaceholder}
                   value={rawInput}
                   onChange={(event) => setRawInput(event.target.value)}
@@ -463,25 +474,25 @@ export default function NewProjectPage() {
                   rows={11}
                   disabled={viewState === "generating"}
                 />
-                <p className="onefile-create-shortcut">{t.shortcutHint}</p>
+                <p className="compose-shortcut">{t.shortcutHint}</p>
               </div>
 
-              <div className="onefile-create-actions">
+              <div className="compose-actions">
                 <div className="flex items-center gap-2">
                   <input ref={fileInputRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={onSelectBpFile} />
                   <Button
                     type="button"
                     variant="ghost"
-                    className="landing-secondary-btn h-9 px-3"
+                    className="action-secondary-btn h-9 px-3"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={bpParsing || viewState === "generating"}
                   >
                     {bpParsing ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Paperclip className="mr-1 h-3.5 w-3.5" />}
                     {t.addMaterial}
                   </Button>
-                  <p className="text-xs onefile-caption">{t.dropHint}</p>
+                  <p className="text-xs content-caption">{t.dropHint}</p>
                 </div>
-                <Button type="button" className="landing-cta-btn h-10 px-5" onClick={() => void submitGenerate()} disabled={!canGenerate}>
+                <Button type="button" className="action-primary-btn h-10 px-5" onClick={() => void submitGenerate()} disabled={!canGenerate}>
                   {viewState === "generating" ? t.generating : t.generate}
                 </Button>
               </div>
@@ -492,7 +503,7 @@ export default function NewProjectPage() {
                 </p>
               ) : null}
               {bpMetaText ? <p className="text-xs text-emerald-700">{bpMetaText}</p> : null}
-              {supplementalText ? <p className="text-xs onefile-caption">{t.uploadMergedHint}</p> : null}
+              {supplementalText ? <p className="text-xs content-caption">{t.uploadMergedHint}</p> : null}
             </div>
           ) : null}
 
@@ -508,7 +519,7 @@ export default function NewProjectPage() {
                   {activeEditableField === "title" ? (
                     <Input
                       autoFocus
-                      className="onefile-draft-input text-2xl font-semibold"
+                      className="editor-field-input text-2xl font-semibold"
                       value={draft.title}
                       onChange={(event) => updateDraftField("title", event.target.value)}
                       onBlur={() => {
@@ -535,7 +546,7 @@ export default function NewProjectPage() {
                 {activeEditableField === "what" ? (
                   <Textarea
                     autoFocus
-                    className="onefile-draft-input min-h-[112px]"
+                    className="editor-field-input min-h-[112px]"
                     value={draft.what}
                     onChange={(event) => updateDraftField("what", event.target.value)}
                     onBlur={() => {
@@ -556,7 +567,7 @@ export default function NewProjectPage() {
                 {activeEditableField === "monetization" ? (
                   <Textarea
                     autoFocus
-                    className="onefile-draft-input min-h-[92px]"
+                    className="editor-field-input min-h-[92px]"
                     value={draft.monetization}
                     onChange={(event) => updateDraftField("monetization", event.target.value)}
                     onBlur={() => {
@@ -577,7 +588,7 @@ export default function NewProjectPage() {
                 {activeEditableField === "currentState" ? (
                   <select
                     autoFocus
-                    className="onefile-draft-input h-11 rounded-lg px-3 text-sm"
+                    className="editor-field-input h-11 rounded-lg px-3 text-sm"
                     value={draft.currentState}
                     onChange={(event) => updateDraftField("currentState", event.target.value)}
                     onBlur={() => {
@@ -604,7 +615,7 @@ export default function NewProjectPage() {
                 {activeEditableField === "progress" ? (
                   <Input
                     autoFocus
-                    className="onefile-draft-input"
+                    className="editor-field-input"
                     value={draft.progress}
                     onChange={(event) => updateDraftField("progress", event.target.value)}
                     onBlur={() => {
@@ -628,7 +639,7 @@ export default function NewProjectPage() {
                 {activeEditableField === "keyMetric" ? (
                   <Input
                     autoFocus
-                    className="onefile-draft-input"
+                    className="editor-field-input"
                     value={draft.keyMetric}
                     onChange={(event) => updateDraftField("keyMetric", event.target.value)}
                     onBlur={() => {
@@ -644,19 +655,23 @@ export default function NewProjectPage() {
                 )}
               </article>
 
-              <div className="flex items-center justify-between gap-3 text-xs onefile-caption">
-                <span>{savingField ? t.generating : t.continueEditHint}</span>
+              <div className="flex items-center justify-between gap-3 text-xs content-caption">
+                <span>{savingField ? t.autoSaveSaving : savedField ? t.autoSaveSaved : t.continueEditHint}</span>
                 <span>{t.shareActionsHint}</span>
               </div>
 
               <div className="flex flex-wrap gap-2 pt-2">
-                <Button type="button" variant="ghost" className="landing-secondary-btn h-10 px-4" onClick={() => void copyShareLink()}>
+                <Button type="button" variant="ghost" className="action-secondary-btn h-10 px-4" onClick={() => void copyShareLink()}>
                   {t.copyShareLink}
                 </Button>
                 <Button
                   type="button"
-                  className="landing-cta-btn h-10 px-5"
-                  onClick={() => router.push(`/share/${draft.id}`)}
+                  className="action-primary-btn h-10 px-5"
+                  onClick={() =>
+                    router.push(
+                      `/card/${draft.id}?from=create-draft&return=${encodeURIComponent(`/edit/${draft.id}`)}`,
+                    )
+                  }
                 >
                   {t.previewSharePage}
                 </Button>

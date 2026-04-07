@@ -12,34 +12,120 @@ import { Textarea } from "@/components/ui/textarea";
 import { buildLoginRedirectPath, currentPathWithQuery } from "@/lib/auth-redirect";
 import { copyZh } from "@/lib/copy-zh";
 import { resolveApiError } from "@/lib/error-zh";
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
+import { createRequestId } from "@/lib/request-id";
 import type { AuthMeResponse, MutationResponse, OneFileProject } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-type EditableField = "title" | "summary" | "modelDesc" | "users" | "stage";
+type EditableField =
+  | "title"
+  | "summary"
+  | "problemStatement"
+  | "solutionApproach"
+  | "useCases"
+  | "modelDesc"
+  | "users"
+  | "stage"
+  | "formType"
+  | "businessModelType"
+  | "modelType";
 
 type DetailDraft = {
   title: string;
   summary: string;
+  problemStatement: string;
+  solutionApproach: string;
+  useCases: string;
   modelDesc: string;
   users: string;
   stage: string;
+  formType: string;
+  businessModelType: string;
+  modelType: string;
 };
+
+const FORM_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "AI_NATIVE_APP", label: "AI 原生应用" },
+  { value: "SAAS", label: "SaaS" },
+  { value: "API_SERVICE", label: "API 服务" },
+  { value: "AGENT", label: "智能体" },
+  { value: "MARKETPLACE", label: "交易市场" },
+  { value: "DATA_TOOL", label: "数据工具" },
+  { value: "INFRASTRUCTURE", label: "基础设施" },
+  { value: "OTHER", label: "其他" },
+];
+
+const MODEL_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "B2B_SUBSCRIPTION", label: "B2B 订阅" },
+  { value: "B2C_SUBSCRIPTION", label: "B2C 订阅" },
+  { value: "USAGE_BASED", label: "按量计费" },
+  { value: "COMMISSION", label: "交易抽佣" },
+  { value: "ONE_TIME", label: "一次性付费" },
+  { value: "OUTSOURCING", label: "外包/服务" },
+  { value: "ADS", label: "广告变现" },
+  { value: "MARKETPLACE", label: "平台撮合" },
+  { value: "HYBRID", label: "混合模式" },
+  { value: "UNKNOWN", label: "未知模式" },
+];
+
+const BUSINESS_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "TOB", label: "ToB" },
+  { value: "TOC", label: "ToC" },
+  { value: "B2B2C", label: "B2B2C" },
+  { value: "B2G", label: "B2G" },
+  { value: "C2C", label: "C2C" },
+  { value: "UNKNOWN", label: "未知" },
+];
+
+const STAGE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "IDEA", label: "构思阶段" },
+  { value: "BUILDING", label: "开发中" },
+  { value: "MVP", label: "MVP" },
+  { value: "VALIDATION", label: "验证阶段" },
+  { value: "EARLY_REVENUE", label: "早期收入" },
+  { value: "SCALING", label: "规模增长" },
+  { value: "MATURE", label: "成熟阶段" },
+];
+
+function findOptionLabel(options: Array<{ value: string; label: string }>, value: string): string {
+  const upper = (value || "").toUpperCase();
+  return options.find((item) => item.value === upper)?.label || value || "待补充";
+}
 
 function projectToDraft(project: OneFileProject): DetailDraft {
   return {
     title: project.title || "",
     summary: project.summary || "",
+    problemStatement: project.problem_statement || "",
+    solutionApproach: project.solution_approach || "",
+    useCases: project.use_cases || "",
     modelDesc: project.model_desc || "",
     users: project.users || "",
     stage: project.stage || "BUILDING",
+    formType: project.form_type || "OTHER",
+    businessModelType: project.business_model_type || "UNKNOWN",
+    modelType: project.model_type || "UNKNOWN",
   };
+}
+
+function parseProjectTime(createdAt: string): Date | null {
+  if (!createdAt) return null;
+  const hasTimezone = /([zZ]|[+\-]\d{2}:\d{2})$/.test(createdAt);
+  let parsed = new Date(createdAt);
+  if (Number.isNaN(parsed.getTime()) && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(createdAt)) {
+    parsed = new Date(`${createdAt.replace(" ", "T")}Z`);
+  } else if (!hasTimezone && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(createdAt)) {
+    parsed = new Date(`${createdAt.replace(" ", "T")}Z`);
+  }
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
 }
 
 function formatTimelineTime(createdAt: string): string {
   if (!createdAt) return "刚刚";
-  const date = new Date(createdAt);
-  if (Number.isNaN(date.getTime())) return "刚刚";
+  const date = parseProjectTime(createdAt);
+  if (!date) return "刚刚";
 
   const now = new Date();
   const sameDay =
@@ -61,11 +147,13 @@ function formatTimelineTime(createdAt: string): string {
 
 export default function ProjectDetailPage() {
   const t = copyZh.detail;
+  const brand = copyZh.common.brand;
   const router = useRouter();
   const routeParams = useParams<{ id: string }>();
   const projectId = String(routeParams.id || "");
 
   const moreMenuRef = useRef<HTMLDivElement | null>(null);
+  const profileSectionRef = useRef<HTMLElement | null>(null);
 
   const [authUserId, setAuthUserId] = useState("");
   const [authReady, setAuthReady] = useState(false);
@@ -83,9 +171,14 @@ export default function ProjectDetailPage() {
   const [showProgressComposer, setShowProgressComposer] = useState(false);
   const [progressDraft, setProgressDraft] = useState("");
   const [savingProgress, setSavingProgress] = useState(false);
+  const [editingUpdateId, setEditingUpdateId] = useState("");
+  const [editingUpdateContent, setEditingUpdateContent] = useState("");
+  const [savingUpdateId, setSavingUpdateId] = useState("");
+  const [deletingUpdateId, setDeletingUpdateId] = useState("");
 
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
+  const [saveHintField, setSaveHintField] = useState<EditableField | "">("");
 
   const isOwner = Boolean(project && authUserId && project.owner_user_id === authUserId);
 
@@ -99,7 +192,7 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     (async () => {
       try {
-        const meRes = await fetch("/api/auth/me", { cache: "no-store" });
+        const meRes = await fetchWithTimeout("/api/auth/me", { cache: "no-store" }, 30_000);
         if (meRes.ok) {
           const meBody = (await meRes.json()) as AuthMeResponse;
           setAuthUserId(meBody.user?.id || "");
@@ -113,15 +206,20 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     if (!projectId || !authReady) return;
     (async () => {
-      const res = await fetch(`/api/projects/${projectId}`, { cache: "no-store" });
-      if (!res.ok) {
-        const failure = await resolveApiError(res, t.loadFailed);
-        setError(failure.message);
-        toast.error(failure.message);
-        return;
+      try {
+        const res = await fetchWithTimeout(`/api/projects/${projectId}`, { cache: "no-store" }, 30_000);
+        if (!res.ok) {
+          const failure = await resolveApiError(res, t.loadFailed);
+          setError(failure.message);
+          toast.error(failure.message);
+          return;
+        }
+        const body = (await res.json()) as { project: OneFileProject };
+        syncProjectState(body.project);
+      } catch {
+        setError(t.loadFailed);
+        toast.error(t.loadFailed);
       }
-      const body = (await res.json()) as { project: OneFileProject };
-      syncProjectState(body.project);
     })();
   }, [projectId, authReady, t.loadFailed]);
 
@@ -192,9 +290,9 @@ export default function ProjectDetailPage() {
       return;
     }
     if (event.key === "Enter") {
-      if (options.allowMultiline && event.shiftKey) return;
+      if (options.allowMultiline && !event.metaKey && !event.ctrlKey) return;
       event.preventDefault();
-      (event.currentTarget as HTMLElement).blur();
+      void saveEditableField(field);
     }
   }
 
@@ -208,28 +306,47 @@ export default function ProjectDetailPage() {
     let payload: Record<string, string> = {};
     if (field === "title") payload = { title: draft.title };
     if (field === "summary") payload = { summary: draft.summary };
+    if (field === "problemStatement") payload = { problem_statement: draft.problemStatement };
+    if (field === "solutionApproach") payload = { solution_approach: draft.solutionApproach };
+    if (field === "useCases") payload = { use_cases: draft.useCases };
     if (field === "modelDesc") payload = { model_desc: draft.modelDesc };
     if (field === "users") payload = { users: draft.users };
     if (field === "stage") payload = { stage: draft.stage };
+    if (field === "formType") payload = { form_type: draft.formType };
+    if (field === "businessModelType") payload = { business_model_type: draft.businessModelType };
+    if (field === "modelType") payload = { model_type: draft.modelType };
 
     setSavingField(field);
     setError("");
-    const res = await fetch(`/api/projects/${project.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    try {
+      const res = await fetchWithTimeout(
+        `/api/projects/${project.id}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+        45_000,
+      );
 
-    if (!res.ok) {
-      await handleWriteFailure(res, t.editFailed);
+      if (!res.ok) {
+        await handleWriteFailure(res, t.editFailed);
+        return;
+      }
+
+      const body = (await res.json()) as { project: OneFileProject };
+      syncProjectState(body.project);
+      setActiveField("");
+      setSaveHintField(field);
+      window.setTimeout(() => {
+        setSaveHintField((current) => (current === field ? "" : current));
+      }, 1800);
+    } catch {
+      setError(t.editFailed);
+      toast.error(t.editFailed);
+    } finally {
       setSavingField("");
-      return;
     }
-
-    const body = (await res.json()) as { project: OneFileProject };
-    syncProjectState(body.project);
-    setSavingField("");
-    setActiveField("");
   }
 
   async function toggleShareVisibility() {
@@ -237,21 +354,30 @@ export default function ProjectDetailPage() {
     setSavingShare(true);
     setError("");
 
-    const res = await fetch(`/api/projects/${project.id}/share`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ is_public: !project.share?.is_public }),
-    });
+    try {
+      const res = await fetchWithTimeout(
+        `/api/projects/${project.id}/share`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ is_public: !project.share?.is_public }),
+        },
+        45_000,
+      );
 
-    if (!res.ok) {
-      await handleWriteFailure(res, t.shareToggleFailed);
+      if (!res.ok) {
+        await handleWriteFailure(res, t.shareToggleFailed);
+        return;
+      }
+      const body = (await res.json()) as { project: OneFileProject };
+      syncProjectState(body.project);
+      setShowMoreMenu(false);
+    } catch {
+      setError(t.shareToggleFailed);
+      toast.error(t.shareToggleFailed);
+    } finally {
       setSavingShare(false);
-      return;
     }
-    const body = (await res.json()) as { project: OneFileProject };
-    syncProjectState(body.project);
-    setSavingShare(false);
-    setShowMoreMenu(false);
   }
 
   async function deleteProject() {
@@ -260,13 +386,19 @@ export default function ProjectDetailPage() {
     setDeleting(true);
     setError("");
 
-    const res = await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
-    if (!res.ok) {
-      await handleWriteFailure(res, t.deleteFailed);
+    try {
+      const res = await fetchWithTimeout(`/api/projects/${project.id}`, { method: "DELETE" }, 45_000);
+      if (!res.ok) {
+        await handleWriteFailure(res, t.deleteFailed);
+        return;
+      }
+      router.push("/library");
+    } catch {
+      setError(t.deleteFailed);
+      toast.error(t.deleteFailed);
+    } finally {
       setDeleting(false);
-      return;
     }
-    router.push("/library");
   }
 
   async function submitProgress() {
@@ -275,35 +407,152 @@ export default function ProjectDetailPage() {
     setError("");
     setWarning("");
 
-    const res = await fetch(`/api/projects/${project.id}/update`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ update_text: progressDraft.trim() }),
-    });
+    try {
+      const res = await fetchWithTimeout(
+        `/api/projects/${project.id}/update`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ update_text: progressDraft.trim(), request_id: createRequestId("update") }),
+        },
+        60_000,
+      );
 
-    if (!res.ok) {
-      await handleWriteFailure(res, t.updateFailed);
+      if (!res.ok) {
+        await handleWriteFailure(res, t.updateFailed);
+        return;
+      }
+
+      const body = (await res.json()) as MutationResponse;
+      syncProjectState(body.project);
+      setProgressDraft("");
+      setShowProgressComposer(false);
+      if (body.used_fallback) {
+        const warningMessage = body.warning || copyZh.create.fallbackWarning;
+        setWarning(warningMessage);
+        toast.warning(warningMessage);
+      }
+      if (body.idempotent_replay) {
+        toast.message("重复请求已合并，已返回上一次成功结果。");
+      }
+    } catch {
+      setError("请求可能已提交，请先刷新页面确认，避免重复提交。");
+      toast.error("请求可能已提交，请先刷新页面确认，避免重复提交。");
+    } finally {
       setSavingProgress(false);
-      return;
+    }
+  }
+
+  function startEditProgress(updateId: string, content: string) {
+    setEditingUpdateId(updateId);
+    setEditingUpdateContent(content || "");
+  }
+
+  function cancelEditProgress() {
+    setEditingUpdateId("");
+    setEditingUpdateContent("");
+  }
+
+  async function submitEditProgress(updateId: string) {
+    if (!project || !isOwner || !updateId || !editingUpdateContent.trim()) return;
+    setSavingUpdateId(updateId);
+    setError("");
+    try {
+      const res = await fetchWithTimeout(
+        `/api/projects/${project.id}/updates/${updateId}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ content: editingUpdateContent.trim() }),
+        },
+        45_000,
+      );
+      if (!res.ok) {
+        await handleWriteFailure(res, t.updateFailed);
+        return;
+      }
+      const body = (await res.json()) as { project: OneFileProject };
+      syncProjectState(body.project);
+      cancelEditProgress();
+      toast.success("进展已更新。");
+    } catch {
+      setError(t.updateFailed);
+      toast.error(t.updateFailed);
+    } finally {
+      setSavingUpdateId("");
+    }
+  }
+
+  async function removeProgress(updateId: string) {
+    if (!project || !isOwner || !updateId || deletingUpdateId) return;
+    if (typeof window !== "undefined" && !window.confirm("确认删除这条进展？")) return;
+    setDeletingUpdateId(updateId);
+    setError("");
+    try {
+      const res = await fetchWithTimeout(`/api/projects/${project.id}/updates/${updateId}`, { method: "DELETE" }, 45_000);
+      if (!res.ok) {
+        await handleWriteFailure(res, t.updateFailed);
+        return;
+      }
+      const body = (await res.json()) as { project: OneFileProject };
+      syncProjectState(body.project);
+      if (editingUpdateId === updateId) {
+        cancelEditProgress();
+      }
+      toast.success("进展已删除。");
+    } catch {
+      setError(t.updateFailed);
+      toast.error(t.updateFailed);
+    } finally {
+      setDeletingUpdateId("");
+    }
+  }
+
+  function openProjectEditorFromMenu() {
+    setShowMoreMenu(false);
+    setActiveField("summary");
+    profileSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function renderFieldActions(field: EditableField) {
+    if (!isOwner) return null;
+    const isSaving = savingField === field;
+    const showSaved = saveHintField === field && !activeField;
+
+    if (activeField === field) {
+      return (
+        <div className="draft-field-actions">
+          <button type="button" className="draft-field-action" onMouseDown={(event) => event.preventDefault()} onClick={() => cancelFieldEditing(field)}>
+            {t.fieldCancel}
+          </button>
+          <button
+            type="button"
+            className="draft-field-action is-primary"
+            disabled={isSaving}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void saveEditableField(field)}
+          >
+            {isSaving ? t.saving : t.fieldSave}
+          </button>
+        </div>
+      );
     }
 
-    const body = (await res.json()) as MutationResponse;
-    syncProjectState(body.project);
-    setProgressDraft("");
-    setShowProgressComposer(false);
-    if (body.used_fallback) {
-      const warningMessage = body.warning || copyZh.create.fallbackWarning;
-      setWarning(warningMessage);
-      toast.warning(warningMessage);
-    }
-    setSavingProgress(false);
+    return (
+      <div className="draft-field-actions">
+        {showSaved ? <span className="draft-field-saved">{t.savedHint}</span> : null}
+        <button type="button" className="draft-field-action" onClick={() => openFieldEditor(field)}>
+          {t.fieldEdit}
+        </button>
+      </div>
+    );
   }
 
   if (error && !project) {
     return (
-      <main className="landing-premium min-h-screen px-6 py-7 sm:px-8 sm:py-9">
+      <main className="app-shell app-shell--work min-h-screen px-6 py-7 sm:px-8 sm:py-9">
         <div className="mx-auto max-w-5xl">
-          <div className="onefile-panel p-4">
+          <div className="content-panel p-4">
             <p className="text-sm text-destructive">{error}</p>
           </div>
         </div>
@@ -313,10 +562,10 @@ export default function ProjectDetailPage() {
 
   if (!project || !draft) {
     return (
-      <main className="landing-premium min-h-screen px-6 py-7 sm:px-8 sm:py-9">
+      <main className="app-shell app-shell--work min-h-screen px-6 py-7 sm:px-8 sm:py-9">
         <div className="mx-auto max-w-5xl">
-          <div className="onefile-panel p-4">
-            <p className="text-sm onefile-subtle">{t.loadingProject}</p>
+          <div className="content-panel p-4">
+            <p className="text-sm content-subtle">{t.loadingProject}</p>
           </div>
         </div>
       </main>
@@ -324,59 +573,76 @@ export default function ProjectDetailPage() {
   }
 
   return (
-    <main className="landing-premium min-h-screen px-6 py-7 sm:px-8 sm:py-9">
+    <main className="app-shell app-shell--work min-h-screen px-6 py-7 sm:px-8 sm:py-9">
       <div className="mx-auto max-w-5xl space-y-6">
-        <header className="onefile-surface p-5 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-2">
+        <header className="content-surface p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="draft-editor-hero">
+              <div className="draft-editor-topline">
+                <p className="text-sm font-medium text-[var(--landing-caption)]">{brand}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Badge className="stage-badge">{project.stage_label || draft.stage || "BUILDING"}</Badge>
+                  <Badge className={project.share?.is_public ? "stage-badge" : "border-white/15 bg-white/5 text-[var(--landing-text)]"}>
+                    {project.share?.is_public ? t.public : t.private}
+                  </Badge>
+                </div>
+              </div>
+
               {isOwner && activeField === "title" ? (
-                <Input
-                  autoFocus
-                  className="onefile-draft-input text-2xl font-semibold"
-                  value={draft.title}
-                  onChange={(event) => updateDraftField("title", event.target.value)}
-                  onBlur={() => void saveEditableField("title")}
-                  onKeyDown={(event) => onFieldKeyDown(event, "title")}
-                />
+                <div className="draft-hero-editor">
+                  <Input
+                    autoFocus
+                    className="editor-field-input text-2xl font-semibold sm:text-3xl"
+                    value={draft.title}
+                    onChange={(event) => updateDraftField("title", event.target.value)}
+                    onKeyDown={(event) => onFieldKeyDown(event, "title")}
+                  />
+                  {renderFieldActions("title")}
+                </div>
               ) : isOwner ? (
-                <button type="button" className="draft-title-trigger" onClick={() => openFieldEditor("title")}>
-                  <h1 className="text-2xl font-semibold text-[var(--landing-title)]">{draft.title || t.projectTitlePlaceholder}</h1>
-                </button>
+                <div className="draft-hero-display">
+                  <button type="button" className="draft-title-trigger" onClick={() => openFieldEditor("title")}>
+                    <h1 className="text-2xl font-semibold text-[var(--landing-title)] sm:text-3xl">{draft.title || t.projectTitlePlaceholder}</h1>
+                  </button>
+                  {renderFieldActions("title")}
+                </div>
               ) : (
-                <h1 className="text-2xl font-semibold text-[var(--landing-title)]">{draft.title || t.projectTitlePlaceholder}</h1>
+                <h1 className="text-2xl font-semibold text-[var(--landing-title)] sm:text-3xl">{draft.title || t.projectTitlePlaceholder}</h1>
               )}
 
               {isOwner && activeField === "summary" ? (
-                <Textarea
-                  autoFocus
-                  rows={3}
-                  className="onefile-draft-input min-h-[80px]"
-                  value={draft.summary}
-                  onChange={(event) => updateDraftField("summary", event.target.value)}
-                  onBlur={() => void saveEditableField("summary")}
-                  onKeyDown={(event) => onFieldKeyDown(event, "summary", { allowMultiline: true })}
-                />
+                <div className="draft-hero-editor">
+                  <Textarea
+                    autoFocus
+                    rows={4}
+                    className="editor-field-input min-h-[110px]"
+                    value={draft.summary}
+                    onChange={(event) => updateDraftField("summary", event.target.value)}
+                    onKeyDown={(event) => onFieldKeyDown(event, "summary", { allowMultiline: true })}
+                  />
+                  {renderFieldActions("summary")}
+                </div>
               ) : isOwner ? (
-                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("summary")}>
-                  <p className="text-sm onefile-subtle">{draft.summary || t.noSummary}</p>
-                </button>
+                <div className="draft-hero-display">
+                  <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("summary")}>
+                    <p className="text-sm content-subtle">{draft.summary || t.noSummary}</p>
+                  </button>
+                  {renderFieldActions("summary")}
+                </div>
               ) : (
-                <p className="text-sm onefile-subtle">{draft.summary || t.noSummary}</p>
+                <p className="text-sm content-subtle">{draft.summary || t.noSummary}</p>
               )}
-
-              <div className="flex flex-wrap gap-2 pt-1">
-                <Badge className="onefile-stage-badge">{project.stage_label || draft.stage || "BUILDING"}</Badge>
-                <Badge className={project.share?.is_public ? "onefile-stage-badge" : "bg-white/80 text-[var(--landing-text)]"}>
-                  {project.share?.is_public ? t.public : t.private}
-                </Badge>
-              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" className="landing-secondary-btn" onClick={() => router.push("/library")}>
+            <div className="detail-header-nav self-start">
+              <Button variant="ghost" className="detail-header-link" onClick={() => router.push("/library")}>
                 {t.backLibrary}
               </Button>
-              <Button variant="ghost" className="landing-secondary-btn" onClick={() => router.push(`/share/${project.id}`)}>
+              <Button
+                variant="ghost"
+                className="detail-header-link"
+                onClick={() => router.push(`/card/${project.id}?from=edit&return=${encodeURIComponent(`/projects/${project.id}`)}`)}
+              >
                 {t.openShare}
               </Button>
               {isOwner ? (
@@ -384,7 +650,7 @@ export default function ProjectDetailPage() {
                   <Button
                     type="button"
                     variant="ghost"
-                    className="landing-secondary-btn h-10 w-10 px-0"
+                    className="detail-header-link detail-header-icon"
                     onClick={() => setShowMoreMenu((prev) => !prev)}
                     aria-label={t.manageMenu}
                   >
@@ -392,6 +658,9 @@ export default function ProjectDetailPage() {
                   </Button>
                   {showMoreMenu ? (
                     <div className="detail-owner-menu-panel">
+                      <button type="button" className="detail-owner-menu-item" onClick={openProjectEditorFromMenu}>
+                        {t.editProject}
+                      </button>
                       <button type="button" className="detail-owner-menu-item" onClick={() => void toggleShareVisibility()} disabled={savingShare}>
                         {savingShare ? t.saving : project.share?.is_public ? t.makePrivate : t.makePublic}
                       </button>
@@ -407,43 +676,104 @@ export default function ProjectDetailPage() {
         </header>
 
         {error ? (
-          <section className="onefile-panel p-4">
+          <section className="content-panel p-4">
             <p className="text-sm text-destructive">{error}</p>
           </section>
         ) : null}
 
-        <section className="onefile-panel space-y-4 p-5 sm:p-6">
-          <h2 className="onefile-section-title">{t.profileTitle}</h2>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <article className={`draft-display-block draft-inline-editing ${activeField === "summary" ? "is-active" : ""}`}>
-              <p className="draft-block-label">{t.fieldSummary}</p>
-              {isOwner && activeField === "summary" ? (
-                <Textarea
-                  autoFocus
-                  className="onefile-draft-input min-h-[120px]"
-                  value={draft.summary}
-                  onChange={(event) => updateDraftField("summary", event.target.value)}
-                  onBlur={() => void saveEditableField("summary")}
-                  onKeyDown={(event) => onFieldKeyDown(event, "summary", { allowMultiline: true })}
-                />
-              ) : isOwner ? (
-                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("summary")}>
-                  <p className="draft-block-value">{draft.summary || t.fieldEmpty}</p>
-                </button>
-              ) : (
-                <p className="draft-block-value">{draft.summary || t.fieldEmpty}</p>
-              )}
-            </article>
+        <section ref={profileSectionRef} className="content-panel space-y-4 p-5 sm:p-6">
+          <h2 className="content-section-title">{t.profileTitle}</h2>
+          <div className="detail-edit-groups">
+            <section className="detail-edit-group">
+              <div className="detail-edit-group-head">
+                <h3 className="detail-edit-group-title">{t.expressionTitle}</h3>
+              </div>
+              <div className="detail-expression-flow">
+                <article className={`detail-expression-item ${activeField === "problemStatement" ? "is-active" : ""}`}>
+                  <div className="detail-expression-head">
+                    <p className="detail-expression-label">{t.fieldProblem}</p>
+                    {renderFieldActions("problemStatement")}
+                  </div>
+                  {isOwner && activeField === "problemStatement" ? (
+                    <Textarea
+                      autoFocus
+                      className="editor-field-input detail-expression-input min-h-[120px]"
+                      value={draft.problemStatement}
+                      onChange={(event) => updateDraftField("problemStatement", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "problemStatement", { allowMultiline: true })}
+                    />
+                  ) : isOwner ? (
+                    <button type="button" className="detail-expression-trigger" onClick={() => openFieldEditor("problemStatement")}>
+                      <p className="detail-expression-value">{draft.problemStatement || t.fieldEmpty}</p>
+                    </button>
+                  ) : (
+                    <p className="detail-expression-value">{draft.problemStatement || t.fieldEmpty}</p>
+                  )}
+                </article>
 
+                <article className={`detail-expression-item ${activeField === "solutionApproach" ? "is-active" : ""}`}>
+                  <div className="detail-expression-head">
+                    <p className="detail-expression-label">{t.fieldSolution}</p>
+                    {renderFieldActions("solutionApproach")}
+                  </div>
+                  {isOwner && activeField === "solutionApproach" ? (
+                    <Textarea
+                      autoFocus
+                      className="editor-field-input detail-expression-input min-h-[120px]"
+                      value={draft.solutionApproach}
+                      onChange={(event) => updateDraftField("solutionApproach", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "solutionApproach", { allowMultiline: true })}
+                    />
+                  ) : isOwner ? (
+                    <button type="button" className="detail-expression-trigger" onClick={() => openFieldEditor("solutionApproach")}>
+                      <p className="detail-expression-value">{draft.solutionApproach || t.fieldEmpty}</p>
+                    </button>
+                  ) : (
+                    <p className="detail-expression-value">{draft.solutionApproach || t.fieldEmpty}</p>
+                  )}
+                </article>
+
+                <article className={`detail-expression-item ${activeField === "useCases" ? "is-active" : ""}`}>
+                  <div className="detail-expression-head">
+                    <p className="detail-expression-label">{t.fieldUseCases}</p>
+                    {renderFieldActions("useCases")}
+                  </div>
+                  {isOwner && activeField === "useCases" ? (
+                    <Textarea
+                      autoFocus
+                      className="editor-field-input detail-expression-input min-h-[120px]"
+                      value={draft.useCases}
+                      onChange={(event) => updateDraftField("useCases", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "useCases", { allowMultiline: true })}
+                    />
+                  ) : isOwner ? (
+                    <button type="button" className="detail-expression-trigger" onClick={() => openFieldEditor("useCases")}>
+                      <p className="detail-expression-value">{draft.useCases || t.fieldEmpty}</p>
+                    </button>
+                  ) : (
+                    <p className="detail-expression-value">{draft.useCases || t.fieldEmpty}</p>
+                  )}
+                </article>
+              </div>
+            </section>
+
+            <section className="detail-edit-group">
+              <div className="detail-edit-group-head">
+                <h3 className="detail-edit-group-title">{t.businessTitle}</h3>
+              </div>
+              <p className="detail-edit-group-hint">{t.businessHint}</p>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <article className={`draft-display-block draft-inline-editing ${activeField === "modelDesc" ? "is-active" : ""}`}>
-              <p className="draft-block-label">{t.fieldModel}</p>
+              <div className="draft-block-head">
+                <p className="draft-block-label">{t.fieldModel}</p>
+                {renderFieldActions("modelDesc")}
+              </div>
               {isOwner && activeField === "modelDesc" ? (
                 <Textarea
                   autoFocus
-                  className="onefile-draft-input min-h-[120px]"
+                  className="editor-field-input min-h-[120px]"
                   value={draft.modelDesc}
                   onChange={(event) => updateDraftField("modelDesc", event.target.value)}
-                  onBlur={() => void saveEditableField("modelDesc")}
                   onKeyDown={(event) => onFieldKeyDown(event, "modelDesc", { allowMultiline: true })}
                 />
               ) : isOwner ? (
@@ -456,14 +786,16 @@ export default function ProjectDetailPage() {
             </article>
 
             <article className={`draft-display-block draft-inline-editing ${activeField === "users" ? "is-active" : ""}`}>
-              <p className="draft-block-label">{t.fieldUsers}</p>
+              <div className="draft-block-head">
+                <p className="draft-block-label">{t.fieldUsers}</p>
+                {renderFieldActions("users")}
+              </div>
               {isOwner && activeField === "users" ? (
                 <Input
                   autoFocus
-                  className="onefile-draft-input"
+                  className="editor-field-input"
                   value={draft.users}
                   onChange={(event) => updateDraftField("users", event.target.value)}
-                  onBlur={() => void saveEditableField("users")}
                   onKeyDown={(event) => onFieldKeyDown(event, "users")}
                 />
               ) : isOwner ? (
@@ -474,27 +806,201 @@ export default function ProjectDetailPage() {
                 <p className="draft-block-value">{draft.users || t.fieldEmpty}</p>
               )}
             </article>
+
+            <article className={`draft-display-block draft-inline-editing ${activeField === "formType" ? "is-active" : ""}`}>
+              <div className="draft-block-head">
+                <p className="draft-block-label">{t.fieldFormType}</p>
+                {renderFieldActions("formType")}
+              </div>
+              {isOwner && activeField === "formType" ? (
+                <select
+                  autoFocus
+                  className="field-select h-10 w-full rounded-lg px-3 text-sm"
+                  value={draft.formType}
+                  onChange={(event) => updateDraftField("formType", event.target.value)}
+                  onKeyDown={(event) => onFieldKeyDown(event, "formType")}
+                >
+                  {FORM_TYPE_OPTIONS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              ) : isOwner ? (
+                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("formType")}>
+                  <p className="draft-block-value">{findOptionLabel(FORM_TYPE_OPTIONS, draft.formType)}</p>
+                </button>
+              ) : (
+                <p className="draft-block-value">{project.form_type_label || findOptionLabel(FORM_TYPE_OPTIONS, draft.formType)}</p>
+              )}
+            </article>
+
+            <article className={`draft-display-block draft-inline-editing ${activeField === "businessModelType" ? "is-active" : ""}`}>
+              <div className="draft-block-head">
+                <p className="draft-block-label">{t.fieldBusinessModel}</p>
+                {renderFieldActions("businessModelType")}
+              </div>
+              {isOwner && activeField === "businessModelType" ? (
+                <select
+                  autoFocus
+                  className="field-select h-10 w-full rounded-lg px-3 text-sm"
+                  value={draft.businessModelType}
+                  onChange={(event) => updateDraftField("businessModelType", event.target.value)}
+                  onKeyDown={(event) => onFieldKeyDown(event, "businessModelType")}
+                >
+                  {BUSINESS_MODEL_OPTIONS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              ) : isOwner ? (
+                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("businessModelType")}>
+                  <p className="draft-block-value">{findOptionLabel(BUSINESS_MODEL_OPTIONS, draft.businessModelType)}</p>
+                </button>
+              ) : (
+                <p className="draft-block-value">
+                  {project.business_model_type_label || findOptionLabel(BUSINESS_MODEL_OPTIONS, draft.businessModelType)}
+                </p>
+              )}
+            </article>
+
+            <article className={`draft-display-block draft-inline-editing ${activeField === "modelType" ? "is-active" : ""}`}>
+              <div className="draft-block-head">
+                <p className="draft-block-label">{t.fieldModelType}</p>
+                {renderFieldActions("modelType")}
+              </div>
+              {isOwner && activeField === "modelType" ? (
+                <select
+                  autoFocus
+                  className="field-select h-10 w-full rounded-lg px-3 text-sm"
+                  value={draft.modelType}
+                  onChange={(event) => updateDraftField("modelType", event.target.value)}
+                  onKeyDown={(event) => onFieldKeyDown(event, "modelType")}
+                >
+                  {MODEL_TYPE_OPTIONS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              ) : isOwner ? (
+                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("modelType")}>
+                  <p className="draft-block-value">{findOptionLabel(MODEL_TYPE_OPTIONS, draft.modelType)}</p>
+                </button>
+              ) : (
+                <p className="draft-block-value">{project.model_type_label || findOptionLabel(MODEL_TYPE_OPTIONS, draft.modelType)}</p>
+              )}
+            </article>
+              </div>
+            </section>
+
+            <section className="detail-edit-group">
+              <div className="detail-edit-group-head">
+                <h3 className="detail-edit-group-title">{t.progressInfoTitle}</h3>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <article className={`draft-display-block draft-inline-editing ${activeField === "stage" ? "is-active" : ""}`}>
+              <div className="draft-block-head">
+                <p className="draft-block-label">{t.fieldStage}</p>
+                {renderFieldActions("stage")}
+              </div>
+              {isOwner && activeField === "stage" ? (
+                <select
+                  autoFocus
+                  className="field-select h-10 w-full rounded-lg px-3 text-sm"
+                  value={draft.stage}
+                  onChange={(event) => updateDraftField("stage", event.target.value)}
+                  onKeyDown={(event) => onFieldKeyDown(event, "stage")}
+                >
+                  {STAGE_OPTIONS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              ) : isOwner ? (
+                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("stage")}>
+                  <p className="draft-block-value">{findOptionLabel(STAGE_OPTIONS, draft.stage)}</p>
+                </button>
+              ) : (
+                <p className="draft-block-value">{project.stage_label || findOptionLabel(STAGE_OPTIONS, draft.stage)}</p>
+              )}
+            </article>
+              </div>
+            </section>
           </div>
-          {savingField ? <p className="text-xs onefile-caption">{t.saving}</p> : null}
+          {savingField ? <p className="text-xs content-caption">{t.saving}</p> : null}
         </section>
 
-        <section className="onefile-panel space-y-4 p-5 sm:p-6">
+        <section className="content-panel space-y-4 p-5 sm:p-6">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="onefile-section-title">{t.timelineTitle}</h2>
+            <h2 className="content-section-title">{t.timelineTitle}</h2>
             {isOwner ? (
-              <Button type="button" variant="ghost" className="landing-secondary-btn h-9 px-3" onClick={() => setShowProgressComposer(true)}>
+              <Button type="button" variant="ghost" className="action-secondary-btn h-9 px-3" onClick={() => setShowProgressComposer(true)}>
                 <Plus className="mr-1 h-3.5 w-3.5" />
                 {t.addProgress}
               </Button>
             ) : null}
           </div>
 
-          {timelineItems.length === 0 ? <p className="text-sm onefile-subtle">{t.noUpdates}</p> : null}
+          {timelineItems.length === 0 ? <p className="text-sm content-subtle">{t.noUpdates}</p> : null}
           <div className="detail-progress-feed">
             {timelineItems.map((item, idx) => (
               <article key={item.id || `${idx}-${item.created_at || ""}`} className="detail-progress-item">
-                <p className="detail-progress-time">{formatTimelineTime(item.created_at || "")}</p>
-                <p className="detail-progress-content">{item.content || t.noUpdates}</p>
+                <div className="detail-progress-rail" aria-hidden="true">
+                  <span className="detail-progress-dot" />
+                  {idx !== timelineItems.length - 1 ? <span className="detail-progress-line" /> : null}
+                </div>
+                <div className="detail-progress-body">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="detail-progress-time">{formatTimelineTime(item.created_at || "")}</p>
+                    {isOwner && item.id ? (
+                      <div className="detail-progress-actions">
+                      <button
+                        type="button"
+                        className="text-xs content-caption transition-colors hover:text-[var(--landing-brand)]"
+                        onClick={() => startEditProgress(item.id || "", item.content || "")}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs text-destructive/90 transition-colors hover:text-destructive"
+                        disabled={deletingUpdateId === item.id}
+                        onClick={() => void removeProgress(item.id || "")}
+                      >
+                        {deletingUpdateId === item.id ? "删除中..." : "删除"}
+                      </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  {editingUpdateId === item.id ? (
+                    <div className="mt-2 space-y-2">
+                      <Textarea
+                        rows={3}
+                        className="editor-field-input"
+                        value={editingUpdateContent}
+                        onChange={(event) => setEditingUpdateContent(event.target.value)}
+                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <Button type="button" variant="ghost" className="action-secondary-btn h-8 px-3" onClick={cancelEditProgress}>
+                          取消
+                        </Button>
+                        <Button
+                          type="button"
+                          className="action-primary-btn h-8 px-3"
+                          disabled={!editingUpdateContent.trim() || savingUpdateId === item.id}
+                          onClick={() => void submitEditProgress(item.id || "")}
+                        >
+                          {savingUpdateId === item.id ? "保存中..." : "保存"}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="detail-progress-content">{item.content || t.noUpdates}</p>
+                  )}
+                </div>
               </article>
             ))}
           </div>
@@ -509,7 +1015,7 @@ export default function ProjectDetailPage() {
             <Textarea
               autoFocus
               rows={4}
-              className="onefile-draft-input"
+              className="editor-field-input"
               placeholder={t.updatePlaceholder}
               value={progressDraft}
               onChange={(event) => setProgressDraft(event.target.value)}
@@ -526,10 +1032,10 @@ export default function ProjectDetailPage() {
               }}
             />
             <div className="flex items-center justify-end gap-2">
-              <Button type="button" variant="ghost" className="landing-secondary-btn h-9 px-4" onClick={() => setShowProgressComposer(false)}>
+              <Button type="button" variant="ghost" className="action-secondary-btn h-9 px-4" onClick={() => setShowProgressComposer(false)}>
                 {t.cancel}
               </Button>
-              <Button type="button" className="landing-cta-btn h-9 px-4" onClick={() => void submitProgress()} disabled={savingProgress || !progressDraft.trim()}>
+              <Button type="button" className="action-primary-btn h-9 px-4" onClick={() => void submitProgress()} disabled={savingProgress || !progressDraft.trim()}>
                 {savingProgress ? t.updating : t.submitUpdate}
               </Button>
             </div>

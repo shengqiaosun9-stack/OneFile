@@ -28,3 +28,4 @@ data/*.tmp
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
+.tmp/

@@ -245,6 +245,37 @@ def test_generate_project_supports_file_only_and_invalid_input(client: TestClien
     assert invalid.json()["error"] == "invalid_input"
 
 
+def test_anonymous_card_generate_does_not_enter_library_until_claimed(client: TestClient, monkeypatch):
+    monkeypatch.setattr(service, "structure_project_object", lambda raw_input, optional_title="": _fake_generate_object(optional_title or "匿名卡片"))
+    monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": False, "last_api_error": ""})
+
+    anon_client = TestClient(client.app)
+    generated = anon_client.post(
+        "/v1/cards/generate",
+        json={"raw_input": "把一个模糊想法生成项目卡", "optional_title": "匿名卡片"},
+    )
+    assert generated.status_code == 200
+    body = generated.json()
+    project_id = body["project"]["id"]
+    assert body["project"]["entity_type"] == "temporary_card"
+    assert body["project"]["claim_status"] == "unclaimed"
+    assert body["project"]["visible_in_library"] is False
+
+    library_before = client.get("/v1/projects")
+    assert library_before.status_code == 200
+    assert not any(item["id"] == project_id for item in library_before.json()["projects"])
+
+    claimed = client.post(f"/v1/cards/{project_id}/claim")
+    assert claimed.status_code == 200
+    claimed_body = claimed.json()
+    assert claimed_body["project"]["entity_type"] == "claimed_project"
+    assert claimed_body["project"]["claim_status"] == "claimed"
+    assert claimed_body["project"]["visible_in_library"] is True
+
+    library_after = client.get("/v1/projects")
+    assert any(item["id"] == project_id for item in library_after.json()["projects"])
+
+
 def test_visibility_rules_owner_public(client: TestClient, monkeypatch):
     monkeypatch.setattr(service, "structure_project", lambda raw_input, user_title="": _fake_schema(user_title or "项目"))
     monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": False, "last_api_error": ""})
@@ -1003,3 +1034,79 @@ def test_bp_extract_endpoint_requires_auth_and_supports_pdf(client: TestClient, 
     assert body["extracted_text"] == "BP 文本内容"
     assert body["page_count"] == 3
     assert body["truncated"] is False
+
+
+def test_create_and_update_support_idempotent_replay(client: TestClient, monkeypatch):
+    monkeypatch.setattr(service, "structure_project", lambda raw_input, user_title="": _fake_schema(user_title or "项目"))
+    monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": False, "last_api_error": ""})
+
+    create_req_id = "req-create-001"
+    created_first = client.post(
+        "/v1/projects",
+        json={
+            "email": "owner@example.com",
+            "title": "Idempotent Project",
+            "input_text": "首次创建",
+            "request_id": create_req_id,
+        },
+    )
+    created_second = client.post(
+        "/v1/projects",
+        json={
+            "email": "owner@example.com",
+            "title": "Idempotent Project",
+            "input_text": "首次创建",
+            "request_id": create_req_id,
+        },
+    )
+    assert created_first.status_code == 200
+    assert created_second.status_code == 200
+    assert created_second.json()["idempotent_replay"] is True
+    assert created_first.json()["project"]["id"] == created_second.json()["project"]["id"]
+
+    project_id = created_first.json()["project"]["id"]
+    update_req_id = "req-update-001"
+    updated_first = client.post(
+        f"/v1/projects/{project_id}/update",
+        json={"email": "owner@example.com", "update_text": "新增20个用户", "request_id": update_req_id},
+    )
+    updated_second = client.post(
+        f"/v1/projects/{project_id}/update",
+        json={"email": "owner@example.com", "update_text": "新增20个用户", "request_id": update_req_id},
+    )
+    assert updated_first.status_code == 200
+    assert updated_second.status_code == 200
+    assert updated_second.json()["idempotent_replay"] is True
+    assert updated_first.json()["project"]["id"] == updated_second.json()["project"]["id"]
+
+
+def test_progress_item_edit_and_delete_endpoints(client: TestClient, monkeypatch):
+    monkeypatch.setattr(service, "structure_project", lambda raw_input, user_title="": _fake_schema(user_title or "项目"))
+    monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": False, "last_api_error": ""})
+
+    created = client.post(
+        "/v1/projects",
+        json={"email": "owner@example.com", "title": "ProgressEditable", "input_text": "initial"},
+    )
+    assert created.status_code == 200
+    project_id = created.json()["project"]["id"]
+
+    update_resp = client.post(
+        f"/v1/projects/{project_id}/update",
+        json={"email": "owner@example.com", "update_text": "第一条进展"},
+    )
+    assert update_resp.status_code == 200
+    update_item_id = (update_resp.json()["project"].get("updates", [{}])[0] or {}).get("id")
+    assert update_item_id
+
+    edited = client.patch(
+        f"/v1/projects/{project_id}/updates/{update_item_id}",
+        json={"content": "第一条进展（已编辑）"},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["project"]["updates"][0]["content"] == "第一条进展（已编辑）"
+    assert edited.json()["project"]["latest_update"] == "第一条进展（已编辑）"
+
+    deleted = client.delete(f"/v1/projects/{project_id}/updates/{update_item_id}")
+    assert deleted.status_code == 200
+    assert len(deleted.json()["project"].get("updates", [])) == 1

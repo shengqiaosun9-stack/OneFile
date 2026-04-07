@@ -148,9 +148,18 @@ def get_client() -> Any:
     if not api_key:
         raise ValueError("未检测到 API Key。请设置 HUNYUAN_API_KEY，或使用 OPENAI_API_KEY 作为回退。")
 
+    timeout_raw = os.getenv("ONEFILE_AI_TIMEOUT_SECONDS", "6").strip()
+    try:
+        timeout_seconds = float(timeout_raw)
+    except Exception:
+        timeout_seconds = 6.0
+    timeout_seconds = max(3.0, min(timeout_seconds, 30.0))
+
     return OpenAI(
         api_key=api_key,
         base_url=get_base_url(),
+        timeout=timeout_seconds,
+        max_retries=0,
     )
 
 
@@ -496,6 +505,21 @@ def structure_project_object(raw_input: str, optional_title: str = "") -> Dict[s
         f"optional_title={safe_optional_title or '(none)'}\n"
         "规则：若 optional_title 非空，name 必须优先使用 optional_title。\n"
         "current_stage 只能是 idea/building/launched。\n\n"
+        "one_liner 是项目卡的首句摘要，不是功能描述。\n"
+        "它必须回答：为什么这个项目值得被理解或分享。\n"
+        "先从以下四个视角中任选一个：\n"
+        "- Decision efficiency（帮助别人快速判断这个项目值不值得继续跟进）\n"
+        "- Communication clarity（帮助别人更清楚地理解这个项目）\n"
+        "- Stage enablement（帮助早期项目更好地呈现自己）\n"
+        "- System / asset value（让项目变成可持续更新、可比较的对象）\n"
+        "再生成一句话摘要。\n"
+        "严格要求：\n"
+        "- 这句话必须描述 startup 本身，而不是围绕它的项目卡系统\n"
+        "- 必须包含明确对象，例如 a project / your idea / this startup / current progress 对应的中文对象\n"
+        "- 必须包含明确动作或结果，例如 evaluate / understand / send / compare / update 对应的中文动作\n"
+        "- 必须具体、落地，不要抽象空话\n"
+        "- 禁止使用 AI-powered、platform、tool 这类泛词\n"
+        "- 禁止直接解释产品是什么，而要解释为什么值得理解\n\n"
         f"输入文本：\n{raw_input}"
     )
 

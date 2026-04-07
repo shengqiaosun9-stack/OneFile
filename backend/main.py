@@ -7,6 +7,7 @@ from backend.config import get_settings
 from backend.schemas import (
     CreateProjectRequest,
     EditProjectRequest,
+    GenerateCardRequest,
     GenerateProjectRequest,
     LoginStartRequest,
     LoginVerifyRequest,
@@ -14,13 +15,16 @@ from backend.schemas import (
     ShareCTARequest,
     ToggleShareRequest,
     UpdateProgressRequest,
+    EditProgressItemRequest,
     WeeklyReportRequest,
 )
 from backend.pdf_extract import extract_pdf_text
 from backend.service import (
     ServiceError,
     create_project,
+    claim_card,
     generate_project,
+    generate_card,
     delete_project,
     edit_project,
     export_user_backup,
@@ -32,6 +36,7 @@ from backend.service import (
     get_project_growth_metrics,
     get_project_detail,
     get_session_user,
+    get_card,
     get_share,
     get_visible_projects,
     logout_session,
@@ -39,6 +44,8 @@ from backend.service import (
     track_share_cta,
     toggle_share,
     update_project_progress,
+    edit_project_progress_item,
+    delete_project_progress_item,
     verify_login,
 )
 
@@ -183,6 +190,24 @@ def generate_project_endpoint(payload: GenerateProjectRequest, request: Request)
     return generate_project(body)
 
 
+@app.post("/v1/cards/generate")
+def generate_card_endpoint(payload: GenerateCardRequest) -> Dict[str, Any]:
+    return generate_card(payload.model_dump())
+
+
+@app.get("/v1/cards/{project_id}")
+def card_page_endpoint(project_id: str, request: Request) -> Dict[str, Any]:
+    user = _optional_user(request)
+    effective_email = str(user.get("email", ""))
+    return get_card(project_id, email=effective_email)
+
+
+@app.post("/v1/cards/{project_id}/claim")
+def claim_card_endpoint(project_id: str, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    return claim_card(project_id, str(user.get("email", "")))
+
+
 @app.get("/v1/projects/{project_id}")
 def detail_project_endpoint(project_id: str, request: Request) -> Dict[str, Any]:
     user = _optional_user(request)
@@ -204,6 +229,25 @@ def update_project_endpoint(project_id: str, payload: UpdateProgressRequest, req
     body = payload.model_dump()
     body["email"] = str(user.get("email", ""))
     return update_project_progress(project_id, body)
+
+
+@app.patch("/v1/projects/{project_id}/updates/{update_id}")
+def edit_project_update_item_endpoint(
+    project_id: str,
+    update_id: str,
+    payload: EditProgressItemRequest,
+    request: Request,
+) -> Dict[str, Any]:
+    user = _require_user(request)
+    body = payload.model_dump()
+    body["email"] = str(user.get("email", ""))
+    return edit_project_progress_item(project_id, update_id, body)
+
+
+@app.delete("/v1/projects/{project_id}/updates/{update_id}")
+def delete_project_update_item_endpoint(project_id: str, update_id: str, request: Request) -> Dict[str, Any]:
+    user = _require_user(request)
+    return delete_project_progress_item(project_id, update_id, str(user.get("email", "")))
 
 
 @app.patch("/v1/projects/{project_id}/share")

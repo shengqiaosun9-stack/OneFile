@@ -1,24 +1,13 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
 
 import { DemoEnvNotice } from "@/components/onefile/demo-env-notice";
 import { Toaster } from "@/components/ui/sonner";
 
 import "./globals.css";
 
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains-mono",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "OneFile",
-  description: "把想法转化为可演化、可分享的项目资产。",
+  title: "OnePitch · 一眼项目",
+  description: "把一个模糊想法，立刻压缩成一张能直接发出去的项目卡。",
 };
 
 export default function RootLayout({
@@ -27,7 +16,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" data-scroll-behavior="smooth" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+    <html lang="zh-CN" data-scroll-behavior="smooth">
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
         <DemoEnvNotice />
         {children}

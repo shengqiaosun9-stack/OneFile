@@ -18,6 +18,33 @@ import type { AuthMeResponse, BackupExportResponse, ListResponse, OneFileProject
 export const dynamic = "force-dynamic";
 
 const USER_SPLIT_RE = /[、，,\/|;；]+/;
+const PAGE_SIZE = 12;
+
+const FORM_FILTER_PRESETS = [
+  "AI 原生应用",
+  "SaaS",
+  "API 服务",
+  "智能体",
+  "交易市场",
+  "数据工具",
+  "基础设施",
+  "其他",
+];
+
+const BUSINESS_FILTER_PRESETS = ["ToB", "ToC", "B2B2C", "B2G", "C2C", "未知"];
+
+const MODEL_FILTER_PRESETS = [
+  "B2B 订阅",
+  "B2C 订阅",
+  "按量计费",
+  "交易抽佣",
+  "一次性付费",
+  "外包/服务",
+  "广告变现",
+  "平台撮合",
+  "混合模式",
+  "未知模式",
+];
 
 function getFormLabel(project: OneFileProject): string {
   return (project.form_type_label || project.form_type || "").trim();
@@ -33,6 +60,10 @@ function getUserTokens(users: string | undefined): string[] {
     .split(USER_SPLIT_RE)
     .map((item) => item.trim())
     .filter((item) => item && item !== "待补充");
+}
+
+function getBusinessModelLabel(project: OneFileProject): string {
+  return (project.business_model_type_label || project.business_model_type || "").trim();
 }
 
 function includesUserToken(users: string | undefined, target: string): boolean {
@@ -53,7 +84,9 @@ export default function LibraryPage() {
   const [scope, setScope] = useState<"all" | "public" | "mine">("all");
   const [formFilter, setFormFilter] = useState("all");
   const [usersFilter, setUsersFilter] = useState("all");
+  const [businessFilter, setBusinessFilter] = useState("all");
   const [modelFilter, setModelFilter] = useState("all");
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadTick, setReloadTick] = useState(0);
@@ -82,6 +115,12 @@ export default function LibraryPage() {
   }, []);
 
   const isAuthenticated = Boolean(authenticatedEmail);
+
+  useEffect(() => {
+    if (!isAuthenticated && scope === "mine") {
+      setScope("all");
+    }
+  }, [isAuthenticated, scope]);
 
   useEffect(() => {
     (async () => {
@@ -142,15 +181,22 @@ export default function LibraryPage() {
   }, [projects, scope, userId]);
 
   const formOptions = useMemo(() => {
-    return Array.from(new Set(scopeProjects.map(getFormLabel).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"));
+    const dynamic = Array.from(new Set(scopeProjects.map(getFormLabel).filter(Boolean)));
+    return Array.from(new Set([...FORM_FILTER_PRESETS, ...dynamic])).sort((a, b) => a.localeCompare(b, "zh-CN"));
   }, [scopeProjects]);
 
   const userOptions = useMemo(() => {
     return Array.from(new Set(scopeProjects.flatMap((item) => getUserTokens(item.users)))).sort((a, b) => a.localeCompare(b, "zh-CN"));
   }, [scopeProjects]);
 
+  const businessOptions = useMemo(() => {
+    const dynamic = Array.from(new Set(scopeProjects.map(getBusinessModelLabel).filter(Boolean)));
+    return Array.from(new Set([...BUSINESS_FILTER_PRESETS, ...dynamic])).sort((a, b) => a.localeCompare(b, "zh-CN"));
+  }, [scopeProjects]);
+
   const modelOptions = useMemo(() => {
-    return Array.from(new Set(scopeProjects.map(getModelLabel).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"));
+    const dynamic = Array.from(new Set(scopeProjects.map(getModelLabel).filter(Boolean)));
+    return Array.from(new Set([...MODEL_FILTER_PRESETS, ...dynamic])).sort((a, b) => a.localeCompare(b, "zh-CN"));
   }, [scopeProjects]);
 
   const filtered = useMemo(() => {
@@ -159,20 +205,33 @@ export default function LibraryPage() {
 
     source = source.filter((item) => {
       const formValue = getFormLabel(item);
+      const businessValue = getBusinessModelLabel(item);
       const modelValue = getModelLabel(item);
       const formMatched = formFilter === "all" || formValue === formFilter;
       const usersMatched = usersFilter === "all" || includesUserToken(item.users, usersFilter);
+      const businessMatched = businessFilter === "all" || businessValue === businessFilter;
       const modelMatched = modelFilter === "all" || modelValue === modelFilter;
-      return formMatched && usersMatched && modelMatched;
+      return formMatched && usersMatched && businessMatched && modelMatched;
     });
 
     if (!q) return source;
     return source.filter((item) => {
-      return `${item.title} ${item.summary || ""} ${item.stage_label || ""} ${item.stage || ""} ${item.users || ""} ${getFormLabel(item)} ${getModelLabel(item)}`
+      return `${item.id} ${item.title} ${item.summary || ""} ${item.stage_label || ""} ${item.stage || ""} ${item.users || ""} ${getFormLabel(item)} ${getBusinessModelLabel(item)} ${getModelLabel(item)}`
         .toLowerCase()
         .includes(q);
     });
-  }, [scopeProjects, query, formFilter, usersFilter, modelFilter]);
+  }, [scopeProjects, query, formFilter, usersFilter, businessFilter, modelFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, scope, formFilter, usersFilter, businessFilter, modelFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedProjects = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, currentPage]);
 
   const totalCount = projects.length;
   const publicCount = projects.filter((item) => Boolean(item.share?.is_public)).length;
@@ -205,7 +264,7 @@ export default function LibraryPage() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `onefile-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      link.download = `onepitch-backup-${new Date().toISOString().slice(0, 10)}.json`;
       link.click();
       URL.revokeObjectURL(url);
       toast.success(t.exportBackup);
@@ -215,18 +274,17 @@ export default function LibraryPage() {
   }
 
   return (
-    <main className="landing-premium min-h-screen px-6 py-7 sm:px-8 sm:py-9">
+    <main className="app-shell app-shell--browse min-h-screen px-6 py-7 sm:px-8 sm:py-9">
       <div className="mx-auto w-full max-w-7xl space-y-6 sm:space-y-7">
-        <header className="onefile-surface flex flex-col gap-5 p-5 sm:p-6">
+        <header className="content-surface flex flex-col gap-5 p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
-                <p className="landing-brand">{copyZh.common.brand}</p>
-                <span className="landing-brand-sub">· 一人档</span>
+                <p className="brand-mark">{copyZh.common.brand}</p>
               </div>
               <h1 className="mt-2 text-2xl font-semibold text-[var(--landing-title)]">{t.title}</h1>
-              <p className="mt-1 text-sm onefile-subtle">{t.subtitle}</p>
-              <p className="mt-1 text-xs onefile-caption">
+              <p className="mt-1 text-sm content-subtle">{t.subtitle}</p>
+              <p className="mt-1 text-xs content-caption">
                 {healthStatus === "ok"
                   ? t.healthOk
                   : healthStatus === "checking"
@@ -235,23 +293,23 @@ export default function LibraryPage() {
               </p>
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-              {isAuthenticated ? <span className="text-xs onefile-caption">{t.signedInAs}：{authenticatedEmail}</span> : null}
-              <Link href="/" className={buttonVariants({ variant: "ghost", className: "landing-secondary-btn h-10 px-4" })}>
+              {isAuthenticated ? <span className="text-xs content-caption">{t.signedInAs}：{authenticatedEmail}</span> : null}
+              <Link href="/" className={buttonVariants({ variant: "ghost", className: "action-secondary-btn h-10 px-4" })}>
                 {t.backLanding}
               </Link>
               <Button
-                className="landing-cta-btn h-10 px-5"
+                className="action-primary-btn h-10 px-5"
                 onClick={() => router.push(isAuthenticated ? "/projects/new" : "/?next=%2Fprojects%2Fnew")}
               >
                 {isAuthenticated ? t.createProject : t.createNeedLogin}
               </Button>
               {isAuthenticated ? (
-                <Button variant="ghost" className="landing-secondary-btn h-10 px-4" disabled={exportingBackup} onClick={onExportBackup}>
+                <Button variant="ghost" className="action-secondary-btn h-10 px-4" disabled={exportingBackup} onClick={onExportBackup}>
                   {exportingBackup ? t.exportingBackup : t.exportBackup}
                 </Button>
               ) : null}
               {isAuthenticated ? (
-                <Button variant="ghost" className="landing-secondary-btn h-10 px-4" disabled={loggingOut} onClick={onLogout}>
+                <Button variant="ghost" className="action-secondary-btn h-10 px-4" disabled={loggingOut} onClick={onLogout}>
                   {loggingOut ? t.loggingOut : t.logout}
                 </Button>
               ) : null}
@@ -261,46 +319,48 @@ export default function LibraryPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t.searchPlaceholder}
-            className="onefile-input h-11 w-full sm:max-w-lg"
+            className="field-input h-11 w-full sm:max-w-lg"
           />
         </header>
 
-        <section className="onefile-surface grid grid-cols-1 gap-4 p-5 sm:grid-cols-3 sm:p-6">
+        <section className="content-surface grid grid-cols-1 gap-4 p-5 sm:grid-cols-3 sm:p-6">
           <div>
-            <p className="text-xs onefile-caption">{t.statAll}</p>
+            <p className="text-xs content-caption">{t.statAll}</p>
             <p className="mt-1 text-2xl font-semibold text-[var(--landing-title)]">{totalCount}</p>
           </div>
           <div>
-            <p className="text-xs onefile-caption">{t.statPublic}</p>
+            <p className="text-xs content-caption">{t.statPublic}</p>
             <p className="mt-1 text-2xl font-semibold text-[var(--landing-title)]">{publicCount}</p>
           </div>
           <div>
-            <p className="text-xs onefile-caption">{t.statMine}</p>
+            <p className="text-xs content-caption">{t.statMine}</p>
             <p className="mt-1 text-2xl font-semibold text-[var(--landing-title)]">{mineCount}</p>
           </div>
         </section>
 
-        <section className="onefile-surface space-y-4 p-5 sm:p-6">
-          <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" className={`onefile-chip h-9 px-4 ${scope === "all" ? "is-active" : ""}`} onClick={() => setScope("all")}>
+        <section className="content-surface space-y-4 p-5 sm:p-6">
+	          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" className={`filter-chip h-9 px-4 ${scope === "all" ? "is-active" : ""}`} onClick={() => setScope("all")}>
               {t.filterAll}
             </Button>
             <Button
               variant="ghost"
-              className={`onefile-chip h-9 px-4 ${scope === "public" ? "is-active" : ""}`}
+              className={`filter-chip h-9 px-4 ${scope === "public" ? "is-active" : ""}`}
               onClick={() => setScope("public")}
             >
               {t.filterPublic}
             </Button>
-            <Button variant="ghost" className={`onefile-chip h-9 px-4 ${scope === "mine" ? "is-active" : ""}`} onClick={() => setScope("mine")}>
-              {t.filterMine}
-            </Button>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+	            {isAuthenticated ? (
+	              <Button variant="ghost" className={`filter-chip h-9 px-4 ${scope === "mine" ? "is-active" : ""}`} onClick={() => setScope("mine")}>
+	                {t.filterMine}
+	              </Button>
+	            ) : null}
+	          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <label className="space-y-1">
-              <span className="text-xs onefile-caption">{t.filterFormLabel}</span>
+              <span className="text-xs content-caption">{t.filterFormLabel}</span>
               <select
-                className="onefile-select h-10 w-full rounded-lg px-3 text-sm"
+                className="field-select h-10 w-full rounded-lg px-3 text-sm"
                 value={formFilter}
                 onChange={(e) => setFormFilter(e.target.value)}
               >
@@ -314,9 +374,9 @@ export default function LibraryPage() {
             </label>
 
             <label className="space-y-1">
-              <span className="text-xs onefile-caption">{t.filterUsersLabel}</span>
+              <span className="text-xs content-caption">{t.filterUsersLabel}</span>
               <select
-                className="onefile-select h-10 w-full rounded-lg px-3 text-sm"
+                className="field-select h-10 w-full rounded-lg px-3 text-sm"
                 value={usersFilter}
                 onChange={(e) => setUsersFilter(e.target.value)}
               >
@@ -330,9 +390,25 @@ export default function LibraryPage() {
             </label>
 
             <label className="space-y-1">
-              <span className="text-xs onefile-caption">{t.filterModelLabel}</span>
+              <span className="text-xs content-caption">{t.filterBusinessLabel}</span>
               <select
-                className="onefile-select h-10 w-full rounded-lg px-3 text-sm"
+                className="field-select h-10 w-full rounded-lg px-3 text-sm"
+                value={businessFilter}
+                onChange={(e) => setBusinessFilter(e.target.value)}
+              >
+                <option value="all">{t.filterAnyBusiness}</option>
+                {businessOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-1">
+              <span className="text-xs content-caption">{t.filterModelLabel}</span>
+              <select
+                className="field-select h-10 w-full rounded-lg px-3 text-sm"
                 value={modelFilter}
                 onChange={(e) => setModelFilter(e.target.value)}
               >
@@ -349,10 +425,10 @@ export default function LibraryPage() {
 
         {loading ? (
           <div className="space-y-3">
-            <p className="text-sm onefile-subtle">{t.loadingCards}</p>
+            <p className="text-sm content-subtle">{t.loadingCards}</p>
             <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {Array.from({ length: 8 }).map((_, index) => (
-                <div key={`library-skeleton-${index}`} className="onefile-panel p-4">
+                <div key={`library-skeleton-${index}`} className="content-panel p-4">
                   <Skeleton className="h-4 w-2/3" />
                   <Skeleton className="mt-3 h-4 w-full" />
                   <Skeleton className="mt-2 h-4 w-4/5" />
@@ -364,37 +440,89 @@ export default function LibraryPage() {
         ) : null}
 
         {error ? (
-          <div className="onefile-panel space-y-3 p-4">
+          <div className="content-panel space-y-3 p-4">
             <p className="text-sm text-destructive">{error}</p>
-            <Button variant="ghost" className="landing-secondary-btn h-9 px-4" onClick={() => setReloadTick((prev) => prev + 1)}>
+            <Button variant="ghost" className="action-secondary-btn h-9 px-4" onClick={() => setReloadTick((prev) => prev + 1)}>
               {t.retryLoad}
             </Button>
           </div>
         ) : null}
 
         {!loading && !error && filtered.length === 0 ? (
-          <div className="onefile-panel space-y-4 p-10 text-center">
-            <p className="text-sm onefile-subtle">{t.emptyHint}</p>
+          <div className="content-panel space-y-4 p-10 text-center">
+            <p className="text-sm content-subtle">{t.emptyHint}</p>
             <div className="flex flex-wrap items-center justify-center gap-2">
               <Button
-                className="landing-cta-btn h-10 px-5"
+                className="action-primary-btn h-10 px-5"
                 onClick={() => router.push(isAuthenticated ? "/projects/new" : "/?next=%2Fprojects%2Fnew")}
               >
                 {isAuthenticated ? t.createProject : t.createNeedLogin}
               </Button>
-              <Link href="/library?mode=guest" className={buttonVariants({ variant: "ghost", className: "landing-secondary-btn h-10 px-4" })}>
+              <Link href="/library?mode=guest" className={buttonVariants({ variant: "ghost", className: "action-secondary-btn h-10 px-4" })}>
                 {t.openDemo}
               </Link>
             </div>
           </div>
         ) : null}
 
-        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {filtered.map((project) => (
-            <ProjectCard key={project.id} project={project} />
-          ))}
-        </section>
-      </div>
-    </main>
-  );
+        {!loading && !error && filtered.length > 0 ? (
+          <section className="content-surface flex flex-wrap items-center justify-between gap-3 p-4">
+            <p className="text-sm content-subtle">
+              共 {filtered.length} 个项目 · 第 {currentPage}/{totalPages} 页
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                className="action-secondary-btn h-9 px-3"
+                disabled={currentPage <= 1}
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+              >
+                上一页
+              </Button>
+              <Button
+                variant="ghost"
+                className="action-secondary-btn h-9 px-3"
+                disabled={currentPage >= totalPages}
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+              >
+                下一页
+              </Button>
+            </div>
+          </section>
+        ) : null}
+
+	        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+	          {pagedProjects.map((project) => (
+	            <ProjectCard key={project.id} project={project} isOwner={Boolean(userId && project.owner_user_id === userId)} />
+	          ))}
+	        </section>
+
+	        {!loading && !error && filtered.length > 0 ? (
+	          <section className="content-surface flex flex-wrap items-center justify-between gap-3 p-4">
+	            <p className="text-sm content-subtle">
+	              共 {filtered.length} 个项目 · 第 {currentPage}/{totalPages} 页
+	            </p>
+	            <div className="flex items-center gap-2">
+	              <Button
+	                variant="ghost"
+	                className="action-secondary-btn h-9 px-3"
+	                disabled={currentPage <= 1}
+	                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+	              >
+	                上一页
+	              </Button>
+	              <Button
+	                variant="ghost"
+	                className="action-secondary-btn h-9 px-3"
+	                disabled={currentPage >= totalPages}
+	                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+	              >
+	                下一页
+	              </Button>
+	            </div>
+	          </section>
+	        ) : null}
+	      </div>
+	    </main>
+	  );
 }

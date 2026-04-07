@@ -36,6 +36,7 @@ SCHEMA_TEMPLATE: Dict[str, Any] = {
     "solution_approach": "",
     "model": "",
     "model_desc": "",
+    "business_model_type": "UNKNOWN",
     "model_type": "UNKNOWN",
     "pricing_strategy": "",
     "form_type": "OTHER",
@@ -44,6 +45,10 @@ SCHEMA_TEMPLATE: Dict[str, Any] = {
     "latest_update": "",
     "summary": "",
     "owner_user_id": "",
+    "entity_type": "claimed_project",
+    "claim_status": "claimed",
+    "visible_in_library": True,
+    "claimed_by_user_id": "",
     "share": {},
     "updates": [],
     "current_state": "",
@@ -103,6 +108,7 @@ MODEL_TYPE_VALUES = [
     "HYBRID",
     "UNKNOWN",
 ]
+BUSINESS_MODEL_VALUES = ["TOB", "TOC", "B2B2C", "B2G", "C2C", "UNKNOWN"]
 PRICING_STRATEGY_VALUES = ["FREEMIUM", "FREE_TRIAL", "ENTERPRISE_ONLY", "SELF_SERVE"]
 
 STAGE_LABELS = {
@@ -135,6 +141,14 @@ MODEL_TYPE_LABELS = {
     "MARKETPLACE": "平台撮合",
     "HYBRID": "混合模式",
     "UNKNOWN": "未知模式",
+}
+BUSINESS_MODEL_LABELS = {
+    "TOB": "ToB",
+    "TOC": "ToC",
+    "B2B2C": "B2B2C",
+    "B2G": "B2G",
+    "C2C": "C2C",
+    "UNKNOWN": "未知",
 }
 
 UPDATE_SOURCE_VALUES = {"create", "overlay_update", "direct_edit", "system_migration"}
@@ -173,6 +187,11 @@ def form_type_label(form_type: Any) -> str:
 def model_type_label(model_type: Any) -> str:
     key = str(model_type or "").strip().upper()
     return MODEL_TYPE_LABELS.get(key, MODEL_TYPE_LABELS["UNKNOWN"])
+
+
+def business_model_label(business_model_type: Any) -> str:
+    key = str(business_model_type or "").strip().upper()
+    return BUSINESS_MODEL_LABELS.get(key, BUSINESS_MODEL_LABELS["UNKNOWN"])
 
 
 def next_action_status_label(status: Any) -> str:
@@ -1139,6 +1158,7 @@ def build_update_entry(
     kind: str = "",
     next_action_text: Any = "",
     signals: Optional[Dict[str, Any]] = None,
+    entry_id: Any = "",
 ) -> Dict[str, Any]:
     safe_content = sanitize_version_event(content, allow_fallback=True)
     safe_created_at = sanitize_version_date(created_at or get_now_str())
@@ -1153,8 +1173,11 @@ def build_update_entry(
         next_action_text=next_action_text,
     )
     merged_chars = len(safe_content)
+    safe_entry_id = clean_text(entry_id, 20, aggressive=True)
+    if not safe_entry_id:
+        safe_entry_id = clean_text(str(uuid.uuid4())[:12], 20, aggressive=True)
     return {
-        "id": clean_text(str(uuid.uuid4())[:12], 20, aggressive=True),
+        "id": safe_entry_id,
         "project_id": clean_text(project_id, 20, aggressive=True),
         "author_user_id": _sanitize_owner_user_id(author_user_id),
         "content": safe_content,
@@ -1191,6 +1214,7 @@ def normalize_updates_state(project: Dict[str, Any], project_id: str, owner_user
                 input_meta=item.get("input_meta", {}),
                 kind=item.get("kind", ""),
                 next_action_text=next_action_text,
+                entry_id=item.get("id", ""),
                 signals={
                     "evidence_score": item.get("evidence_score"),
                     "action_alignment": item.get("action_alignment"),
@@ -1325,6 +1349,26 @@ def normalize_model_type(value: Any, model_desc: str = "") -> str:
         return "MARKETPLACE"
     if any(x in probe for x in ["订阅", "subscription"]):
         return "B2B_SUBSCRIPTION"
+    return "UNKNOWN"
+
+
+def normalize_business_model_type(value: Any, context: str = "") -> str:
+    raw = sanitize_text_strict(value, allow_empty=True, max_len=36)
+    upper = raw.upper().strip()
+    if upper in BUSINESS_MODEL_VALUES:
+        return upper
+
+    probe = f"{raw} {context}".lower()
+    if "b2b2c" in probe:
+        return "B2B2C"
+    if any(x in probe for x in ["b2g", "政府", "政务", "公共部门", "事业单位"]):
+        return "B2G"
+    if any(x in probe for x in ["c2c", "个人对个人", "创作者对创作者"]):
+        return "C2C"
+    if any(x in probe for x in ["tob", "b2b", "企业", "公司", "机构", "商家", "团队"]):
+        return "TOB"
+    if any(x in probe for x in ["toc", "b2c", "消费者", "个人用户", "c端", "用户端"]):
+        return "TOC"
     return "UNKNOWN"
 
 
@@ -1474,6 +1518,10 @@ def sanitize_schema(data: Dict[str, Any]) -> Dict[str, Any]:
         ]
     )
     clean["form_type"] = normalize_form_type(data.get("form_type", data.get("shape", "")), context=context_for_form)
+    clean["business_model_type"] = normalize_business_model_type(
+        data.get("business_model_type", data.get("business_model", "")),
+        context=f"{clean.get('users', '')} {clean.get('use_cases', '')} {clean.get('summary', '')}",
+    )
     clean["model_type"] = normalize_model_type(data.get("model_type", ""), model_desc=model_desc)
     clean["pricing_strategy"] = normalize_pricing_strategy(data.get("pricing_strategy", ""), model_desc=model_desc)
     latest_from_input = sanitize_latest_update(
@@ -1590,6 +1638,7 @@ def to_ui_project(schema: Dict[str, Any], generated: bool) -> Dict[str, Any]:
         "generated": generated,
         "stage_label": stage_label(schema.get("stage", "")),
         "form_type_label": form_type_label(schema.get("form_type", "")),
+        "business_model_type_label": business_model_label(schema.get("business_model_type", "")),
         "model_type_label": model_type_label(schema.get("model_type", "")),
         **schema,
     }
@@ -1658,6 +1707,11 @@ def normalize_project(project: Dict[str, Any]) -> Dict[str, Any]:
     ui["form_type"] = normalize_form_type(project.get("form_type", schema.get("form_type", "")), context=" ".join([schema.get("title", ""), schema.get("summary", ""), schema.get("model_desc", "")]))
     ui["shape"] = clean_text(project.get("shape", infer_shape({"form_type": ui["form_type"]})), 28)
     ui["form_type_label"] = form_type_label(ui["form_type"])
+    ui["business_model_type"] = normalize_business_model_type(
+        project.get("business_model_type", schema.get("business_model_type", "")),
+        context=f"{schema.get('users', '')} {schema.get('summary', '')}",
+    )
+    ui["business_model_type_label"] = business_model_label(ui["business_model_type"])
     ui["model_type"] = normalize_model_type(project.get("model_type", schema.get("model_type", "")), model_desc=schema.get("model_desc", schema.get("model", "")))
     ui["model_type_label"] = model_type_label(ui["model_type"])
     ui["pricing_strategy"] = normalize_pricing_strategy(project.get("pricing_strategy", schema.get("pricing_strategy", "")), model_desc=schema.get("model_desc", ""))
@@ -1668,6 +1722,16 @@ def normalize_project(project: Dict[str, Any]) -> Dict[str, Any]:
     ui["share_slug"] = clean_text(project.get("share_slug", f"onefile-{ui['id']}"), 40)
     ui["summary"] = sanitize_text_strict(project.get("summary", ui["summary"]), allow_empty=False, max_len=78)
     ui["owner_user_id"] = _sanitize_owner_user_id(project.get("owner_user_id", ""))
+    entity_type = sanitize_text_strict(project.get("entity_type", ""), allow_empty=True, max_len=24).lower()
+    if entity_type not in {"temporary_card", "claimed_project"}:
+        entity_type = "claimed_project"
+    claim_status = sanitize_text_strict(project.get("claim_status", ""), allow_empty=True, max_len=24).lower()
+    if claim_status not in {"unclaimed", "claimed"}:
+        claim_status = "claimed" if entity_type == "claimed_project" else "unclaimed"
+    ui["entity_type"] = entity_type
+    ui["claim_status"] = claim_status
+    ui["visible_in_library"] = bool(project.get("visible_in_library", entity_type != "temporary_card"))
+    ui["claimed_by_user_id"] = _sanitize_owner_user_id(project.get("claimed_by_user_id", ui["owner_user_id"]))
     updates = normalize_updates_state(project, project_id=ui["id"], owner_user_id=ui["owner_user_id"])
     ui["updates"] = updates
     ui["share"] = normalize_share_state(project.get("share", {}), ui["id"])

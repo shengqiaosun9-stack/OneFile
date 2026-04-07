@@ -20,7 +20,7 @@ const API_ERROR_ZH: Record<string, string> = {
   too_many_requests: "请求过于频繁，请稍后再试（建议 1 分钟后重试）。",
   too_many_attempts: "验证码尝试次数过多，请重新获取后再试。",
   backend_unreachable: "后端服务暂时不可用，请稍后重试。",
-  backend_timeout: "后端响应超时，请稍后重试。",
+  backend_timeout: "后端响应超时，请先刷新项目库确认是否已提交成功，再决定是否重试。",
   backend_not_configured: "后端服务尚未正确配置，请联系管理员。",
 };
 

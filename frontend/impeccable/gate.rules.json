@@ -1,63 +1,136 @@
 {
   "version": "1.0.0",
-  "description": "OneFile local impeccable gate rules for visual consistency and anti-dashboard drift.",
+  "description": "OnePitch local impeccable gate rules for visual consistency, object grammar, and anti-template drift.",
   "targets": [
+    {
+      "file": "design-system/design-tokens.ts",
+      "required_tokens": [
+        "designTokens",
+        "OnePitch · 一眼项目",
+        "bgCanvas",
+        "bgSurface1",
+        "bgSurface5",
+        "textPrimary",
+        "textSecondary",
+        "borderSubtle",
+        "density",
+        "display",
+        "browse",
+        "work",
+        "contentMaxWidth",
+        "sectionY",
+        "accent",
+        "easing"
+      ]
+    },
+    {
+      "file": "design-system/object-grammar.md",
+      "required_tokens": [
+        "Prompt Bar",
+        "Example Object Card",
+        "Project Card Surface",
+        "Poster Surface",
+        "pricing table",
+        "three-column equal-height feature cards"
+      ]
+    },
+    {
+      "file": "design-system/page-rules.md",
+      "required_tokens": [
+        "## Landing",
+        "## Examples",
+        "## `/card/[id]`",
+        "## Poster",
+        "Above the fold allows one object, one message, and one primary action."
+      ]
+    },
+    {
+      "file": "design-system/interaction-states.md",
+      "required_tokens": [
+        "## Prompt Bar",
+        "## Example Object Card",
+        "## Project Card Surface",
+        "## Poster Surface",
+        "`loading`",
+        "`claimable`"
+      ]
+    },
+    {
+      "file": "design-system/brand-copy-rules.md",
+      "required_tokens": [
+        "`summary` always comes before `title`",
+        "Buttons must use action verbs.",
+        "The public-facing name is always `OnePitch · 一眼项目`.",
+        "Example summaries must describe the sample startup"
+      ]
+    },
     {
       "file": "src/app/page.tsx",
       "required_tokens": [
-        "landing-premium",
-        "landing-nav",
-        "landing-hero",
-        "landing-value-grid",
-        "landing-showcase-track",
-        "landing-flow-shell",
-        "landing-cta-btn"
+        "landing-reset-page",
+        "landing-reset-hero",
+        "data-landing-hero-poster",
+        "data-prompt-bar",
+        "landing-showcase-carousel",
+        "landing-example-object",
+        "landing-narrative-rail",
+        "landing-final-primary",
+        "OnePitch"
       ]
     },
     {
       "file": "src/app/library/page.tsx",
       "required_tokens": [
-        "landing-premium",
-        "onefile-surface",
-        "onefile-panel",
-        "landing-cta-btn"
+        "app-shell",
+        "content-surface",
+        "content-panel",
+        "action-primary-btn"
       ]
     },
     {
       "file": "src/app/projects/[id]/page.tsx",
       "required_tokens": [
-        "landing-premium",
-        "onefile-surface",
-        "onefile-panel",
-        "landing-cta-btn"
+        "app-shell",
+        "content-surface",
+        "content-panel",
+        "action-primary-btn"
       ]
     },
     {
-      "file": "src/app/share/[id]/page.tsx",
+      "file": "src/components/onefile/card-page.tsx",
       "required_tokens": [
-        "landing-premium",
-        "onefile-surface",
-        "onefile-panel",
-        "landing-cta-btn",
-        "onefile-poster-card"
+        "app-shell",
+        "project-card-surface",
+        "action-zone",
+        "action-primary-btn",
+        "poster-surface",
+        "poster-surface-summary",
+        "project.summary"
       ]
     }
   ],
   "css": {
     "file": "src/app/globals.css",
     "required_snippets": [
-      "--landing-bg-start",
-      "--landing-bg-end",
-      "--landing-brand",
-      "--landing-title",
-      "--landing-text",
-      "--landing-caption",
-      "--landing-highlight",
-      "background: linear-gradient(160deg, var(--landing-bg-start), var(--landing-bg-end));",
-      ".onefile-surface",
-      ".onefile-panel",
-      ".landing-cta-btn",
-      ".onefile-poster-card"
+      "--bg-canvas",
+      "--bg-surface-1",
+      "--bg-surface-5",
+      "--border-subtle",
+      "--text-primary",
+      "--accent-primary",
+      ".landing-reset-page",
+      ".landing-reset-hero",
+      ".landing-prompt-bar",
+      ".landing-showcase-carousel",
+      ".landing-example-object",
+      ".landing-narrative-rail",
+      ".app-shell--public",
+      ".app-shell--browse",
+      ".app-shell--work",
+      ".content-surface",
+      ".action-primary-btn",
+      ".poster-surface",
+      ".project-card-surface"
     ]
   },
   "forbidden_patterns": [
@@ -70,26 +143,58 @@
         "src/app/page.tsx",
         "src/app/library/page.tsx",
         "src/app/projects/[id]/page.tsx",
-        "src/app/share/[id]/page.tsx"
+        "src/components/onefile/card-page.tsx"
       ],
       "selector": "copy"
+    },
+    {
+      "id": "no-template-objects",
+      "description": "Avoid falling back to generic SaaS template objects in public surfaces.",
+      "pattern": "pricing\\s*table|feature\\s*comparison|analytics\\s*widget|faq\\s*stack|admin\\s*sidebar|settings\\s*panel",
+      "flags": "i",
+      "paths": [
+        "src/app/page.tsx",
+        "src/components/onefile/card-page.tsx",
+        "src/app/projects/[id]/page.tsx"
+      ],
+      "selector": "object-grammar"
+    },
+    {
+      "id": "no-legacy-object-classes",
+      "description": "Public surfaces should not keep drifting on deprecated OneFile or landing-era object class names.",
+      "pattern": "landing-card|landing-hover-card|landing-flow-shell|landing-flow-item|landing-showcase-track|landing-showcase-item|landing-showcase-card-link|landing-showcase-dot|landing-generator-|onefile-poster-|onefile-surface|onefile-panel|onefile-caption|onefile-subtle|onefile-input|onefile-select|onefile-chip|onefile-stage-badge|onefile-create-|onefile-draft-input",
+      "flags": "i",
+      "paths": [
+        "src/app/page.tsx",
+        "src/app/library/page.tsx",
+        "src/app/projects/[id]/page.tsx",
+        "src/app/projects/new/page.tsx",
+        "src/components/onefile/card-page.tsx",
+        "src/components/onefile/project-card.tsx",
+        "src/app/globals.css"
+      ],
+      "selector": "class-names"
     }
   ],
   "allow_hex_colors": [
-    "#4263eb",
-    "#1e293b",
-    "#64748b",
-    "#94a3b8",
-    "#e2e8f0",
-    "#eff6ff",
+    "#020617",
+    "#0b1220",
+    "#0f172a",
+    "#111827",
+    "#172033",
+    "#1b2230",
     "#f8fafc",
-    "#f5f8fb",
+    "#cbd5e1",
+    "#94a3b8",
+    "#64748b",
+    "#2563eb",
+    "#3b82f6",
     "#ffffff",
     "#fff",
-    "#334155",
-    "#eef2f7",
-    "#f8fafd",
+    "#000",
+    "#222b3b",
+    "#ef4444",
     "#ff0000",
-    "#000"
+    "#1e293b"
   ]
 }

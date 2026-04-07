@@ -22,6 +22,7 @@ from project_model import (
     infer_status_tag,
     migrate_project_for_hygiene,
     normalize_form_type,
+    normalize_business_model_type,
     normalize_model_type,
     normalize_project,
     normalize_share_state,
@@ -554,7 +555,8 @@ def _migrate_unowned_projects(state: Dict[str, Any], user_id: str) -> bool:
     for project in state.get("projects", []):
         next_project = copy.deepcopy(project)
         owner_id = sanitize_text_strict(next_project.get("owner_user_id", ""), allow_empty=True, max_len=40)
-        if not owner_id:
+        entity_type = sanitize_text_strict(next_project.get("entity_type", ""), allow_empty=True, max_len=24).lower()
+        if not owner_id and entity_type != "temporary_card":
             next_project["owner_user_id"] = user_id
             changed = True
         migrated.append(next_project)
@@ -565,6 +567,8 @@ def _migrate_unowned_projects(state: Dict[str, Any], user_id: str) -> bool:
 def _get_visible_projects(state: Dict[str, Any], user_id: str) -> List[Dict[str, Any]]:
     visible: List[Dict[str, Any]] = []
     for item in state.get("projects", []):
+        if not bool(item.get("visible_in_library", True)):
+            continue
         owner_id = sanitize_text_strict(item.get("owner_user_id", ""), allow_empty=True, max_len=40)
         share_state = item.get("share", {}) if isinstance(item.get("share", {}), dict) else {}
         is_public = bool(share_state.get("is_public", False))
@@ -579,6 +583,48 @@ def _find_project_index(state: Dict[str, Any], project_id: str) -> int:
         if sanitize_text_strict(item.get("id", ""), allow_empty=True, max_len=24) == target:
             return idx
     return -1
+
+
+def _sanitize_request_id(value: Any) -> str:
+    return sanitize_text_strict(value, allow_empty=True, max_len=64).strip().lower()
+
+
+def _find_recent_idempotent_project(
+    state: Dict[str, Any],
+    *,
+    user_id: str,
+    action: str,
+    request_id: str,
+) -> Optional[Dict[str, Any]]:
+    safe_action = sanitize_text_strict(action, allow_empty=True, max_len=16).lower()
+    safe_request_id = _sanitize_request_id(request_id)
+    safe_user_id = sanitize_text_strict(user_id, allow_empty=True, max_len=40)
+    if not safe_action or not safe_request_id or not safe_user_id:
+        return None
+
+    for event in reversed(state.get("events", [])):
+        if not isinstance(event, dict):
+            continue
+        event_type = sanitize_text_strict(event.get("event_type", ""), allow_empty=True, max_len=40).lower()
+        if event_type not in {"project_created", "project_updated"}:
+            continue
+        if sanitize_text_strict(event.get("user_id", ""), allow_empty=True, max_len=40) != safe_user_id:
+            continue
+        payload = event.get("payload", {}) if isinstance(event.get("payload", {}), dict) else {}
+        if _sanitize_request_id(payload.get("request_id", "")) != safe_request_id:
+            continue
+        if sanitize_text_strict(payload.get("action", ""), allow_empty=True, max_len=16).lower() != safe_action:
+            continue
+
+        project_id = sanitize_text_strict(event.get("project_id", ""), allow_empty=True, max_len=24)
+        idx = _find_project_index(state, project_id)
+        if idx < 0:
+            continue
+        project = state["projects"][idx]
+        if not isinstance(project, dict):
+            continue
+        return copy.deepcopy(project)
+    return None
 
 
 def _append_event(
@@ -923,16 +969,25 @@ def _map_generate_stage_to_project(value: str) -> str:
 def _materialize_structured_project(
     *,
     state: Dict[str, Any],
-    user: Dict[str, Any],
+    user: Optional[Dict[str, Any]],
     schema: Dict[str, Any],
     merged_input: str,
     has_file: bool,
     cta_token: str,
     source: str,
+    request_id: str = "",
+    entity_type: str = "claimed_project",
+    visible_in_library: bool = True,
 ) -> Dict[str, Any]:
     project = enrich_generated_project(schema)
     project["desc"] = merged_input
-    project["owner_user_id"] = user["id"]
+    owner_user_id = sanitize_text_strict((user or {}).get("id", ""), allow_empty=True, max_len=40)
+    safe_entity_type = "temporary_card" if sanitize_text_strict(entity_type, allow_empty=True, max_len=24).lower() == "temporary_card" else "claimed_project"
+    project["owner_user_id"] = owner_user_id if safe_entity_type == "claimed_project" else ""
+    project["claimed_by_user_id"] = owner_user_id if safe_entity_type == "claimed_project" else ""
+    project["entity_type"] = safe_entity_type
+    project["claim_status"] = "claimed" if safe_entity_type == "claimed_project" else "unclaimed"
+    project["visible_in_library"] = bool(visible_in_library and safe_entity_type == "claimed_project")
     created_ts = _now_ts()
     project["share"] = {
         "is_public": True,
@@ -942,7 +997,7 @@ def _materialize_structured_project(
     project["updates"] = [
         build_update_entry(
             project_id=project.get("id", ""),
-            author_user_id=user["id"],
+            author_user_id=owner_user_id,
             content=project.get("latest_update", project.get("version_footprint", "")),
             source=source,
             created_at=project.get("updated_at", get_now_str()),
@@ -960,13 +1015,16 @@ def _materialize_structured_project(
         _append_event(
             state=state,
             event_type="project_created",
-            source="create_api",
+            source="card_generate_api" if safe_entity_type == "temporary_card" else "create_api",
             project_id=project_id,
-            user_id=user["id"],
+            user_id=owner_user_id,
             payload={
+                "action": "create",
+                "request_id": _sanitize_request_id(request_id),
                 "stage": normalized.get("stage", ""),
                 "has_file": has_file,
                 "merged_chars": len(merged_input),
+                "entity_type": safe_entity_type,
             },
         )
         source_project_id = _attribute_conversion_from_cta(
@@ -974,7 +1032,7 @@ def _materialize_structured_project(
             cta_token=cta_token,
             conversion_kind="create",
             converted_project_id=project_id,
-            actor_user_id=user["id"],
+            actor_user_id=owner_user_id,
             source="share_cta_create",
             timestamp=_now_ts(),
         )
@@ -985,10 +1043,103 @@ def _materialize_structured_project(
     return normalized
 
 
+def generate_card(payload: Dict[str, Any]) -> Dict[str, Any]:
+    state = load_state()
+    request_id = _sanitize_request_id(payload.get("request_id", payload.get("requestId", "")))
+
+    raw_input = sanitize_text_strict(payload.get("raw_input", ""), allow_empty=True, max_len=12000)
+    file_text = sanitize_text_strict(payload.get("file_text", ""), allow_empty=True, max_len=12000)
+    optional_title = sanitize_text_strict(payload.get("optional_title", ""), allow_empty=True, max_len=42)
+    if not raw_input and not file_text:
+        raise ServiceError(400, "invalid_input", "请先输入一句话想法或添加材料。")
+
+    merged_input = _merge_generate_input(raw_input=raw_input, file_text=file_text)
+    generated = structure_project_object(merged_input, optional_title=optional_title)
+    meta = get_last_structuring_meta()
+
+    generated_name = sanitize_text_strict(generated.get("name", ""), allow_empty=True, max_len=42)
+    project_title = optional_title or generated_name or "未命名项目"
+    project_title = sanitize_text_strict(project_title, allow_empty=True, max_len=42) or "未命名项目"
+
+    one_liner = sanitize_text_strict(generated.get("one_liner", ""), allow_empty=True, max_len=140) or "项目摘要待补充"
+    core_problem = sanitize_text_strict(generated.get("core_problem", ""), allow_empty=True, max_len=220) or "核心问题待补充"
+    solution = sanitize_text_strict(generated.get("solution", ""), allow_empty=True, max_len=220) or "解决方案待补充"
+    target_user = sanitize_text_strict(generated.get("target_user", ""), allow_empty=True, max_len=120) or "目标用户待补充"
+    use_case = sanitize_text_strict(generated.get("use_case", ""), allow_empty=True, max_len=220) or "使用场景待补充"
+    monetization = sanitize_text_strict(generated.get("monetization", ""), allow_empty=True, max_len=120) or "变现方式待补充"
+    progress_note = sanitize_text_strict(generated.get("progress_note", ""), allow_empty=True, max_len=220) or "已完成首次结构化生成"
+    key_metric = sanitize_text_strict(generated.get("key_metric", ""), allow_empty=True, max_len=120) or "关键指标待补充"
+    stage = _map_generate_stage_to_project(sanitize_text_strict(generated.get("current_stage", ""), allow_empty=True, max_len=24))
+
+    schema = sanitize_schema(
+        {
+            "title": project_title,
+            "desc": merged_input,
+            "users": target_user,
+            "use_cases": use_case,
+            "problem_statement": core_problem,
+            "solution_approach": solution,
+            "model": monetization,
+            "model_desc": monetization,
+            "business_model_type": normalize_business_model_type("", context=f"{target_user} {one_liner}"),
+            "model_type": normalize_model_type("", model_desc=monetization),
+            "pricing_strategy": "",
+            "form_type": "OTHER",
+            "stage": stage,
+            "latest_update": progress_note,
+            "version_footprint": progress_note,
+            "summary": one_liner,
+            "stage_metric": key_metric,
+        }
+    )
+
+    cta_token = _sanitize_cta_token(payload.get("cta_token", payload.get("ctaToken", "")))
+    normalized = _materialize_structured_project(
+        state=state,
+        user=None,
+        schema=schema,
+        merged_input=merged_input,
+        has_file=bool(file_text),
+        cta_token=cta_token,
+        source="anonymous_generate",
+        request_id=request_id,
+        entity_type="temporary_card",
+        visible_in_library=False,
+    )
+    _record_ai_fallback_event(
+        state=state,
+        user_id="",
+        source="card_generate_structuring",
+        project_id=sanitize_text_strict(normalized.get("id", ""), allow_empty=True, max_len=24),
+        meta=meta,
+    )
+    save_state(state)
+    return {
+        "project": normalized,
+        "used_fallback": bool(meta.get("used_local_structuring", False)),
+        "warning": _build_structuring_warning(meta),
+        "idempotent_replay": False,
+    }
+
+
 def create_project(payload: Dict[str, Any]) -> Dict[str, Any]:
     state = load_state()
     user = _ensure_user(state, str(payload.get("email", "")))
     _migrate_unowned_projects(state, user["id"])
+    request_id = _sanitize_request_id(payload.get("request_id", payload.get("requestId", "")))
+    replayed = _find_recent_idempotent_project(
+        state,
+        user_id=str(user.get("id", "")),
+        action="create",
+        request_id=request_id,
+    )
+    if replayed is not None:
+        return {
+            "project": replayed,
+            "used_fallback": False,
+            "warning": "",
+            "idempotent_replay": True,
+        }
 
     title = sanitize_text_strict(payload.get("title", ""), allow_empty=True, max_len=42)
     if not title:
@@ -1018,12 +1169,22 @@ def create_project(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     stage_override = sanitize_text_strict(payload.get("stage", ""), allow_empty=True, max_len=40)
     form_override = sanitize_text_strict(payload.get("form_type", payload.get("formType", "")), allow_empty=True, max_len=40)
+    business_model_override = sanitize_text_strict(
+        payload.get("business_model_type", payload.get("businessModelType", "")),
+        allow_empty=True,
+        max_len=40,
+    )
     model_override = sanitize_text_strict(payload.get("model_type", payload.get("modelType", "")), allow_empty=True, max_len=40)
 
     if stage_override:
         schema["stage"] = normalize_stage_value(stage_override)
     if form_override:
         schema["form_type"] = normalize_form_type(form_override, context=input_text)
+    if business_model_override:
+        schema["business_model_type"] = normalize_business_model_type(
+            business_model_override,
+            context=f"{schema.get('users', '')} {schema.get('summary', '')}",
+        )
     if model_override:
         schema["model_type"] = normalize_model_type(model_override, model_desc=schema.get("model_desc", schema.get("model", "")))
 
@@ -1036,6 +1197,7 @@ def create_project(payload: Dict[str, Any]) -> Dict[str, Any]:
         has_file=bool(supplemental_text),
         cta_token=cta_token,
         source="create",
+        request_id=request_id,
     )
     _record_ai_fallback_event(
         state=state,
@@ -1050,6 +1212,7 @@ def create_project(payload: Dict[str, Any]) -> Dict[str, Any]:
         "project": normalized,
         "used_fallback": bool(meta.get("used_local_structuring", False)),
         "warning": _build_structuring_warning(meta),
+        "idempotent_replay": False,
     }
 
 
@@ -1057,6 +1220,20 @@ def generate_project(payload: Dict[str, Any]) -> Dict[str, Any]:
     state = load_state()
     user = _ensure_user(state, str(payload.get("email", "")))
     _migrate_unowned_projects(state, user["id"])
+    request_id = _sanitize_request_id(payload.get("request_id", payload.get("requestId", "")))
+    replayed = _find_recent_idempotent_project(
+        state,
+        user_id=str(user.get("id", "")),
+        action="create",
+        request_id=request_id,
+    )
+    if replayed is not None:
+        return {
+            "project": replayed,
+            "used_fallback": False,
+            "warning": "",
+            "idempotent_replay": True,
+        }
 
     raw_input = sanitize_text_strict(payload.get("raw_input", ""), allow_empty=True, max_len=12000)
     file_text = sanitize_text_strict(payload.get("file_text", ""), allow_empty=True, max_len=12000)
@@ -1093,6 +1270,7 @@ def generate_project(payload: Dict[str, Any]) -> Dict[str, Any]:
             "solution_approach": solution,
             "model": monetization,
             "model_desc": monetization,
+            "business_model_type": normalize_business_model_type("", context=f"{target_user} {one_liner}"),
             "model_type": normalize_model_type("", model_desc=monetization),
             "pricing_strategy": "",
             "form_type": "OTHER",
@@ -1113,6 +1291,7 @@ def generate_project(payload: Dict[str, Any]) -> Dict[str, Any]:
         has_file=bool(file_text),
         cta_token=cta_token,
         source="create",
+        request_id=request_id,
     )
     _record_ai_fallback_event(
         state=state,
@@ -1127,6 +1306,7 @@ def generate_project(payload: Dict[str, Any]) -> Dict[str, Any]:
         "project": normalized,
         "used_fallback": bool(meta.get("used_local_structuring", False)),
         "warning": _build_structuring_warning(meta),
+        "idempotent_replay": False,
     }
 
 
@@ -1166,6 +1346,10 @@ def edit_project(project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     next_project["latest_update"] = latest_update
     next_project["stage_metric"] = sanitize_text_strict(payload.get("stage_metric", current.get("stage_metric", "")), allow_empty=True, max_len=120)
     next_project["stage"] = normalize_stage_value(payload.get("stage", current.get("stage", "")))
+    next_project["business_model_type"] = normalize_business_model_type(
+        payload.get("business_model_type", current.get("business_model_type", "")),
+        context=f"{next_project.get('users', '')} {next_project.get('summary', '')}",
+    )
     next_project["model_type"] = normalize_model_type(payload.get("model_type", current.get("model_type", "")), model_desc=next_project.get("model_desc", current.get("model", "")))
     next_project["form_type"] = normalize_form_type(payload.get("form_type", current.get("form_type", "")), context=f"{title} {next_project.get('summary', '')} {next_project.get('model_desc', '')}")
     next_project["updated_at"] = timestamp
@@ -1228,6 +1412,22 @@ def update_project_progress(project_id: str, payload: Dict[str, Any]) -> Dict[st
         raise ServiceError(403, "forbidden", "无权限更新该项目。")
 
     previous_project = copy.deepcopy(project)
+    request_id = _sanitize_request_id(payload.get("request_id", payload.get("requestId", "")))
+    replayed = _find_recent_idempotent_project(
+        state,
+        user_id=str(user.get("id", "")),
+        action="update",
+        request_id=request_id,
+    )
+    if replayed is not None:
+        return {
+            "project": replayed,
+            "used_fallback": False,
+            "warning": "",
+            "quality_feedback": {},
+            "evolution_explanation": {},
+            "idempotent_replay": True,
+        }
 
     cleaned_update = sanitize_text_strict(
         payload.get("update_text", payload.get("input_text", "")),
@@ -1281,6 +1481,16 @@ def update_project_progress(project_id: str, payload: Dict[str, Any]) -> Dict[st
     model_type_candidate = sanitize_text_strict(schema.get("model_type", ""), allow_empty=True, max_len=36)
     if model_type_candidate:
         next_project["model_type"] = normalize_model_type(model_type_candidate, model_desc=next_project.get("model_desc", next_project.get("model", "")))
+    business_model_candidate = sanitize_text_strict(
+        payload.get("business_model_type", payload.get("businessModelType", schema.get("business_model_type", ""))),
+        allow_empty=True,
+        max_len=36,
+    )
+    if business_model_candidate:
+        next_project["business_model_type"] = normalize_business_model_type(
+            business_model_candidate,
+            context=f"{next_project.get('users', '')} {next_project.get('summary', '')}",
+        )
     users_candidate = sanitize_text_strict(schema.get("users", ""), allow_empty=True, max_len=44)
     if users_candidate:
         next_project["users"] = users_candidate
@@ -1310,6 +1520,8 @@ def update_project_progress(project_id: str, payload: Dict[str, Any]) -> Dict[st
         user_id=user["id"],
         ts=timestamp,
         payload={
+            "action": "update",
+            "request_id": request_id,
             "kind": new_update.get("kind", ""),
             "evidence_score": new_update.get("evidence_score", 0),
             "action_alignment": new_update.get("action_alignment", 0),
@@ -1363,7 +1575,159 @@ def update_project_progress(project_id: str, payload: Dict[str, Any]) -> Dict[st
         "warning": _build_structuring_warning(meta),
         "quality_feedback": quality_feedback,
         "evolution_explanation": evolution_explanation,
+        "idempotent_replay": False,
     }
+
+
+def _recompute_project_updates_projection(next_project: Dict[str, Any]) -> None:
+    updates = next_project.get("updates", [])
+    if not isinstance(updates, list):
+        updates = []
+    cleaned_updates = [item for item in updates if isinstance(item, dict)]
+    next_project["updates"] = cleaned_updates
+    if cleaned_updates:
+        head_content = sanitize_text_strict(cleaned_updates[0].get("content", ""), allow_empty=True, max_len=280)
+        if head_content:
+            next_project["latest_update"] = head_content
+            next_project["version_footprint"] = head_content
+    else:
+        next_project["latest_update"] = ""
+        next_project["version_footprint"] = ""
+
+
+def edit_project_progress_item(project_id: str, update_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    state = load_state()
+    user = _ensure_user(state, str(payload.get("email", "")))
+
+    idx = _find_project_index(state, project_id)
+    if idx < 0:
+        raise ServiceError(404, "not_found", "目标项目不存在。")
+    project = state["projects"][idx]
+    owner_id = sanitize_text_strict(project.get("owner_user_id", ""), allow_empty=True, max_len=40)
+    if owner_id != user["id"]:
+        raise ServiceError(403, "forbidden", "无权限编辑该项目进展。")
+
+    safe_update_id = sanitize_text_strict(update_id, allow_empty=True, max_len=24)
+    if not safe_update_id:
+        raise ServiceError(400, "invalid_update", "进展标识无效。")
+    new_content = sanitize_text_strict(payload.get("content", ""), allow_empty=False, max_len=280)
+    if not new_content:
+        raise ServiceError(400, "invalid_update", "请输入有效的进展内容。")
+
+    previous_project = copy.deepcopy(project)
+    next_project = copy.deepcopy(project)
+    updates = next_project.get("updates", [])
+    if not isinstance(updates, list):
+        updates = []
+
+    found = False
+    for item in updates:
+        if not isinstance(item, dict):
+            continue
+        if sanitize_text_strict(item.get("id", ""), allow_empty=True, max_len=24) != safe_update_id:
+            continue
+        found = True
+        item["content"] = new_content
+        item["kind"] = infer_update_kind(new_content)
+        item["edited_at"] = _now_ts()
+        break
+    if not found:
+        raise ServiceError(404, "not_found", "目标进展不存在或已删除。")
+
+    timestamp = _now_ts()
+    next_project["updated_at"] = timestamp
+    _recompute_project_updates_projection(next_project)
+    next_project["stage"] = normalize_stage_value(next_project.get("stage", ""))
+    next_project["status_tag"] = infer_status_tag(next_project["stage"])
+    next_project["status_theme"] = get_status_theme(next_project["status_tag"])
+    next_project = evolve_action_loop(next_project, next_project.get("latest_update", ""), timestamp)
+
+    normalized = normalize_project(next_project)
+    normalized["id"] = project_id
+    normalized["updated_at"] = timestamp
+    state["projects"][idx] = normalized
+
+    _append_event(
+        state=state,
+        event_type="project_updated",
+        source="progress_edit",
+        project_id=project_id,
+        user_id=user["id"],
+        ts=timestamp,
+        payload={
+            "action": "update_item",
+            "update_id": safe_update_id,
+        },
+    )
+    _emit_loop_transition_events(state, previous_project, normalized, project_id, "progress_edit", timestamp)
+    _refresh_ops_signals(state, project_ids=[project_id])
+    save_state(state)
+    return {"project": normalized}
+
+
+def delete_project_progress_item(project_id: str, update_id: str, email: str) -> Dict[str, Any]:
+    state = load_state()
+    user = _ensure_user(state, email)
+
+    idx = _find_project_index(state, project_id)
+    if idx < 0:
+        raise ServiceError(404, "not_found", "目标项目不存在。")
+    project = state["projects"][idx]
+    owner_id = sanitize_text_strict(project.get("owner_user_id", ""), allow_empty=True, max_len=40)
+    if owner_id != user["id"]:
+        raise ServiceError(403, "forbidden", "无权限删除该项目进展。")
+
+    safe_update_id = sanitize_text_strict(update_id, allow_empty=True, max_len=24)
+    if not safe_update_id:
+        raise ServiceError(400, "invalid_update", "进展标识无效。")
+
+    previous_project = copy.deepcopy(project)
+    next_project = copy.deepcopy(project)
+    updates = next_project.get("updates", [])
+    if not isinstance(updates, list):
+        updates = []
+    kept_updates = []
+    removed = False
+    for item in updates:
+        if not isinstance(item, dict):
+            continue
+        if sanitize_text_strict(item.get("id", ""), allow_empty=True, max_len=24) == safe_update_id:
+            removed = True
+            continue
+        kept_updates.append(item)
+    if not removed:
+        raise ServiceError(404, "not_found", "目标进展不存在或已删除。")
+
+    next_project["updates"] = kept_updates
+    timestamp = _now_ts()
+    next_project["updated_at"] = timestamp
+    _recompute_project_updates_projection(next_project)
+    next_project["stage"] = normalize_stage_value(next_project.get("stage", ""))
+    next_project["status_tag"] = infer_status_tag(next_project["stage"])
+    next_project["status_theme"] = get_status_theme(next_project["status_tag"])
+    next_project = evolve_action_loop(next_project, next_project.get("latest_update", ""), timestamp)
+
+    normalized = normalize_project(next_project)
+    normalized["id"] = project_id
+    normalized["updated_at"] = timestamp
+    state["projects"][idx] = normalized
+
+    _append_event(
+        state=state,
+        event_type="project_updated",
+        source="progress_delete",
+        project_id=project_id,
+        user_id=user["id"],
+        ts=timestamp,
+        payload={
+            "action": "delete_item",
+            "update_id": safe_update_id,
+        },
+    )
+    _emit_loop_transition_events(state, previous_project, normalized, project_id, "progress_delete", timestamp)
+    _refresh_ops_signals(state, project_ids=[project_id])
+    save_state(state)
+    return {"project": normalized}
 
 
 def toggle_share(project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1476,6 +1840,50 @@ def get_share(project_id: str, email: str = "") -> Dict[str, Any]:
         "access_granted": True,
         "owner_preview": owner_preview,
     }
+
+
+def get_card(project_id: str, email: str = "") -> Dict[str, Any]:
+    return get_share(project_id, email=email)
+
+
+def claim_card(project_id: str, email: str) -> Dict[str, Any]:
+    state = load_state()
+    user = _ensure_user(state, email)
+
+    idx = _find_project_index(state, project_id)
+    if idx < 0:
+        raise ServiceError(404, "not_found", "目标卡片不存在。")
+
+    current = state["projects"][idx]
+    entity_type = sanitize_text_strict(current.get("entity_type", ""), allow_empty=True, max_len=24).lower()
+    owner_id = sanitize_text_strict(current.get("owner_user_id", ""), allow_empty=True, max_len=40)
+
+    if entity_type != "temporary_card":
+        if owner_id and owner_id != user["id"]:
+            raise ServiceError(403, "forbidden", "该项目已属于其他用户，无法认领。")
+        return {"project": current}
+
+    next_project = copy.deepcopy(current)
+    next_project["owner_user_id"] = user["id"]
+    next_project["claimed_by_user_id"] = user["id"]
+    next_project["entity_type"] = "claimed_project"
+    next_project["claim_status"] = "claimed"
+    next_project["visible_in_library"] = True
+    next_project["updated_at"] = _now_ts()
+
+    normalized = normalize_project(next_project)
+    state["projects"][idx] = normalized
+    _append_event(
+        state=state,
+        event_type="project_updated",
+        source="card_claim_api",
+        project_id=project_id,
+        user_id=user["id"],
+        payload={"action": "claim", "entity_type": "claimed_project"},
+    )
+    _refresh_ops_signals(state, project_ids=[project_id])
+    save_state(state)
+    return {"project": normalized}
 
 
 def track_share_cta(project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:

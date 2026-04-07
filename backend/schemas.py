@@ -29,8 +29,12 @@ class CreateProjectRequest(BaseModel):
     stage: str = Field(default="BUILDING", max_length=40)
     form_type: str = Field(default="OTHER", max_length=40)
     formType: str = Field(default="OTHER", max_length=40)
+    business_model_type: str = Field(default="UNKNOWN", max_length=40)
+    businessModelType: str = Field(default="UNKNOWN", max_length=40)
     model_type: str = Field(default="UNKNOWN", max_length=40)
     modelType: str = Field(default="UNKNOWN", max_length=40)
+    request_id: str = Field(default="", max_length=64)
+    requestId: str = Field(default="", max_length=64)
 
 
 class GenerateProjectRequest(BaseModel):
@@ -39,6 +43,18 @@ class GenerateProjectRequest(BaseModel):
     file_text: str = Field(default="", max_length=12000)
     cta_token: str = Field(default="", max_length=40)
     ctaToken: str = Field(default="", max_length=40)
+    request_id: str = Field(default="", max_length=64)
+    requestId: str = Field(default="", max_length=64)
+
+
+class GenerateCardRequest(BaseModel):
+    raw_input: str = Field(default="", max_length=12000)
+    optional_title: str = Field(default="", max_length=80)
+    file_text: str = Field(default="", max_length=12000)
+    cta_token: str = Field(default="", max_length=40)
+    ctaToken: str = Field(default="", max_length=40)
+    request_id: str = Field(default="", max_length=64)
+    requestId: str = Field(default="", max_length=64)
 
 
 class EditProjectRequest(BaseModel):
@@ -54,6 +70,7 @@ class EditProjectRequest(BaseModel):
     stage_metric: Optional[str] = Field(default=None, max_length=120)
     stage: Optional[str] = Field(default=None, max_length=40)
     form_type: Optional[str] = Field(default=None, max_length=40)
+    business_model_type: Optional[str] = Field(default=None, max_length=40)
     model_type: Optional[str] = Field(default=None, max_length=40)
 
 
@@ -64,6 +81,14 @@ class UpdateProgressRequest(BaseModel):
     input_text: str = Field(default="", max_length=12000)
     cta_token: str = Field(default="", max_length=40)
     ctaToken: str = Field(default="", max_length=40)
+    business_model_type: str = Field(default="", max_length=40)
+    businessModelType: str = Field(default="", max_length=40)
+    request_id: str = Field(default="", max_length=64)
+    requestId: str = Field(default="", max_length=64)
+
+
+class EditProgressItemRequest(BaseModel):
+    content: str = Field(default="", max_length=12000)
 
 
 class ToggleShareRequest(BaseModel):

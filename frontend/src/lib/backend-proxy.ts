@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 const RAW_BACKEND_API_URL = process.env.BACKEND_API_URL?.trim();
 const BACKEND_API_URL = RAW_BACKEND_API_URL || "http://127.0.0.1:8000";
-const BACKEND_TIMEOUT_MS = 12_000;
+const RAW_BACKEND_TIMEOUT_MS = Number.parseInt(process.env.BACKEND_TIMEOUT_MS || "70000", 10);
+const BACKEND_TIMEOUT_MS = Number.isFinite(RAW_BACKEND_TIMEOUT_MS)
+  ? Math.max(8_000, Math.min(RAW_BACKEND_TIMEOUT_MS, 120_000))
+  : 70_000;
 
 type ApiErrorPayload = {
   error: string;
