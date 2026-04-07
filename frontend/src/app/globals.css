@@ -2405,11 +2405,12 @@
 .landing-prompt-support {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  gap: 1.2rem;
+  flex-wrap: wrap;
 }
 
 .landing-prompt-hint,
+.landing-prompt-rich-link,
 .landing-final-link,
 .landing-example-link,
 .landing-reset-footer-link {
@@ -2430,7 +2431,14 @@
   letter-spacing: 0.005em;
 }
 
+.landing-prompt-rich-link {
+  font-size: 0.82rem;
+  color: rgba(147, 197, 253, 0.78);
+  white-space: nowrap;
+}
+
 .landing-prompt-hint:hover,
+.landing-prompt-rich-link:hover,
 .landing-final-link:hover,
 .landing-example-link:hover,
 .landing-reset-footer-link:hover {
@@ -2441,6 +2449,7 @@
   font-size: 0.76rem;
   color: rgba(148, 163, 184, 0.72);
   white-space: nowrap;
+  margin-left: auto;
 }
 
 .landing-prompt-error {
@@ -2541,6 +2550,9 @@
   top: 0;
   left: 50%;
   width: min(100%, 26.5rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.56rem;
   opacity: 0.42;
   filter: saturate(0.76);
   transition:
@@ -2597,6 +2609,55 @@
 .landing-example-copy {
   display: grid;
   gap: 1.2rem;
+}
+
+.landing-example-input-strip {
+  position: relative;
+  display: grid;
+  gap: 0.3rem;
+  padding: 0 0.35rem 0.34rem;
+  border-bottom: 1px solid rgb(148 163 184 / 0.24);
+  opacity: 0.6;
+  transform: translateY(2px);
+  animation: landing-input-strip-reveal 260ms ease-out forwards;
+}
+
+.landing-example-input-strip::after {
+  content: "";
+  position: absolute;
+  left: 0.35rem;
+  right: 0.35rem;
+  bottom: -0.56rem;
+  height: 1px;
+  background: linear-gradient(90deg, rgb(148 163 184 / 0), rgb(148 163 184 / 0.32), rgb(148 163 184 / 0));
+}
+
+.landing-example-input-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.66);
+}
+
+.landing-example-input-text {
+  font-size: 0.8rem;
+  line-height: 1.52;
+  color: rgba(203, 213, 225, 0.78);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@keyframes landing-input-strip-reveal {
+  from {
+    opacity: 0.6;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .landing-example-summary {
@@ -2899,6 +2960,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .landing-example-input-strip,
   .landing-prompt-shell,
   .landing-showcase-control,
   .landing-example-object,
@@ -2906,9 +2968,11 @@
   .landing-final-primary,
   .landing-example-primary,
   .landing-prompt-hint,
+  .landing-prompt-rich-link,
   .landing-final-link,
   .landing-example-link,
   .landing-reset-footer-link {
+    animation: none !important;
     transition: none !important;
     transform: none !important;
   }

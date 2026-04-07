@@ -23,11 +23,11 @@ export function ProjectCard({ project, isOwner = false }: Props) {
   return (
     <Card className="project-card-surface project-card-surface--interactive h-full border-0">
       <CardHeader className="space-y-3">
+        <p className="line-clamp-3 text-sm content-subtle">{summary}</p>
         <div className="flex items-center justify-between gap-2">
-          <CardTitle className="line-clamp-1 text-base text-[var(--landing-title)]">{project.title}</CardTitle>
+          <CardTitle className="line-clamp-1 text-sm font-medium text-[var(--landing-title)]/90">{project.title}</CardTitle>
           <Badge className="stage-badge">{stageText}</Badge>
         </div>
-        <p className="line-clamp-3 text-sm content-subtle">{summary}</p>
       </CardHeader>
 
       <CardContent className="space-y-3 text-sm">
@@ -48,10 +48,11 @@ export function ProjectCard({ project, isOwner = false }: Props) {
             <p className="text-xs content-caption">{t.profitModel}</p>
             <p className="line-clamp-2 text-[var(--landing-title)]">{profitModelText}</p>
           </div>
+          <div className="col-span-2 border-t border-white/10 pt-2">
+            <p className="text-xs content-caption">{t.latest}</p>
+            <p className="line-clamp-2 text-[var(--landing-title)]/85">{project.latest_update || t.noUpdates}</p>
+          </div>
         </div>
-        <p className="line-clamp-2 border-t border-white/10 pt-2 text-xs content-caption">
-          {t.latest}: {project.latest_update || t.noUpdates}
-        </p>
       </CardContent>
 
       <CardFooter className="flex gap-2">

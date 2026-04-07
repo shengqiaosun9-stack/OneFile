@@ -197,11 +197,13 @@ export function CardPage({ projectId }: { projectId: string }) {
       }
       const body = (await res.json()) as CtaResponse;
       const next = new URLSearchParams();
+      next.set("mode", "quick");
+      next.set("from", "card");
       next.set("cta_token", body.cta_token);
       router.push(`/?${next.toString()}`);
     } catch {
       toast.error(t.ctaTimeout);
-      router.push("/");
+      router.push("/?mode=quick&from=card");
     }
   }
 
@@ -312,6 +314,13 @@ export function CardPage({ projectId }: { projectId: string }) {
               <p className="content-subtle">看完这张卡，也可以直接做你自己的。</p>
               <button type="button" className="inline-nav-link" onClick={handleStartOwnCard}>
                 {t.cta}
+              </button>
+              <button
+                type="button"
+                className="inline-nav-link opacity-80"
+                onClick={() => router.push("/projects/new?mode=rich&from=card")}
+              >
+                {t.ctaRich}
               </button>
             </section>
 

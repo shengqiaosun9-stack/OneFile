@@ -115,6 +115,8 @@ export default function LibraryPage() {
   }, []);
 
   const isAuthenticated = Boolean(authenticatedEmail);
+  const richCreateHref = "/projects/new?mode=rich&from=library";
+  const richCreateLoginHref = "/?next=%2Fprojects%2Fnew%3Fmode%3Drich%26from%3Dlibrary";
 
   useEffect(() => {
     if (!isAuthenticated && scope === "mine") {
@@ -299,7 +301,7 @@ export default function LibraryPage() {
               </Link>
               <Button
                 className="action-primary-btn h-10 px-5"
-                onClick={() => router.push(isAuthenticated ? "/projects/new" : "/?next=%2Fprojects%2Fnew")}
+                onClick={() => router.push(isAuthenticated ? richCreateHref : richCreateLoginHref)}
               >
                 {isAuthenticated ? t.createProject : t.createNeedLogin}
               </Button>
@@ -454,7 +456,7 @@ export default function LibraryPage() {
             <div className="flex flex-wrap items-center justify-center gap-2">
               <Button
                 className="action-primary-btn h-10 px-5"
-                onClick={() => router.push(isAuthenticated ? "/projects/new" : "/?next=%2Fprojects%2Fnew")}
+                onClick={() => router.push(isAuthenticated ? richCreateHref : richCreateLoginHref)}
               >
                 {isAuthenticated ? t.createProject : t.createNeedLogin}
               </Button>

@@ -22,7 +22,7 @@ type ExampleCard = {
   audience: string;
   input: string;
   summary: string;
-  scenario: string;
+  description: string;
 };
 
 type PromptBarState = "idle" | "focused" | "typing" | "submitting" | "failed";
@@ -34,7 +34,7 @@ const EXAMPLES: ExampleCard[] = [
     audience: "早期 SaaS 团队",
     input: "帮早期 SaaS 团队把客户反馈、当前验证状态和下一步动作收进一个共享工作区，让潜在客户和投资人能快速判断这个产品现在值不值得继续跟进。",
     summary: "让外部人用几分钟就能判断一个早期 SaaS 项目现在值不值得继续跟进。",
-    scenario: "发给投资人或潜在客户，对方会立刻知道你验证到了哪一步。",
+    description: "把客户反馈、验证状态和下一步动作压缩成一张同步页面，帮助团队持续对齐同一个项目事实。",
   },
   {
     cardId: "9c28454f",
@@ -42,7 +42,7 @@ const EXAMPLES: ExampleCard[] = [
     audience: "国风游戏美术团队",
     input: "给国风游戏美术团队做一个 AI 绘画工作台，让制作人不用看长文档也能快速判断这套风格方案是否适合当前项目。",
     summary: "让游戏制作团队先看懂风格方向和合作价值，再决定要不要继续推进合作。",
-    scenario: "发给制作人或外包合作方，对方能一眼判断风格和合作切入点。",
+    description: "围绕国风美术方案沉淀风格方向、样例结果和合作边界，让团队在同一语义下推进创作决策。",
   },
   {
     cardId: "c36ea7f2",
@@ -50,7 +50,7 @@ const EXAMPLES: ExampleCard[] = [
     audience: "中小企业法务负责人",
     input: "做一个帮助中小企业快速生成标准合同初稿的服务，让法务负责人在第一次看到时就知道这套方案能不能缩短签约流程。",
     summary: "让法务负责人快速判断这套合同服务能不能缩短签约流程和沟通成本。",
-    scenario: "发给企业法务或创始人，对方会立刻知道适不适合进入试用。",
+    description: "将常见签约条款整理成可复用模板和流程节点，帮助法务团队更快产出可审核的合同初稿。",
   },
 ];
 
@@ -111,6 +111,9 @@ function PromptBar({
   onHintClick,
   inputRef,
   placeholder,
+  submitLabel,
+  richCreateHref,
+  richCreateLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -125,6 +128,9 @@ function PromptBar({
   onHintClick: () => void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
   placeholder: string;
+  submitLabel: string;
+  richCreateHref: string;
+  richCreateLabel: string;
 }) {
   return (
     <form className="landing-prompt-bar" data-prompt-bar data-state={state} onSubmit={onSubmit}>
@@ -142,13 +148,16 @@ function PromptBar({
           aria-label="项目一句话输入"
         />
         <button type="submit" className="landing-prompt-submit" disabled={loading || !value.trim()}>
-          {loading ? "正在生成项目卡..." : "生成项目卡"}
+          {loading ? "正在生成项目卡..." : submitLabel}
         </button>
       </div>
       <div className="landing-prompt-support">
         <button type="button" className="landing-prompt-hint" onClick={onHintClick}>
           {hint}
         </button>
+        <Link href={richCreateHref} className="landing-prompt-rich-link">
+          {richCreateLabel}
+        </Link>
         <span className="landing-prompt-count">{value.length}/300</span>
       </div>
       {!error && !value.trim() ? <p className="landing-prompt-empty-hint">{emptyHint}</p> : null}
@@ -164,6 +173,9 @@ function ExampleObjectCard({
   offset,
   onSelect,
   onGenerate,
+  inputLabel,
+  quickGenerateLabel,
+  viewCardLabel,
 }: {
   example: ExampleCard;
   selected: boolean;
@@ -171,6 +183,9 @@ function ExampleObjectCard({
   offset: number;
   onSelect: () => void;
   onGenerate: () => void;
+  inputLabel: string;
+  quickGenerateLabel: string;
+  viewCardLabel: string;
 }) {
   const preview = !selected;
   return (
@@ -184,13 +199,19 @@ function ExampleObjectCard({
       onClick={selected ? undefined : onSelect}
       tabIndex={selected ? 0 : -1}
     >
+      {!preview ? (
+        <div className="landing-example-input-strip" aria-live="polite">
+          <p className="landing-example-input-label">{inputLabel}</p>
+          <p className="landing-example-input-text">{example.input}</p>
+        </div>
+      ) : null}
       <div className="landing-example-object-inner">
         <div className="landing-example-copy">
           <p className="landing-example-summary">{example.summary}</p>
           <p className="landing-example-meta">
             {example.title} · 面向 {example.audience}
           </p>
-          {!preview ? <p className="landing-example-scenario">{example.scenario}</p> : null}
+          {!preview ? <p className="landing-example-scenario">{example.description}</p> : null}
         </div>
         {!preview ? (
           <div className="landing-example-actions">
@@ -202,14 +223,14 @@ function ExampleObjectCard({
                 onGenerate();
               }}
             >
-              用一句话生成我的项目卡
+              {quickGenerateLabel}
             </button>
             <Link
               href={`/card/${example.cardId}?from=landing-example`}
               className="landing-example-link"
               onClick={(event) => event.stopPropagation()}
             >
-              查看项目卡
+              {viewCardLabel}
             </Link>
           </div>
         ) : (
@@ -223,6 +244,7 @@ function ExampleObjectCard({
 function ShowcaseCarousel({
   title,
   subtitle,
+  inputLabel,
   examples,
   activeIndex,
   onCycle,
@@ -231,9 +253,12 @@ function ShowcaseCarousel({
   onKeyDown,
   onPointerDown,
   onPointerUp,
+  quickGenerateLabel,
+  viewCardLabel,
 }: {
   title: string;
   subtitle: string;
+  inputLabel: string;
   examples: ExampleCard[];
   activeIndex: number;
   onCycle: (direction: 1 | -1) => void;
@@ -242,6 +267,8 @@ function ShowcaseCarousel({
   onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   onPointerDown: (event: PointerEvent<HTMLElement>) => void;
   onPointerUp: (event: PointerEvent<HTMLElement>) => void;
+  quickGenerateLabel: string;
+  viewCardLabel: string;
 }) {
   return (
     <section
@@ -280,6 +307,9 @@ function ShowcaseCarousel({
               offset={offset}
               onSelect={() => onSelect(index)}
               onGenerate={() => onGenerate(example)}
+              inputLabel={inputLabel}
+              quickGenerateLabel={quickGenerateLabel}
+              viewCardLabel={viewCardLabel}
             />
           );
         })}
@@ -352,6 +382,11 @@ export default function LandingPage() {
 
   const activeExample = EXAMPLES[activeExampleIndex] ?? EXAMPLES[0];
   const promptState: PromptBarState = loading ? "submitting" : promptFocused ? "focused" : input.trim() ? "typing" : error ? "failed" : "idle";
+  const richCreateHref = useMemo(() => {
+    const query = new URLSearchParams({ mode: "rich", from: "landing" });
+    if (ctaToken) query.set("cta_token", ctaToken);
+    return `/projects/new?${query.toString()}`;
+  }, [ctaToken]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -571,6 +606,9 @@ export default function LandingPage() {
               onHintClick={() => fillExample(activeExample)}
               inputRef={composerRef}
               placeholder={t.promptPlaceholder}
+              submitLabel={t.jumpToCta}
+              richCreateHref={richCreateHref}
+              richCreateLabel={t.promptRichLink}
             />
           }
         />
@@ -578,6 +616,7 @@ export default function LandingPage() {
         <ShowcaseCarousel
           title={t.exampleTitle}
           subtitle={t.exampleSubtitle}
+          inputLabel={t.exampleInputLabel}
           examples={EXAMPLES}
           activeIndex={activeExampleIndex}
           onCycle={cycleExample}
@@ -586,6 +625,8 @@ export default function LandingPage() {
           onKeyDown={handleShowcaseKeyDown}
           onPointerDown={handleShowcasePointerDown}
           onPointerUp={handleShowcasePointerUp}
+          quickGenerateLabel={t.exampleTry}
+          viewCardLabel={t.exampleViewCard}
         />
 
         <NarrativeRail title={t.valueTitle} lead={t.valueLead} items={t.valueItems} />
@@ -598,10 +639,10 @@ export default function LandingPage() {
           </div>
           <div className="landing-reset-final-actions">
             <button type="button" className="landing-final-primary" onClick={() => composerRef.current?.focus()}>
-              现在生成一张项目卡
+              {t.finalQuickCta}
             </button>
-            <button type="button" className="landing-final-link" onClick={() => setLoginOpen(true)}>
-              登录后继续编辑
+            <button type="button" className="landing-final-link" onClick={() => router.push(richCreateHref)}>
+              {t.finalRichCta}
             </button>
           </div>
         </section>

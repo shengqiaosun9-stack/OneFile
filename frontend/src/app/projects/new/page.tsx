@@ -101,6 +101,8 @@ function formatProgressRelativeLabel(updatedAt: string): string {
 export default function NewProjectPage() {
   const t = copyZh.create;
   const router = useRouter();
+  const [entryMode, setEntryMode] = useState<"quick" | "rich">("rich");
+  const [entryFrom, setEntryFrom] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -125,6 +127,13 @@ export default function NewProjectPage() {
   const [savedField, setSavedField] = useState<EditableField | "">("");
   const [activeEditableField, setActiveEditableField] = useState<EditableField | "">("");
   const [firstClickHintSeen, setFirstClickHintSeen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const query = new URLSearchParams(window.location.search);
+    setEntryMode(query.get("mode") === "quick" ? "quick" : "rich");
+    setEntryFrom((query.get("from") || "").trim());
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -400,7 +409,11 @@ export default function NewProjectPage() {
 
   if (authReady && !email) {
     const ctaToken = readCtaTokenFromUrl();
-    const loginNext = ctaToken ? `/projects/new?cta_token=${encodeURIComponent(ctaToken)}` : "/projects/new";
+    const nextParams = new URLSearchParams();
+    nextParams.set("mode", entryMode);
+    if (entryFrom) nextParams.set("from", entryFrom);
+    if (ctaToken) nextParams.set("cta_token", ctaToken);
+    const loginNext = `/projects/new${nextParams.toString() ? `?${nextParams.toString()}` : ""}`;
     return (
       <main className="app-shell app-shell--work min-h-screen px-6 py-8 sm:px-8 sm:py-10">
         <div className="mx-auto max-w-3xl space-y-6">
@@ -442,6 +455,9 @@ export default function NewProjectPage() {
             <p className="text-xs uppercase tracking-[0.16em] text-[var(--landing-caption)]">OnePitch · 一眼项目</p>
             <h1 className="compose-title">{t.title}</h1>
             <p className="compose-subtitle">{viewState === "draft" ? t.draftSubtitle : t.subtitle}</p>
+            {viewState !== "draft" ? (
+              <p className="text-xs content-caption">{entryMode === "rich" ? t.modeRichNote : t.modeQuickNote}</p>
+            ) : null}
           </header>
 
           {viewState !== "draft" ? (
