@@ -106,6 +106,7 @@ function PromptBar({
   state,
   loading,
   error,
+  warning,
   hint,
   emptyHint,
   onHintClick,
@@ -123,6 +124,7 @@ function PromptBar({
   state: PromptBarState;
   loading: boolean;
   error: string;
+  warning: string;
   hint: string;
   emptyHint: string;
   onHintClick: () => void;
@@ -162,6 +164,7 @@ function PromptBar({
       </div>
       {!error && !value.trim() ? <p className="landing-prompt-empty-hint">{emptyHint}</p> : null}
       {error ? <p className="landing-prompt-error">{error}</p> : null}
+      {!error && warning ? <p className="landing-prompt-empty-hint">{warning}</p> : null}
     </form>
   );
 }
@@ -358,6 +361,7 @@ export default function LandingPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const [loginOpen, setLoginOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -418,6 +422,7 @@ export default function LandingPage() {
 
   function fillExample(example: ExampleCard) {
     setInput(example.input);
+    setWarning("");
     window.scrollTo({ top: 0, behavior: "smooth" });
     window.setTimeout(() => composerRef.current?.focus(), 220);
   }
@@ -458,6 +463,7 @@ export default function LandingPage() {
     if (!input.trim() || loading) return;
     setLoading(true);
     setError("");
+    setWarning("");
     try {
       const res = await fetchWithTimeout(
         "/api/cards/generate",
@@ -467,6 +473,7 @@ export default function LandingPage() {
           body: JSON.stringify({
             raw_input: input.trim(),
             optional_title: "",
+            output_language: "zh-CN",
             cta_token: ctaToken,
             request_id: createRequestId("card"),
           }),
@@ -480,6 +487,13 @@ export default function LandingPage() {
         return;
       }
       const body = (await res.json()) as MutationResponse;
+      if (body.used_fallback) {
+        const warningMessage = (body.warning || copyZh.create.fallbackWarning).trim();
+        if (warningMessage) {
+          setWarning(warningMessage);
+          toast.warning(warningMessage);
+        }
+      }
       if (body.project?.id) {
         saveLastGeneratedCardId(body.project.id);
         router.push(`/card/${body.project.id}`);
@@ -601,6 +615,7 @@ export default function LandingPage() {
               state={promptState}
               loading={loading}
               error={error}
+              warning={warning}
               hint={t.promptHint}
               emptyHint={t.promptEmptyHint}
               onHintClick={() => fillExample(activeExample)}

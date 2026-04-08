@@ -190,9 +190,10 @@ def test_create_merges_supplemental_text_into_structuring_input(client: TestClie
 def test_generate_project_supports_raw_file_and_optional_title(client: TestClient, monkeypatch):
     captured: Dict[str, str] = {}
 
-    def fake_generate(raw_input: str, optional_title: str = "") -> Dict[str, str]:
+    def fake_generate(raw_input: str, optional_title: str = "", output_language: str = "") -> Dict[str, str]:
         captured["raw_input"] = raw_input
         captured["optional_title"] = optional_title
+        captured["output_language"] = output_language
         return _fake_generate_object(optional_title or "自动标题")
 
     monkeypatch.setattr(service, "structure_project_object", fake_generate)
@@ -216,10 +217,15 @@ def test_generate_project_supports_raw_file_and_optional_title(client: TestClien
     assert "BP 提取文本" in captured.get("raw_input", "")
     assert "一句话输入" in captured.get("raw_input", "")
     assert captured.get("optional_title", "") == "指定标题"
+    assert captured.get("output_language", "") == "zh-CN"
 
 
 def test_generate_project_supports_file_only_and_invalid_input(client: TestClient, monkeypatch):
-    monkeypatch.setattr(service, "structure_project_object", lambda raw_input, optional_title="": _fake_generate_object("文件生成标题"))
+    monkeypatch.setattr(
+        service,
+        "structure_project_object",
+        lambda raw_input, optional_title="", output_language="": _fake_generate_object("文件生成标题"),
+    )
     monkeypatch.setattr(
         service,
         "get_last_structuring_meta",
@@ -246,7 +252,11 @@ def test_generate_project_supports_file_only_and_invalid_input(client: TestClien
 
 
 def test_anonymous_card_generate_does_not_enter_library_until_claimed(client: TestClient, monkeypatch):
-    monkeypatch.setattr(service, "structure_project_object", lambda raw_input, optional_title="": _fake_generate_object(optional_title or "匿名卡片"))
+    monkeypatch.setattr(
+        service,
+        "structure_project_object",
+        lambda raw_input, optional_title="", output_language="": _fake_generate_object(optional_title or "匿名卡片"),
+    )
     monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": False, "last_api_error": ""})
 
     anon_client = TestClient(client.app)

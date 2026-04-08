@@ -21,6 +21,9 @@ _LAST_USED_LOCAL_STRUCTURING = False
 _LAST_API_ERROR = ""
 _LAST_API_ERROR_TYPE = ""
 
+ZH_LANG_KEYS = {"zh", "zh-cn", "zh_hans", "zh-hans", "chinese", "cn"}
+EN_LANG_KEYS = {"en", "en-us", "en-gb", "english"}
+
 
 def _safe_secret_get(key: str) -> Optional[str]:
     _ = key
@@ -419,6 +422,107 @@ def _normalize_generate_stage(value: Any) -> str:
     return "building"
 
 
+def normalize_output_language(value: Any, default: str = "zh-CN") -> str:
+    lang = sanitize_text_strict(value, allow_empty=True, max_len=24).strip().lower()
+    if not lang:
+        return default
+    if lang in ZH_LANG_KEYS:
+        return "zh-CN"
+    if lang in EN_LANG_KEYS:
+        return "en"
+    return default
+
+
+def _contains_cjk_text(value: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", value or ""))
+
+
+def _looks_non_chinese_object(payload: Dict[str, Any]) -> bool:
+    fields = [
+        "name",
+        "one_liner",
+        "core_problem",
+        "solution",
+        "target_user",
+        "use_case",
+        "monetization",
+        "progress_note",
+        "key_metric",
+    ]
+    joined = " ".join(sanitize_text_strict(payload.get(key, ""), allow_empty=True, max_len=240) for key in fields).strip()
+    if not joined:
+        return False
+    return not _contains_cjk_text(joined)
+
+
+def _rewrite_project_object_language(
+    *,
+    client: Any,
+    source: Dict[str, Any],
+    target_language: str,
+) -> Dict[str, Any]:
+    if target_language != "zh-CN":
+        return source
+
+    schema: Dict[str, Any] = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "name": {"type": "string"},
+            "one_liner": {"type": "string"},
+            "core_problem": {"type": "string"},
+            "solution": {"type": "string"},
+            "target_user": {"type": "string"},
+            "use_case": {"type": "string"},
+            "monetization": {"type": "string"},
+            "current_stage": {"type": "string", "enum": ["idea", "building", "launched"]},
+            "progress_note": {"type": "string"},
+            "key_metric": {"type": "string"},
+        },
+        "required": [
+            "name",
+            "one_liner",
+            "core_problem",
+            "solution",
+            "target_user",
+            "use_case",
+            "monetization",
+            "current_stage",
+            "progress_note",
+            "key_metric",
+        ],
+    }
+    schema_text = json.dumps(schema, ensure_ascii=False)
+    rewrite_prompt = (
+        "将下面项目对象字段改写为简体中文，保持原意和信息量。"
+        "不要新增字段，不要删字段，current_stage 必须保持原值（idea/building/launched）。"
+        "输出必须是 JSON 对象。"
+        f"\n\n输入对象：\n{json.dumps(source, ensure_ascii=False)}\n\nJSON Schema:\n{schema_text}"
+    )
+    resp = client.chat.completions.create(
+        model=get_model_name(),
+        temperature=0.1,
+        messages=[
+            {"role": "system", "content": "你是多语言项目文案改写助手，只输出符合 schema 的 JSON。"},
+            {"role": "user", "content": rewrite_prompt},
+        ],
+        extra_body={"enable_enhancement": True},
+    )
+    parsed = extract_json_object((resp.choices[0].message.content or "{}").strip())
+    return {
+        "name": sanitize_text_strict(parsed.get("name", source.get("name", "")), allow_empty=True, max_len=42),
+        "one_liner": sanitize_text_strict(parsed.get("one_liner", source.get("one_liner", "")), allow_empty=True, max_len=140),
+        "core_problem": sanitize_text_strict(parsed.get("core_problem", source.get("core_problem", "")), allow_empty=True, max_len=220),
+        "solution": sanitize_text_strict(parsed.get("solution", source.get("solution", "")), allow_empty=True, max_len=220),
+        "target_user": sanitize_text_strict(parsed.get("target_user", source.get("target_user", "")), allow_empty=True, max_len=120),
+        "use_case": sanitize_text_strict(parsed.get("use_case", source.get("use_case", "")), allow_empty=True, max_len=220),
+        "monetization": sanitize_text_strict(parsed.get("monetization", source.get("monetization", "")), allow_empty=True, max_len=120),
+        "current_stage": _normalize_generate_stage(parsed.get("current_stage", source.get("current_stage", ""))),
+        "progress_note": sanitize_text_strict(parsed.get("progress_note", source.get("progress_note", "")), allow_empty=True, max_len=220),
+        "key_metric": sanitize_text_strict(parsed.get("key_metric", source.get("key_metric", "")), allow_empty=True, max_len=120),
+    }
+
+
 def _map_existing_stage_to_generate(value: Any) -> str:
     stage = sanitize_text_strict(value, allow_empty=True, max_len=32).upper()
     if stage == "IDEA":
@@ -461,9 +565,10 @@ def fallback_structure_project_object(raw_input: str, optional_title: str = "") 
     }
 
 
-def structure_project_object(raw_input: str, optional_title: str = "") -> Dict[str, Any]:
+def structure_project_object(raw_input: str, optional_title: str = "", output_language: str = "zh-CN") -> Dict[str, Any]:
     _set_structuring_meta(used_local_structuring=False, api_error="")
     safe_optional_title = sanitize_text_strict(optional_title, allow_empty=True, max_len=42)
+    target_language = normalize_output_language(output_language, default="zh-CN")
 
     schema: Dict[str, Any] = {
         "type": "object",
@@ -499,12 +604,14 @@ def structure_project_object(raw_input: str, optional_title: str = "") -> Dict[s
         "你的任务是把用户输入整理成标准项目对象。"
         "你只能输出符合 schema 的 JSON，不要解释、不要闲聊、不要附加文本。"
         "不要编造不存在的数据，信息不足时使用保守默认值。"
+        + ("所有自然语言字段必须使用简体中文（专有名词可保留原文）。" if target_language == "zh-CN" else "所有自然语言字段必须使用英文。")
     )
     user_prompt = (
         "请根据输入生成项目对象。\n"
         f"optional_title={safe_optional_title or '(none)'}\n"
         "规则：若 optional_title 非空，name 必须优先使用 optional_title。\n"
         "current_stage 只能是 idea/building/launched。\n\n"
+        f"输出语言要求：{target_language}。\n"
         "one_liner 是项目卡的首句摘要，不是功能描述。\n"
         "它必须回答：为什么这个项目值得被理解或分享。\n"
         "先从以下四个视角中任选一个：\n"
@@ -559,6 +666,12 @@ def structure_project_object(raw_input: str, optional_title: str = "") -> Dict[s
             "progress_note": sanitize_text_strict(parsed.get("progress_note", ""), allow_empty=True, max_len=220),
             "key_metric": sanitize_text_strict(parsed.get("key_metric", ""), allow_empty=True, max_len=120),
         }
+        if target_language == "zh-CN" and _looks_non_chinese_object(result):
+            try:
+                result = _rewrite_project_object_language(client=client, source=result, target_language=target_language)
+            except Exception:
+                # Keep original structured output if rewrite fails.
+                pass
         if safe_optional_title:
             result["name"] = safe_optional_title
         if not result["name"]:

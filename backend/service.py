@@ -957,6 +957,17 @@ def _merge_generate_input(raw_input: str, file_text: str) -> str:
     return raw_input
 
 
+def _extract_output_language(payload: Dict[str, Any], default: str = "zh-CN") -> str:
+    lang = sanitize_text_strict(payload.get("output_language", payload.get("outputLanguage", "")), allow_empty=True, max_len=24)
+    if not lang:
+        return default
+    return lang
+
+
+def _resolve_ai_path(meta: Dict[str, Any]) -> str:
+    return "fallback" if bool((meta or {}).get("used_local_structuring", False)) else "remote"
+
+
 def _map_generate_stage_to_project(value: str) -> str:
     safe = sanitize_text_strict(value, allow_empty=True, max_len=24).lower()
     if safe == "idea":
@@ -978,6 +989,7 @@ def _materialize_structured_project(
     request_id: str = "",
     entity_type: str = "claimed_project",
     visible_in_library: bool = True,
+    ai_path: str = "unknown",
 ) -> Dict[str, Any]:
     project = enrich_generated_project(schema)
     project["desc"] = merged_input
@@ -1025,6 +1037,7 @@ def _materialize_structured_project(
                 "has_file": has_file,
                 "merged_chars": len(merged_input),
                 "entity_type": safe_entity_type,
+                "ai_path": sanitize_text_strict(ai_path, allow_empty=True, max_len=16) or "unknown",
             },
         )
         source_project_id = _attribute_conversion_from_cta(
@@ -1043,20 +1056,12 @@ def _materialize_structured_project(
     return normalized
 
 
-def generate_card(payload: Dict[str, Any]) -> Dict[str, Any]:
-    state = load_state()
-    request_id = _sanitize_request_id(payload.get("request_id", payload.get("requestId", "")))
-
-    raw_input = sanitize_text_strict(payload.get("raw_input", ""), allow_empty=True, max_len=12000)
-    file_text = sanitize_text_strict(payload.get("file_text", ""), allow_empty=True, max_len=12000)
-    optional_title = sanitize_text_strict(payload.get("optional_title", ""), allow_empty=True, max_len=42)
-    if not raw_input and not file_text:
-        raise ServiceError(400, "invalid_input", "请先输入一句话想法或添加材料。")
-
-    merged_input = _merge_generate_input(raw_input=raw_input, file_text=file_text)
-    generated = structure_project_object(merged_input, optional_title=optional_title)
-    meta = get_last_structuring_meta()
-
+def _build_project_schema_from_generated_object(
+    generated: Dict[str, Any],
+    *,
+    merged_input: str,
+    optional_title: str,
+) -> Dict[str, Any]:
     generated_name = sanitize_text_strict(generated.get("name", ""), allow_empty=True, max_len=42)
     project_title = optional_title or generated_name or "未命名项目"
     project_title = sanitize_text_strict(project_title, allow_empty=True, max_len=42) or "未命名项目"
@@ -1071,7 +1076,7 @@ def generate_card(payload: Dict[str, Any]) -> Dict[str, Any]:
     key_metric = sanitize_text_strict(generated.get("key_metric", ""), allow_empty=True, max_len=120) or "关键指标待补充"
     stage = _map_generate_stage_to_project(sanitize_text_strict(generated.get("current_stage", ""), allow_empty=True, max_len=24))
 
-    schema = sanitize_schema(
+    return sanitize_schema(
         {
             "title": project_title,
             "desc": merged_input,
@@ -1093,18 +1098,44 @@ def generate_card(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
     )
 
+
+def _generate_structured_schema_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw_input = sanitize_text_strict(payload.get("raw_input", ""), allow_empty=True, max_len=12000)
+    file_text = sanitize_text_strict(payload.get("file_text", ""), allow_empty=True, max_len=12000)
+    optional_title = sanitize_text_strict(payload.get("optional_title", ""), allow_empty=True, max_len=42)
+    if not raw_input and not file_text:
+        raise ServiceError(400, "invalid_input", "请先输入项目描述或添加材料。")
+
+    output_language = _extract_output_language(payload, default="zh-CN")
+    merged_input = _merge_generate_input(raw_input=raw_input, file_text=file_text)
+    generated = structure_project_object(merged_input, optional_title=optional_title, output_language=output_language)
+    meta = get_last_structuring_meta()
+    schema = _build_project_schema_from_generated_object(generated, merged_input=merged_input, optional_title=optional_title)
+    return {"schema": schema, "meta": meta, "merged_input": merged_input, "has_file": bool(file_text)}
+
+
+def generate_card(payload: Dict[str, Any]) -> Dict[str, Any]:
+    state = load_state()
+    request_id = _sanitize_request_id(payload.get("request_id", payload.get("requestId", "")))
+    generated_payload = _generate_structured_schema_from_payload(payload)
+    schema = generated_payload["schema"]
+    meta = generated_payload["meta"]
+    merged_input = generated_payload["merged_input"]
+    has_file = bool(generated_payload["has_file"])
+
     cta_token = _sanitize_cta_token(payload.get("cta_token", payload.get("ctaToken", "")))
     normalized = _materialize_structured_project(
         state=state,
         user=None,
         schema=schema,
         merged_input=merged_input,
-        has_file=bool(file_text),
+        has_file=has_file,
         cta_token=cta_token,
         source="anonymous_generate",
         request_id=request_id,
         entity_type="temporary_card",
         visible_in_library=False,
+        ai_path=_resolve_ai_path(meta),
     )
     _record_ai_fallback_event(
         state=state,
@@ -1198,6 +1229,7 @@ def create_project(payload: Dict[str, Any]) -> Dict[str, Any]:
         cta_token=cta_token,
         source="create",
         request_id=request_id,
+        ai_path=_resolve_ai_path(meta),
     )
     _record_ai_fallback_event(
         state=state,
@@ -1235,52 +1267,11 @@ def generate_project(payload: Dict[str, Any]) -> Dict[str, Any]:
             "idempotent_replay": True,
         }
 
-    raw_input = sanitize_text_strict(payload.get("raw_input", ""), allow_empty=True, max_len=12000)
-    file_text = sanitize_text_strict(payload.get("file_text", ""), allow_empty=True, max_len=12000)
-    optional_title = sanitize_text_strict(payload.get("optional_title", ""), allow_empty=True, max_len=42)
-    if not raw_input and not file_text:
-        raise ServiceError(400, "invalid_input", "请先输入项目描述或添加材料。")
-
-    merged_input = _merge_generate_input(raw_input=raw_input, file_text=file_text)
-
-    generated = structure_project_object(merged_input, optional_title=optional_title)
-    meta = get_last_structuring_meta()
-
-    generated_name = sanitize_text_strict(generated.get("name", ""), allow_empty=True, max_len=42)
-    project_title = optional_title or generated_name or "未命名项目"
-    project_title = sanitize_text_strict(project_title, allow_empty=True, max_len=42) or "未命名项目"
-
-    one_liner = sanitize_text_strict(generated.get("one_liner", ""), allow_empty=True, max_len=140) or "项目摘要待补充"
-    core_problem = sanitize_text_strict(generated.get("core_problem", ""), allow_empty=True, max_len=220) or "核心问题待补充"
-    solution = sanitize_text_strict(generated.get("solution", ""), allow_empty=True, max_len=220) or "解决方案待补充"
-    target_user = sanitize_text_strict(generated.get("target_user", ""), allow_empty=True, max_len=120) or "目标用户待补充"
-    use_case = sanitize_text_strict(generated.get("use_case", ""), allow_empty=True, max_len=220) or "使用场景待补充"
-    monetization = sanitize_text_strict(generated.get("monetization", ""), allow_empty=True, max_len=120) or "变现方式待补充"
-    progress_note = sanitize_text_strict(generated.get("progress_note", ""), allow_empty=True, max_len=220) or "已完成首次结构化生成"
-    key_metric = sanitize_text_strict(generated.get("key_metric", ""), allow_empty=True, max_len=120) or "关键指标待补充"
-    stage = _map_generate_stage_to_project(sanitize_text_strict(generated.get("current_stage", ""), allow_empty=True, max_len=24))
-
-    schema = sanitize_schema(
-        {
-            "title": project_title,
-            "desc": merged_input,
-            "users": target_user,
-            "use_cases": use_case,
-            "problem_statement": core_problem,
-            "solution_approach": solution,
-            "model": monetization,
-            "model_desc": monetization,
-            "business_model_type": normalize_business_model_type("", context=f"{target_user} {one_liner}"),
-            "model_type": normalize_model_type("", model_desc=monetization),
-            "pricing_strategy": "",
-            "form_type": "OTHER",
-            "stage": stage,
-            "latest_update": progress_note,
-            "version_footprint": progress_note,
-            "summary": one_liner,
-            "stage_metric": key_metric,
-        }
-    )
+    generated_payload = _generate_structured_schema_from_payload(payload)
+    schema = generated_payload["schema"]
+    meta = generated_payload["meta"]
+    merged_input = generated_payload["merged_input"]
+    has_file = bool(generated_payload["has_file"])
 
     cta_token = _sanitize_cta_token(payload.get("cta_token", payload.get("ctaToken", "")))
     normalized = _materialize_structured_project(
@@ -1288,10 +1279,11 @@ def generate_project(payload: Dict[str, Any]) -> Dict[str, Any]:
         user=user,
         schema=schema,
         merged_input=merged_input,
-        has_file=bool(file_text),
+        has_file=has_file,
         cta_token=cta_token,
         source="create",
         request_id=request_id,
+        ai_path=_resolve_ai_path(meta),
     )
     _record_ai_fallback_event(
         state=state,

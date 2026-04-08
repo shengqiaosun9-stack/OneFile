@@ -260,6 +260,7 @@ export default function NewProjectPage() {
             raw_input: rawInput,
             optional_title: inferOptionalTitle(rawInput),
             file_text: supplementalText,
+            output_language: "zh-CN",
             cta_token: ctaToken,
             request_id: createRequestId("generate"),
           }),
