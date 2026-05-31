@@ -8,15 +8,15 @@ import { bpSend } from "@/lib/bp-api";
 import type { BpBundle } from "@/lib/bp-types";
 
 const stages = [
-  { value: "idea", label: "想法阶段" },
-  { value: "prototype", label: "原型阶段" },
-  { value: "pilot", label: "试点阶段" },
-  { value: "delivery", label: "交付阶段" },
-  { value: "revenue", label: "已有收入" },
-  { value: "scaling", label: "规模化阶段" },
+  { value: "idea", label: "只有想法" },
+  { value: "prototype", label: "已有 Demo / 原型" },
+  { value: "pilot", label: "已有产品或客户试用" },
+  { value: "delivery", label: "已有交付" },
+  { value: "revenue", label: "已有订单 / 收入" },
+  { value: "scaling", label: "已经参加活动 / 路演或进入规模化" },
 ];
 
-const resourceOptions = ["园区 / 政策", "技术团队", "客户 / 订单", "算力 / 私有化部署", "融资", "内容曝光", "合作伙伴", "还不确定"];
+const resourceOptions = ["园区 / 政策", "活动 / 路演", "技术团队", "客户 / 订单", "算力 / 私有化部署", "融资", "内容曝光", "合作伙伴", "还不确定"];
 
 export default function DiagnosePage() {
   const router = useRouter();
@@ -26,6 +26,10 @@ export default function DiagnosePage() {
     tagline: "",
     stage: "unknown",
     raw_material: "",
+    visibility: "private",
+    contact_wechat: "",
+    contact_phone: "",
+    contact_email: "",
   });
   const [resources, setResources] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -56,9 +60,9 @@ export default function DiagnosePage() {
     <PublicBpShell currentStep="diagnose">
       <section className="mx-auto max-w-5xl px-5 py-12">
         <div className="mb-8">
-          <h1 className="text-3xl font-semibold text-white md:text-5xl">先把项目材料丢进来</h1>
+          <h1 className="text-3xl font-semibold text-white md:text-5xl">先把你的项目材料丢进来</h1>
           <p className="mt-4 max-w-3xl text-base leading-7 text-slate-400">
-            不用写得很正式。你可以粘贴 BP 文案、项目介绍、聊天记录、访谈纪要、园区反馈，OnePitch 会先整理成项目理解草稿和 BP 清单预览。
+            不用写得很正式。你可以粘贴项目介绍、BP 草稿、聊天记录、访谈纪要、园区反馈、活动报名材料、路演口径或口头表达整理稿。OnePitch 会先帮你生成项目初诊报告，并判断当前材料是否适合对外沟通。
           </p>
         </div>
 
@@ -118,6 +122,39 @@ export default function DiagnosePage() {
             />
           </Field>
 
+          <div className="mt-5 grid gap-4 md:grid-cols-3">
+            <Field label="微信">
+              <input className="bp-input" placeholder="选填，用于后续服务沟通" value={form.contact_wechat} onChange={(event) => setForm({ ...form, contact_wechat: event.target.value })} />
+            </Field>
+            <Field label="手机号">
+              <input className="bp-input" placeholder="选填" value={form.contact_phone} onChange={(event) => setForm({ ...form, contact_phone: event.target.value })} />
+            </Field>
+            <Field label="邮箱">
+              <input className="bp-input" placeholder="选填" value={form.contact_email} onChange={(event) => setForm({ ...form, contact_email: event.target.value })} />
+            </Field>
+          </div>
+
+          <div className="mt-5">
+            <div className="mb-3 text-sm text-slate-300">项目卡可见方式</div>
+            <div className="grid gap-3 md:grid-cols-3">
+              {[
+                { value: "private", title: "只生成私密诊断报告", body: "适合先自己看，不生成对外项目卡。" },
+                { value: "share_card", title: "生成可分享项目卡", body: "适合发给园区、合伙人、活动主办方或合作方。" },
+                { value: "anonymous_case", title: "允许匿名案例复盘", body: "隐藏身份后，后续可用于 OnePitch 内容复盘。" },
+              ].map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => setForm({ ...form, visibility: item.value })}
+                  className={`rounded-lg border p-4 text-left ${form.visibility === item.value ? "border-blue-400 bg-blue-500/15" : "border-white/10 bg-black/20 hover:border-white/25"}`}
+                >
+                  <div className="text-sm font-semibold text-white">{item.title}</div>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">{item.body}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {error ? <div className="mt-4 rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div> : null}
 
           <div className="mt-6 flex flex-wrap gap-3">
@@ -126,7 +163,7 @@ export default function DiagnosePage() {
             </button>
             <SecondaryLink href="/">返回首页</SecondaryLink>
           </div>
-          {loading ? <p className="mt-4 text-sm text-slate-500">正在识别 BP 缺口，并生成 14 页清单结构。</p> : null}
+          {loading ? <p className="mt-4 text-sm text-slate-500">正在识别表达缺口、资源路径准备度和下一步建议。</p> : null}
         </SectionPanel>
       </section>
     </PublicBpShell>

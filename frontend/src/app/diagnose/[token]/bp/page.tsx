@@ -45,9 +45,9 @@ export default function BpPreviewPage() {
     <PublicBpShell currentStep="bp" token={token}>
       <section className="mx-auto max-w-6xl px-5 py-12">
         <div className="mb-8">
-          <h1 className="text-3xl font-semibold text-white md:text-5xl">14 页标准 BP 清单预览</h1>
+          <h1 className="text-3xl font-semibold text-white md:text-5xl">标准外部沟通结构预览</h1>
           <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-400">
-            这不是完整融资 BP，也不是 PPT 设计稿。它是一份外部沟通前的页级结构清单，用来判断你的项目现在讲清楚了哪些，还缺哪些材料。
+            这不是完整融资 BP，也不是 PPT 设计稿。这里展示的是项目进入外部沟通前通常需要回答的 14 个核心问题。完整页级文案和人工编辑内容不会在免费诊断里直接交付。
           </p>
         </div>
         {loading ? <div className="text-slate-400">正在读取 BP 清单...</div> : null}
@@ -55,7 +55,7 @@ export default function BpPreviewPage() {
         {bundle && currentPage ? (
           <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
             <SectionPanel className="h-fit">
-              <div className="mb-4 text-sm text-slate-300">14 页目录</div>
+              <div className="mb-4 text-sm text-slate-300">14 个沟通模块</div>
               <div className="space-y-2">
                 {bundle.pages.map((page) => (
                   <button
@@ -79,17 +79,12 @@ export default function BpPreviewPage() {
                   <button onClick={saveSupplement} disabled={saving || !supplement.trim()} className="h-10 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-60">
                     {saving ? "正在重新生成..." : "补充这一页材料"}
                   </button>
-                  <button
-                    onClick={() => navigator.clipboard?.writeText(`${currentPage.title}\n\n本页要回答：${currentPage.question}\n\n缺失材料：${currentPage.missing_materials.join("；")}`)}
-                    className="h-10 rounded-md border border-white/10 px-4 text-sm text-slate-200 hover:bg-white/[0.04]"
-                  >
-                    复制本页清单
-                  </button>
+                  <SecondaryLink href={`/diagnose/${token}/service?type=bp_restructure`}>申请完整页级文案重构</SecondaryLink>
                 </div>
               </SectionPanel>
               <div className="flex flex-wrap gap-3">
                 <PrimaryLink href={`/diagnose/${token}/gaps`}>查看材料缺口汇总</PrimaryLink>
-                <SecondaryLink href={`/diagnose/${token}/service?type=manual_refinement`}>申请人工 BP 精修</SecondaryLink>
+                <SecondaryLink href={`/diagnose/${token}`}>返回诊断报告</SecondaryLink>
               </div>
             </div>
           </div>

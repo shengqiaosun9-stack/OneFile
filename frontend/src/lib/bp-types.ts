@@ -7,6 +7,8 @@ export type BpProject = {
   stage: string;
   target_customer?: string;
   current_resource_need: string[];
+  visibility?: string;
+  share_card_requested?: boolean;
   readiness_score: number;
   recommended_path: string;
   submission_source?: string;
@@ -47,6 +49,32 @@ export type BpProjectInsight = {
   material_gaps: string[];
   recommended_path: string;
   readiness_score: number;
+  score_breakdown?: Record<string, number>;
+  resource_readiness?: Array<{
+    path: string;
+    level: string;
+    reason: string;
+    missing: string;
+    next_step: string;
+  }>;
+  likely_questions?: string[];
+  next_actions?: string[];
+  bp_structure_preview?: Array<{
+    module: string;
+    question_to_answer: string;
+    current_status: string;
+    missing_material: string;
+  }>;
+  share_card?: {
+    title: string;
+    one_line: string;
+    stage: string;
+    target_customer: string;
+    resource_ask: string;
+    recommended_path: string;
+    highlights: string[];
+    gaps: string[];
+  };
   created_at: string;
   updated_at: string;
 };
@@ -63,6 +91,7 @@ export type BpPage = {
   missing_materials: string[];
   draft_copy: string;
   likely_questions: string[];
+  is_locked?: boolean;
   is_delivery_ready?: boolean;
   internal_notes?: string;
   created_at: string;
@@ -95,6 +124,9 @@ export type BpServiceRequest = {
   contact_phone?: string;
   contact_email?: string;
   contact_preference?: string;
+  urgent_problem?: string;
+  budget_signal?: string;
+  authorized_material_review?: boolean;
   user_message: string;
   status: string;
   internal_notes?: string;

@@ -8,18 +8,20 @@ export function BpPagePreview({ page }: { page: BpPage }) {
           <div className="text-xs text-blue-300">第 {page.page_number} 页</div>
           <h2 className="mt-1 text-xl font-semibold text-white">{page.title}</h2>
         </div>
-        <span className="rounded-md border border-blue-400/30 bg-blue-500/10 px-2.5 py-1 text-xs text-blue-200">预览版</span>
+        <span className="rounded-md border border-blue-400/30 bg-blue-500/10 px-2.5 py-1 text-xs text-blue-200">{page.is_locked ? "结构预览" : "交付草稿"}</span>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <InfoList title="本页要回答什么" items={[page.question]} />
-        <InfoList title="当前已有材料" items={page.existing_materials} />
         <InfoList title="缺失材料" items={page.missing_materials} tone="warning" />
-        <InfoList title="资源方可能追问" items={page.likely_questions} />
+        {page.is_locked ? <InfoList title="完整交付内容" items={["完整页级文案、已有材料梳理和资源方追问会在人工 BP 重构服务中交付。"]} /> : <InfoList title="当前已有材料" items={page.existing_materials} />}
+        {page.is_locked ? null : <InfoList title="资源方可能追问" items={page.likely_questions} />}
       </div>
-      <div className="mt-4 rounded-md border border-white/10 bg-[#020617] p-4">
-        <div className="mb-2 text-xs text-slate-500">页面文案预览</div>
-        <p className="text-sm leading-6 text-slate-200">{page.draft_copy}</p>
-      </div>
+      {page.is_locked ? null : (
+        <div className="mt-4 rounded-md border border-white/10 bg-[#020617] p-4">
+          <div className="mb-2 text-xs text-slate-500">页面文案预览</div>
+          <p className="text-sm leading-6 text-slate-200">{page.draft_copy}</p>
+        </div>
+      )}
     </article>
   );
 }

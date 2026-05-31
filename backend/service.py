@@ -3927,6 +3927,16 @@ BP_PAGE_BLUEPRINTS = [
     ("增长计划", "说明未来 3-12 个月的推进节奏、关键指标和阶段目标。"),
     ("团队与资源诉求", "说明团队基础、当前短板，以及希望外部提供什么资源。"),
 ]
+BP_RESOURCE_PATHS = [
+    ("园区 / 政策", ["园区", "政策", "opc", "入驻"], "适合先补场景、政策匹配和落地诉求。"),
+    ("活动 / 路演", ["活动", "路演", "闭门会", "分享", "介绍"], "适合先压缩项目表达和一分钟介绍口径。"),
+    ("客户 / 订单", ["客户", "订单", "销售", "收入", "试点"], "适合先补客户画像、成交证据和交付闭环。"),
+    ("技术合作", ["技术", "开发", "agent", "rag", "系统", "团队"], "适合先明确技术缺口、合作方式和交付边界。"),
+    ("融资沟通", ["融资", "投资", "资本", "股权"], "适合先补业务证据、增长计划和资金用途。"),
+    ("算力 / 私有化部署", ["算力", "私有化", "部署", "服务器", "本地"], "适合先补部署场景、数据安全和成本约束。"),
+    ("内容曝光", ["内容", "曝光", "媒体", "访谈", "视频"], "适合先补传播角度、案例边界和公开授权。"),
+    ("合作伙伴", ["合作", "伙伴", "资源", "渠道", "生态"], "适合先明确希望谁参与、对方能得到什么。"),
+]
 
 
 def _bp_list(value: Any, max_items: int = 12, max_len: int = 80) -> List[str]:
@@ -3988,6 +3998,7 @@ def _bp_project_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ServiceError(400, "invalid_bp_project", "请至少填写项目名称和原始材料。")
     stage = _ops_choice(payload.get("stage", "unknown"), BP_STAGE_OPTIONS, "unknown", max_len=40)
     resources = _bp_list(payload.get("current_resource_need", payload.get("current_resource_needs", [])), max_items=10, max_len=80)
+    visibility = _ops_choice(payload.get("visibility", "private"), {"private", "share_card", "anonymous_case"}, "private", max_len=40)
     return {
         "id": _ops_id("bp"),
         "name": name,
@@ -3997,6 +4008,11 @@ def _bp_project_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "stage": stage,
         "target_customer": _ops_text(payload.get("target_customer", payload.get("targetCustomer", "")), max_len=500),
         "current_resource_need": resources,
+        "visibility": visibility,
+        "contact_wechat": _ops_text(payload.get("contact_wechat", payload.get("contactWechat", "")), max_len=120),
+        "contact_phone": _ops_text(payload.get("contact_phone", payload.get("contactPhone", "")), max_len=80),
+        "contact_email": _ops_text(payload.get("contact_email", payload.get("contactEmail", "")), max_len=160),
+        "share_card_requested": visibility in {"share_card", "anonymous_case"},
         "readiness_score": 0,
         "recommended_path": "",
         "submission_source": _ops_text(payload.get("submission_source", "diagnose_form"), max_len=80) or "diagnose_form",
@@ -4079,6 +4095,103 @@ def _bp_readiness(project: Dict[str, Any], material_text: str) -> int:
     return max(20, min(92, score))
 
 
+def _bp_score_breakdown(project: Dict[str, Any], material_text: str) -> Dict[str, int]:
+    return {
+        "clarity": 78 if project.get("tagline") else 42,
+        "evidence": 75 if _bp_has_any(material_text, ["客户", "订单", "收入", "案例", "试点", "软著"]) else 38,
+        "product": 78 if _bp_has_any(material_text, ["demo", "原型", "产品", "上线", "系统", "web"]) else 40,
+        "business_model": 72 if _bp_has_any(material_text, ["收费", "付费", "收入", "订单", "预算", "商业模式"]) else 35,
+        "ai_relevance": 76 if _bp_has_any(material_text, ["ai", "agent", "rag", "大模型", "智能体", "自动化"]) else 36,
+        "team": 72 if project.get("founder_name") or _bp_has_any(material_text, ["团队", "创始人", "背景", "资质", "经验"]) else 34,
+        "resource_ask": 80 if project.get("current_resource_need") else 35,
+        "material_completeness": _bp_readiness(project, material_text),
+    }
+
+
+def _bp_level(score: int) -> str:
+    if score >= 70:
+        return "高"
+    if score >= 45:
+        return "中"
+    return "低"
+
+
+def _bp_resource_readiness(project: Dict[str, Any], insight: Dict[str, Any], material_text: str) -> List[Dict[str, str]]:
+    selected = " ".join(project.get("current_resource_need", []))
+    result: List[Dict[str, str]] = []
+    for path, keywords, default_next in BP_RESOURCE_PATHS:
+        keyword_hit = _bp_has_any(f"{selected} {material_text}", keywords)
+        evidence_hit = _bp_has_any(material_text, ["客户", "订单", "收入", "demo", "原型", "试点", "交付", "软著"])
+        score = 35 + (25 if keyword_hit else 0) + (20 if evidence_hit else 0) + (10 if project.get("tagline") else 0)
+        level = _bp_level(score)
+        missing = "需要补充可被资源方验证的证据材料。"
+        if path == "园区 / 政策":
+            missing = "需要补充落地城市、产业方向、入驻诉求和场景承接能力。"
+        elif path == "活动 / 路演":
+            missing = "需要补充一分钟介绍、项目亮点和可公开表达边界。"
+        elif path == "客户 / 订单":
+            missing = "需要补充目标客户、试点案例、成交路径或订单证明。"
+        elif path == "技术合作":
+            missing = "需要补充技术缺口、现有系统状态和合作方式。"
+        elif path == "融资沟通":
+            missing = "需要补充业务数据、增长计划、资金用途和团队能力。"
+        elif path == "算力 / 私有化部署":
+            missing = "需要补充部署场景、数据规模、安全要求和预算边界。"
+        elif path == "内容曝光":
+            missing = "需要补充可公开案例、故事角度和不方便公开的信息。"
+        elif path == "合作伙伴":
+            missing = "需要补充想找的伙伴类型、合作方式和双方收益。"
+        reason = "材料里已经出现相关资源诉求和初步项目基础。" if level == "高" else "材料里有部分线索，但资源方还需要更多证据。" if level == "中" else "当前材料还不足以支撑这一路径的外部沟通。"
+        result.append({"path": path, "level": level, "reason": reason, "missing": missing, "next_step": default_next})
+    return result
+
+
+def _bp_likely_questions(project: Dict[str, Any], insight: Dict[str, Any], material_text: str) -> List[str]:
+    questions = [
+        "现在是否已经有真实客户、试用用户、订单或交付案例？",
+        "AI 在项目里是核心能力，还是提高效率的工具？具体进入哪个流程？",
+        "项目收入来自哪里，谁付费，按什么方式收费？",
+        "团队里谁负责产品、技术、交付和商务？",
+        "你最希望资源方现在具体帮什么？",
+        "为什么现在适合推进这个项目？",
+        "与现有方案或替代路径相比，你的差异是什么？",
+        "下一步 30 天最关键的推进动作是什么？",
+    ]
+    if _bp_has_any(material_text, ["医疗", "医院", "药", "患者", "医保"]):
+        questions.insert(1, "医疗健康相关内容有哪些合规边界和可公开表达限制？")
+    if _bp_has_any(material_text, ["园区", "政策", "opc"]):
+        questions.insert(1, "你希望园区提供空间、政策、场景、客户还是后续融资资源？")
+    return questions[:8]
+
+
+def _bp_next_actions(project: Dict[str, Any], insight: Dict[str, Any], material_text: str) -> List[str]:
+    actions = ["把资源诉求从“找资源”改成一个具体对象、具体场景或具体合作方式。"]
+    if not _bp_has_any(material_text, ["客户", "订单", "收入", "案例", "试点"]):
+        actions.insert(0, "补充一个真实客户、试点、订单、使用场景或交付案例。")
+    if not project.get("tagline"):
+        actions.append("先重写一句话定位，让资源方 10 秒内理解项目在做什么。")
+    if not _bp_has_any(material_text, ["团队", "创始人", "资质", "经验"]):
+        actions.append("补充团队背景、分工和当前最短板能力。")
+    actions.append("整理一版可分享项目卡，再决定是否进入完整 BP 或路演材料重构。")
+    return actions[:3]
+
+
+def _bp_structure_preview(pages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    preview: List[Dict[str, str]] = []
+    for page in pages:
+        missing = [item for item in page.get("missing_materials", []) if isinstance(item, str)]
+        enough = bool(missing) and all("已有初步材料" in item for item in missing)
+        preview.append(
+            {
+                "module": _ops_text(page.get("title", ""), max_len=120),
+                "question_to_answer": _ops_text(page.get("question", ""), max_len=240),
+                "current_status": "已有初步材料，仍建议人工精修。" if enough else "需要补充材料。",
+                "missing_material": _ops_text("；".join(missing[:2]), max_len=240) or "待补充",
+            }
+        )
+    return preview
+
+
 def _generate_bp_insight(project: Dict[str, Any], materials: List[Dict[str, Any]]) -> Dict[str, Any]:
     text = _bp_materials_text(materials)
     now = _now_ts()
@@ -4093,6 +4206,7 @@ def _generate_bp_insight(project: Dict[str, Any], materials: List[Dict[str, Any]
     readiness = _bp_readiness(project, text)
     project["readiness_score"] = readiness
     project["recommended_path"] = recommended_path
+    score_breakdown = _bp_score_breakdown(project, text)
     return {
         "id": _ops_id("bpi"),
         "project_id": project["id"],
@@ -4106,6 +4220,21 @@ def _generate_bp_insight(project: Dict[str, Any], materials: List[Dict[str, Any]
         "material_gaps": [],
         "recommended_path": recommended_path,
         "readiness_score": readiness,
+        "score_breakdown": score_breakdown,
+        "resource_readiness": [],
+        "likely_questions": _bp_likely_questions(project, {}, text),
+        "next_actions": _bp_next_actions(project, {}, text),
+        "bp_structure_preview": [],
+        "share_card": {
+            "title": project.get("name", ""),
+            "one_line": project.get("tagline") or solution,
+            "stage": project.get("stage", "unknown"),
+            "target_customer": project.get("target_customer", "") or "待补充",
+            "resource_ask": resource_needs,
+            "recommended_path": recommended_path,
+            "highlights": [solution, traction, ai_relevance],
+            "gaps": [],
+        },
         "created_at": now,
         "updated_at": now,
     }
@@ -4216,8 +4345,14 @@ def _generate_bp_gap_report(project: Dict[str, Any], pages: List[Dict[str, Any]]
 
 def _generate_bp_assets_local(project: Dict[str, Any], materials: List[Dict[str, Any]]) -> Dict[str, Any]:
     insight = _generate_bp_insight(project, materials)
+    text = _bp_materials_text(materials)
+    insight["resource_readiness"] = _bp_resource_readiness(project, insight, text)
+    insight["likely_questions"] = _bp_likely_questions(project, insight, text)
+    insight["next_actions"] = _bp_next_actions(project, insight, text)
     pages = _generate_bp_pages(project, insight, materials)
+    insight["bp_structure_preview"] = _bp_structure_preview(pages)
     gap_report = _generate_bp_gap_report(project, pages)
+    insight["share_card"]["gaps"] = [item.get("gap_name", "") for item in gap_report.get("items", [])[:3]]
     return {"insight": insight, "pages": pages, "gap_report": gap_report}
 
 
@@ -4262,6 +4397,39 @@ def _merge_bp_ai_insight(ai_insight: Dict[str, Any], fallback: Dict[str, Any]) -
         merged["readiness_score"] = max(20, min(95, score))
     except Exception:
         pass
+    if isinstance(ai_insight.get("score_breakdown"), dict):
+        score_breakdown = copy.deepcopy(merged.get("score_breakdown", {}))
+        for key in ["clarity", "evidence", "product", "business_model", "ai_relevance", "team", "resource_ask", "material_completeness"]:
+            try:
+                score_breakdown[key] = max(0, min(100, int(ai_insight["score_breakdown"].get(key, score_breakdown.get(key, 0)) or 0)))
+            except Exception:
+                continue
+        merged["score_breakdown"] = score_breakdown
+    if isinstance(ai_insight.get("resource_readiness"), list):
+        items: List[Dict[str, str]] = []
+        for raw in ai_insight["resource_readiness"][:8]:
+            if not isinstance(raw, dict):
+                continue
+            path = _ops_text(raw.get("path", ""), max_len=80)
+            if not path:
+                continue
+            items.append(
+                {
+                    "path": path,
+                    "level": _ops_choice(raw.get("level", "中"), {"高", "中", "低"}, "中", max_len=10),
+                    "reason": _ops_text(raw.get("reason", ""), max_len=240),
+                    "missing": _ops_text(raw.get("missing", ""), max_len=240),
+                    "next_step": _ops_text(raw.get("next_step", raw.get("nextStep", "")), max_len=240),
+                }
+            )
+        if items:
+            merged["resource_readiness"] = items
+    questions = _bp_list(ai_insight.get("likely_questions", ai_insight.get("likelyQuestions", [])), max_items=8, max_len=160)
+    if questions:
+        merged["likely_questions"] = questions
+    next_actions = _bp_list(ai_insight.get("next_actions", ai_insight.get("nextActions", [])), max_items=5, max_len=180)
+    if next_actions:
+        merged["next_actions"] = next_actions
     merged["updated_at"] = _now_ts()
     return merged
 
@@ -4349,6 +4517,21 @@ def generate_bp_assets_with_ai(project: Dict[str, Any], materials: List[Dict[str
             "material_gaps": ["最多5条，每条60字以内"],
             "recommended_path": "80字以内",
             "readiness_score": 0,
+            "score_breakdown": {
+                "clarity": 0,
+                "evidence": 0,
+                "product": 0,
+                "business_model": 0,
+                "ai_relevance": 0,
+                "team": 0,
+                "resource_ask": 0,
+                "material_completeness": 0,
+            },
+            "resource_readiness": [
+                {"path": "园区 / 政策", "level": "高 / 中 / 低", "reason": "80字以内", "missing": "80字以内", "next_step": "80字以内"}
+            ],
+            "likely_questions": ["最多8条，每条60字以内"],
+            "next_actions": ["最多3条，每条80字以内"],
         }
     }
     messages = [
@@ -4376,8 +4559,27 @@ def generate_bp_assets_with_ai(project: Dict[str, Any], materials: List[Dict[str
     resp = create_chat_completion(client, model=model, temperature=0.2, messages=messages, max_tokens=900)
     parsed = extract_json_object((resp.choices[0].message.content or "{}").strip())
     insight = _merge_bp_ai_insight(parsed.get("insight", {}) if isinstance(parsed.get("insight", {}), dict) else {}, fallback_assets["insight"])
+    text = _bp_materials_text(materials)
+    if not insight.get("resource_readiness"):
+        insight["resource_readiness"] = _bp_resource_readiness(project, insight, text)
+    if not insight.get("likely_questions"):
+        insight["likely_questions"] = _bp_likely_questions(project, insight, text)
+    if not insight.get("next_actions"):
+        insight["next_actions"] = _bp_next_actions(project, insight, text)
     pages = _generate_bp_pages(project, insight, materials)
+    insight["bp_structure_preview"] = _bp_structure_preview(pages)
     gap_report = _generate_bp_gap_report(project, pages)
+    share_card = insight.get("share_card", {}) if isinstance(insight.get("share_card", {}), dict) else {}
+    insight["share_card"] = {
+        "title": _ops_text(share_card.get("title", project.get("name", "")), max_len=160),
+        "one_line": _ops_text(share_card.get("one_line", share_card.get("oneLine", project.get("tagline", insight.get("solution", "")))), max_len=240),
+        "stage": _ops_text(share_card.get("stage", project.get("stage", "unknown")), max_len=60),
+        "target_customer": _ops_text(share_card.get("target_customer", share_card.get("targetCustomer", project.get("target_customer", ""))), max_len=240) or "待补充",
+        "resource_ask": _ops_text(share_card.get("resource_ask", share_card.get("resourceAsk", insight.get("resource_needs", ""))), max_len=240),
+        "recommended_path": _ops_text(share_card.get("recommended_path", share_card.get("recommendedPath", insight.get("recommended_path", ""))), max_len=240),
+        "highlights": _bp_list(share_card.get("highlights", [insight.get("solution", ""), insight.get("traction", ""), insight.get("ai_relevance", "")]), max_items=3, max_len=120),
+        "gaps": [item.get("gap_name", "") for item in gap_report.get("items", [])[:3]],
+    }
     project["readiness_score"] = int(insight.get("readiness_score", project.get("readiness_score", 0)) or 0)
     project["recommended_path"] = sanitize_text_strict(insight.get("recommended_path", project.get("recommended_path", "")), allow_empty=True, max_len=240)
     return {"insight": insight, "pages": pages, "gap_report": gap_report}
@@ -4393,6 +4595,8 @@ def _bp_public_project(project: Dict[str, Any]) -> Dict[str, Any]:
         "stage",
         "target_customer",
         "current_resource_need",
+        "visibility",
+        "share_card_requested",
         "readiness_score",
         "recommended_path",
         "submission_source",
@@ -4403,12 +4607,32 @@ def _bp_public_project(project: Dict[str, Any]) -> Dict[str, Any]:
     return {key: copy.deepcopy(project.get(key)) for key in keys if key in project}
 
 
+def _bp_public_page(page: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": page.get("id", ""),
+        "project_id": page.get("project_id", ""),
+        "page_number": page.get("page_number", 0),
+        "title": page.get("title", ""),
+        "question": page.get("question", ""),
+        "missing_materials": copy.deepcopy(page.get("missing_materials", [])),
+        "is_locked": True,
+        "core_judgement": "",
+        "suggested_content": "",
+        "existing_materials": [],
+        "draft_copy": "",
+        "likely_questions": [],
+        "created_at": page.get("created_at", ""),
+        "updated_at": page.get("updated_at", ""),
+    }
+
+
 def _bp_public_service_request(item: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": item.get("id", ""),
         "project_id": item.get("project_id", ""),
         "service_type": item.get("service_type", ""),
         "user_message": item.get("user_message", ""),
+        "urgent_problem": item.get("urgent_problem", ""),
         "status": item.get("status", ""),
         "created_at": item.get("created_at", ""),
     }
@@ -4430,7 +4654,7 @@ def _bp_bundle(state: Dict[str, Any], project: Dict[str, Any], *, public: bool) 
         "project": _bp_public_project(project) if public else copy.deepcopy(project),
         "raw_materials": copy.deepcopy(raw_materials),
         "insight": copy.deepcopy(insight),
-        "pages": copy.deepcopy(pages),
+        "pages": [_bp_public_page(item) for item in pages] if public else copy.deepcopy(pages),
         "gap_report": copy.deepcopy(gap_report),
         "service_requests": [_bp_public_service_request(item) for item in service_requests] if public else copy.deepcopy(service_requests),
         "next_actions": [] if public else copy.deepcopy(next_actions),
@@ -4524,7 +4748,10 @@ def create_bp_service_request(token: str, payload: Dict[str, Any]) -> Dict[str, 
         "contact_phone": contact_phone,
         "contact_email": contact_email,
         "contact_preference": _ops_text(payload.get("contact_preference", payload.get("contactPreference", "")), max_len=120),
+        "urgent_problem": _ops_text(payload.get("urgent_problem", payload.get("urgentProblem", "")), max_len=1000),
+        "budget_signal": _ops_choice(payload.get("budget_signal", payload.get("budgetSignal", "unknown")), {"unknown", "weak", "medium", "strong"}, "unknown", max_len=24),
         "user_message": _ops_text(payload.get("user_message", payload.get("userMessage", "")), max_len=2000),
+        "authorized_material_review": bool(payload.get("authorized_material_review", payload.get("authorizedMaterialReview", False))),
         "status": "new",
         "internal_notes": "",
         "service_quote": "",

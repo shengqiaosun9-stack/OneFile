@@ -37,8 +37,14 @@ def test_public_diagnosis_creates_bp_project_without_public_project_leak(tmp_pat
     assert body["project"]["user_visible_token"]
     assert "internal_notes" not in body["project"]
     assert body["insight"]["problem"]
+    assert body["insight"]["resource_readiness"]
+    assert body["insight"]["likely_questions"]
+    assert body["insight"]["next_actions"]
+    assert body["insight"]["bp_structure_preview"]
     assert len(body["pages"]) == 14
     assert body["pages"][0]["title"] == "项目封面"
+    assert body["pages"][0]["draft_copy"] == ""
+    assert body["pages"][0]["is_locked"] is True
     assert body["gap_report"]["items"]
 
     public_projects = client.get("/v1/projects")
@@ -83,7 +89,12 @@ def test_bp_diagnosis_marks_ai_generation_success(tmp_path, monkeypatch):
     assert body["used_ai"] is True
     assert body["fallback_reason"] == ""
     assert body["insight"]["problem"].startswith("DeepSeek 判断")
-    assert body["pages"][0]["draft_copy"] == "DeepSeek 生成的项目封面文案。"
+    assert body["pages"][0]["draft_copy"] == ""
+
+    project_id = body["project"]["id"]
+    ops_detail = client.get(f"/v1/ops/bp/projects/{project_id}")
+    assert ops_detail.status_code == 200
+    assert ops_detail.json()["pages"][0]["draft_copy"] == "DeepSeek 生成的项目封面文案。"
 
 
 def test_bp_diagnosis_falls_back_when_ai_generation_fails(tmp_path, monkeypatch):
@@ -148,6 +159,9 @@ def test_public_token_view_hides_internal_fields_and_service_request_enters_ops(
     assert "internal_notes" not in public_body["project"]
     assert "budget_signal" not in public_body["project"]
     assert "service_quote" not in public_body["service_requests"][0]
+    assert public_body["pages"][0]["draft_copy"] == ""
+    assert public_body["pages"][0]["suggested_content"] == ""
+    assert public_body["pages"][0]["existing_materials"] == []
 
     ops_list = client.get("/v1/ops/bp/projects")
     assert ops_list.status_code == 200

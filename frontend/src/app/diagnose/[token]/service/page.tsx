@@ -8,10 +8,10 @@ import { bpGet, bpSend } from "@/lib/bp-api";
 import type { BpBundle } from "@/lib/bp-types";
 
 const serviceTypes = [
-  { value: "project_diagnosis", title: "项目初诊", body: "我想先判断项目现在适合走什么资源路径。" },
-  { value: "manual_refinement", title: "标准项目档案人工精修", body: "我已有材料，但希望整理成更清楚的项目档案。" },
-  { value: "bp_restructure", title: "BP 清单 / 园区材料人工重构", body: "我准备对接园区、投资人或合作方，需要更正式的沟通材料。" },
-  { value: "resource_path", title: "资源路径推进", body: "我希望判断下一步适合找技术、订单、园区、资金还是内容资源。" },
+  { value: "project_diagnosis", title: "项目表达体检 / 初诊", body: "适合不知道项目是否讲清楚的早期项目。交付：人工补充点评、3 个关键表达问题和下一步建议。" },
+  { value: "manual_refinement", title: "标准项目档案人工精修", body: "适合已有材料但表达混乱的项目。交付：项目一句话、项目逻辑、资源诉求、1 页项目卡和外部沟通问答。" },
+  { value: "bp_restructure", title: "园区 / 活动 / 路演材料重构", body: "适合准备参加园区申请、OPC 活动、项目路演或合作方沟通的项目。交付：路演口径、项目卡、BP 结构清单和关键页面文案。" },
+  { value: "resource_path", title: "资源路径推进", body: "适合已有项目基础，但不知道下一步该找园区、客户、技术、投资人、算力还是内容资源的项目。" },
 ];
 
 export default function ServiceRequestPage() {
@@ -26,6 +26,9 @@ export default function ServiceRequestPage() {
     contact_phone: "",
     contact_email: "",
     contact_preference: "",
+    urgent_problem: "",
+    budget_signal: "unknown",
+    authorized_material_review: true,
     user_message: "",
   });
   const [submitted, setSubmitted] = useState(false);
@@ -73,9 +76,7 @@ export default function ServiceRequestPage() {
           <div className="space-y-6">
             <div>
               <h1 className="text-3xl font-semibold text-white md:text-5xl">申请真人项目服务</h1>
-              <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-400">
-                如果你希望继续把项目材料整理成更适合园区、投资人、技术方或合作方阅读的版本，可以提交服务申请。我们会先根据你的材料判断适合的服务方式。
-              </p>
+              <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-400">如果你希望继续把项目材料整理成更适合园区、活动、投资人、技术方或合作方阅读的版本，可以提交服务申请。我们会先根据你的诊断报告和材料缺口，判断适合的服务方式。</p>
             </div>
 
             {bundle ? (
@@ -113,9 +114,20 @@ export default function ServiceRequestPage() {
                 <input className="bp-input" placeholder="手机号（选填）" value={form.contact_phone} onChange={(event) => setForm({ ...form, contact_phone: event.target.value })} />
                 <input className="bp-input" placeholder="邮箱（选填）" value={form.contact_email} onChange={(event) => setForm({ ...form, contact_email: event.target.value })} />
                 <input className="bp-input md:col-span-2" placeholder="希望联系时间（选填）" value={form.contact_preference} onChange={(event) => setForm({ ...form, contact_preference: event.target.value })} />
-                <textarea className="bp-input min-h-32 md:col-span-2" placeholder="你最希望我们帮你解决什么？例如：我想知道这个项目是否适合进园区，或者是否需要先补客户案例。" value={form.user_message} onChange={(event) => setForm({ ...form, user_message: event.target.value })} />
+                <select className="bp-input" value={form.budget_signal} onChange={(event) => setForm({ ...form, budget_signal: event.target.value })}>
+                  <option value="unknown">预算情况：还不确定</option>
+                  <option value="weak">预算较弱，先了解</option>
+                  <option value="medium">有初步预算</option>
+                  <option value="strong">预算明确，准备推进</option>
+                </select>
+                <label className="flex min-h-10 items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 text-sm text-slate-300">
+                  <input type="checkbox" checked={form.authorized_material_review} onChange={(event) => setForm({ ...form, authorized_material_review: event.target.checked })} />
+                  授权 OnePitch 查看本次完整诊断材料
+                </label>
+                <textarea className="bp-input min-h-24 md:col-span-2" placeholder="当前最急的问题。例如：我想知道是否适合进园区，或者是否需要先补客户案例。" value={form.urgent_problem} onChange={(event) => setForm({ ...form, urgent_problem: event.target.value })} />
+                <textarea className="bp-input min-h-28 md:col-span-2" placeholder="补充说明（选填）：希望达成什么结果、准备对接谁、是否有时间节点。" value={form.user_message} onChange={(event) => setForm({ ...form, user_message: event.target.value })} />
               </div>
-              <p className="mt-4 text-xs leading-5 text-slate-500">你的联系方式只用于本次项目诊断和服务沟通，不会展示在公开页面。</p>
+              <p className="mt-4 text-xs leading-5 text-slate-500">你的联系方式只用于本次项目诊断和服务沟通，不会展示在公开页面。OnePitch 不承诺融资、入驻、成交或撮合结果。</p>
               {error ? <div className="mt-4 rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div> : null}
               <div className="mt-6 flex flex-wrap gap-3">
                 <button onClick={submit} disabled={loading} className="h-10 rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-60">

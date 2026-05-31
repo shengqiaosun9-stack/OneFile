@@ -10,7 +10,7 @@ import { FieldBlock, SectionPanel } from "@/components/onepitch-bp/PublicBpShell
 import { bpGet, bpSend } from "@/lib/bp-api";
 import type { BpBundle, BpPage } from "@/lib/bp-types";
 
-const tabs = ["概览", "理解草稿", "14页BP", "材料缺口", "服务申请", "原始材料", "版本记录"] as const;
+const tabs = ["概览", "理解草稿", "资源路径", "14页BP", "材料缺口", "服务申请", "原始材料", "版本记录"] as const;
 
 export default function OpsBpProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -101,6 +101,7 @@ export default function OpsBpProjectDetailPage() {
                     <FieldBlock label="推荐路径" value={bundle.project.recommended_path} />
                     <FieldBlock label="准备度" value={bundle.project.readiness_score} />
                     <FieldBlock label="资源诉求" value={bundle.project.current_resource_need} />
+                    <FieldBlock label="可见状态" value={bundle.project.visibility || "private"} />
                     <FieldBlock label="服务申请数" value={bundle.service_requests.length} />
                     <FieldBlock label="下一步" value={bundle.project.next_action || "待判断"} />
                   </div>
@@ -148,8 +149,26 @@ export default function OpsBpProjectDetailPage() {
                   <FieldBlock label="AI 相关性" value={bundle.insight.ai_relevance} />
                   <FieldBlock label="当前进展" value={bundle.insight.traction} />
                   <FieldBlock label="关键数据" value={bundle.insight.key_data} />
+                  <FieldBlock label="下一步建议" value={bundle.insight.next_actions || []} />
+                  <FieldBlock label="资源方追问" value={bundle.insight.likely_questions || []} />
                 </div>
               </SectionPanel>
+            ) : null}
+
+            {tab === "资源路径" ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                {(bundle.insight.resource_readiness || []).map((item) => (
+                  <SectionPanel key={item.path}>
+                    <div className="flex items-center justify-between gap-3">
+                      <h2 className="font-semibold text-white">{item.path}</h2>
+                      <span className="rounded-md border border-blue-400/30 bg-blue-500/10 px-2.5 py-1 text-xs text-blue-200">{item.level}</span>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-slate-300">{item.reason}</p>
+                    <p className="mt-3 text-sm leading-6 text-amber-200">还缺：{item.missing}</p>
+                    <p className="mt-2 text-sm leading-6 text-blue-200">下一步：{item.next_step}</p>
+                  </SectionPanel>
+                ))}
+              </div>
             ) : null}
 
             {tab === "14页BP" && currentPage ? (
@@ -186,7 +205,10 @@ export default function OpsBpProjectDetailPage() {
                       <div>微信：{request.contact_wechat || "无"}</div>
                       <div>手机：{request.contact_phone || "无"}</div>
                       <div>邮箱：{request.contact_email || "无"}</div>
+                      <div>预算信号：{request.budget_signal || "unknown"}</div>
+                      <div>授权看材料：{request.authorized_material_review ? "是" : "否"}</div>
                     </div>
+                    <p className="mt-4 text-sm leading-6 text-amber-100">{request.urgent_problem || "无紧急问题说明"}</p>
                     <p className="mt-4 text-sm leading-6 text-slate-400">{request.user_message || "无服务诉求说明"}</p>
                   </SectionPanel>
                 ))}

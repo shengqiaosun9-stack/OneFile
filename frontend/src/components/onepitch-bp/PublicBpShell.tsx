@@ -3,14 +3,15 @@ import type { ReactNode } from "react";
 
 type PublicBpShellProps = {
   children: ReactNode;
-  currentStep?: "diagnose" | "report" | "bp" | "gaps" | "service";
+  currentStep?: "diagnose" | "report" | "bp" | "gaps" | "card" | "service";
   token?: string;
 };
 
 const steps = [
   { key: "report", label: "项目诊断", href: (token: string) => `/diagnose/${token}` },
-  { key: "bp", label: "BP 清单", href: (token: string) => `/diagnose/${token}/bp` },
+  { key: "bp", label: "结构预览", href: (token: string) => `/diagnose/${token}/bp` },
   { key: "gaps", label: "材料缺口", href: (token: string) => `/diagnose/${token}/gaps` },
+  { key: "card", label: "项目卡", href: (token: string) => `/diagnose/${token}/card` },
   { key: "service", label: "申请服务", href: (token: string) => `/diagnose/${token}/service` },
 ] as const;
 
@@ -29,7 +30,10 @@ export function PublicBpShell({ children, currentStep, token }: PublicBpShellPro
             {token ? (
               <>
                 <Link href={`/diagnose/${token}/bp`} className="hover:text-white">
-                  14页BP清单
+                  结构预览
+                </Link>
+                <Link href={`/diagnose/${token}/card`} className="hover:text-white">
+                  项目卡
                 </Link>
                 <Link href={`/diagnose/${token}/service`} className="hover:text-white">
                   申请服务

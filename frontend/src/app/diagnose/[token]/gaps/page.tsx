@@ -11,22 +11,22 @@ import type { BpBundle } from "@/lib/bp-types";
 const services = [
   {
     title: "项目初诊",
-    body: "适合：你不确定项目现在是否适合对外沟通。产出：一次项目表达和资源路径判断。",
+    body: "适合：你不确定项目现在是否适合对外沟通。交付：人工补充点评、关键表达问题和下一步建议。",
     hrefType: "project_diagnosis",
   },
   {
     title: "标准项目档案人工精修",
-    body: "适合：你已有材料，但表达混乱。产出：一份更清楚的项目档案和对外介绍。",
+    body: "适合：你已有材料，但表达混乱。交付：项目一句话、项目逻辑、资源诉求和 1 页项目卡。",
     hrefType: "manual_refinement",
   },
   {
     title: "BP 清单 / 园区材料人工重构",
-    body: "适合：你准备对接园区、投资人或合作方。产出：更适合外部沟通的 BP 页级清单。",
+    body: "适合：你准备对接园区、活动、投资人或合作方。交付：更适合外部沟通的页级结构和关键文案。",
     hrefType: "bp_restructure",
   },
   {
     title: "资源路径推进",
-    body: "适合：你已有项目基础，但不知道下一步该找谁。产出：资源路径建议和对接前材料准备。",
+    body: "适合：你已有项目基础，但不知道下一步该找谁。交付：路径判断、沟通建议和材料准备。",
     hrefType: "resource_path",
   },
 ];
@@ -47,7 +47,7 @@ export default function GapReportPage() {
       <section className="mx-auto max-w-6xl px-5 py-12">
         <div className="mb-8">
           <h1 className="text-3xl font-semibold text-white md:text-5xl">材料缺口报告</h1>
-          <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-400">下面这些缺口，会直接影响园区、投资人、技术方或合作方是否愿意继续沟通。</p>
+          <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-400">下面这些缺口，会直接影响园区、活动主办方、投资人、技术方或合作方是否愿意继续沟通。</p>
         </div>
         {error ? <div className="rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div> : null}
         {bundle ? (
@@ -65,7 +65,7 @@ export default function GapReportPage() {
               </div>
               <div className="mt-6 flex flex-wrap gap-3">
                 <PrimaryLink href={`/diagnose/${token}/service`}>申请真人服务</PrimaryLink>
-                <SecondaryLink href={`/diagnose/${token}/bp`}>返回 BP 清单</SecondaryLink>
+                <SecondaryLink href={`/diagnose/${token}`}>返回诊断报告</SecondaryLink>
               </div>
             </SectionPanel>
           </div>

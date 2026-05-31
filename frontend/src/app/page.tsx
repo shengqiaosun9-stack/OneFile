@@ -1,39 +1,31 @@
 import Link from "next/link";
-import { ArrowRight, FileCheck2, ListChecks, SearchCheck } from "lucide-react";
+import { ArrowRight, ClipboardCheck, FileSearch, Route, Share2, UserCheck } from "lucide-react";
 
 import { PublicBpShell, PrimaryLink, SecondaryLink, SectionPanel } from "@/components/onepitch-bp/PublicBpShell";
 
 const outputs = [
-  {
-    title: "项目理解草稿",
-    body: "把项目名、一句话、阶段、客户、问题、方案、商业模式和资源诉求先梳理清楚。",
-    icon: SearchCheck,
-  },
-  {
-    title: "14 页 BP 清单预览",
-    body: "不是直接生成融资 PPT，而是告诉你对外沟通时每一页应该讲什么、缺什么。",
-    icon: ListChecks,
-  },
-  {
-    title: "材料缺口报告",
-    body: "指出园区、投资人、技术方或合作方可能继续追问的问题。",
-    icon: FileCheck2,
-  },
+  { title: "项目初诊", body: "先判断项目是否被讲清楚，而不是直接生成一份看似完整的 BP。", icon: FileSearch },
+  { title: "准备度评分", body: "评估材料完整度和表达清晰度，不代表项目好坏或融资价值。", icon: ClipboardCheck },
+  { title: "资源路径准备度", body: "分别判断园区、活动、客户、技术、融资、内容等路径还缺什么。", icon: Route },
+  { title: "可分享项目卡", body: "生成适合发给合伙人、园区、活动主办方或合作方的轻量项目卡。", icon: Share2 },
+  { title: "人工服务入口", body: "当项目准备对外沟通时，进入项目档案精修或园区/路演材料重构。", icon: UserCheck },
 ];
 
-const fitItems = ["AI/OPC 早期项目", "准备进园区或对接政策资源的项目", "想找技术、订单、算力、资金或合作方的项目", "已有业务但不知道如何讲清楚的传统产业 AI 项目", "准备做访谈、路演、闭门会介绍的项目"];
+const fitItems = ["AI/OPC 早期项目", "准备报名活动、路演或闭门会的项目", "正在找园区、政策、客户、技术或算力资源的项目", "已有业务但外部表达不清楚的传统产业 AI 项目", "想把聊天记录、访谈纪要或 BP 草稿整理成项目档案的团队"];
+
+const services = ["项目表达体检", "项目初诊电话", "标准项目档案精修", "园区 / 活动 / 路演材料重构", "资源路径推进"];
 
 export default function HomePage() {
   return (
     <PublicBpShell>
-      <section className="mx-auto grid max-w-6xl gap-10 px-5 py-20 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+      <section className="mx-auto grid max-w-6xl gap-10 px-5 py-20 lg:grid-cols-[1.04fr_0.96fr] lg:items-center">
         <div>
-          <h1 className="max-w-3xl text-4xl font-semibold leading-tight text-white md:text-6xl">把混乱项目材料，整理成资源方看得懂的 BP 清单</h1>
+          <h1 className="max-w-4xl text-4xl font-semibold leading-tight text-white md:text-6xl">先判断你的 AI / OPC 项目，是否已经准备好进入资源方视野</h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
-            OnePitch 帮 AI/OPC 早期项目完成项目诊断、BP 缺口识别和外部沟通材料预整理，让园区、投资人、技术方和合作方更快判断你在做什么、缺什么、下一步能不能聊。
+            OnePitch 帮 AI / OPC 早期项目完成项目初诊、材料缺口识别、资源路径准备度判断和可分享项目卡生成，让园区、活动主办方、技术方、客户、投资人和合作伙伴更快看懂你是谁、缺什么、下一步能不能聊。
           </p>
           <div className="mt-6 flex flex-wrap gap-2 text-sm text-slate-300">
-            {["不做完整融资 BP", "不做花哨 PPT", "先判断项目是否讲清楚"].map((item) => (
+            {["不是 BP 生成器", "不是项目广场", "先诊断表达和材料", "再进入人工精修"].map((item) => (
               <span key={item} className="rounded-md border border-white/10 bg-white/[0.04] px-3 py-2">
                 {item}
               </span>
@@ -43,9 +35,10 @@ export default function HomePage() {
             <PrimaryLink href="/diagnose">
               开始项目诊断 <ArrowRight className="ml-2 size-4" />
             </PrimaryLink>
-            <SecondaryLink href="#bp-structure">查看 14 页清单结构</SecondaryLink>
+            <SecondaryLink href="#services">了解人工服务</SecondaryLink>
           </div>
         </div>
+
         <SectionPanel>
           <div className="mb-5 text-sm text-blue-300">诊断输出预览</div>
           <div className="space-y-4">
@@ -79,9 +72,9 @@ export default function HomePage() {
             </div>
           </SectionPanel>
           <SectionPanel>
-            <h2 className="text-2xl font-semibold text-white">从混乱材料到可沟通清单</h2>
+            <h2 className="text-2xl font-semibold text-white">从提交材料到服务转化</h2>
             <div className="mt-6 space-y-4">
-              {["粘贴项目材料", "生成项目理解草稿", "查看 14 页 BP 清单", "识别材料缺口", "申请真人精修或资源路径建议"].map((item, index) => (
+              {["粘贴项目材料", "生成项目初诊报告", "识别资源路径和材料缺口", "生成可分享项目卡", "申请人工精修或资源路径推进"].map((item, index) => (
                 <div key={item} className="flex items-center gap-3 text-sm text-slate-300">
                   <span className="flex size-7 items-center justify-center rounded-md bg-blue-600/20 text-xs text-blue-200">{index + 1}</span>
                   <span>{item}</span>
@@ -92,14 +85,15 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section id="bp-structure" className="border-y border-white/10 bg-white/[0.02]">
+      <section id="services" className="border-y border-white/10 bg-white/[0.02]">
         <div className="mx-auto max-w-6xl px-5 py-16">
-          <h2 className="text-2xl font-semibold text-white">14 页标准外部沟通 BP 清单</h2>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">它不是完整融资 BP，也不是 PPT 设计稿，而是一份外部沟通前的页级结构清单。</p>
+          <h2 className="text-2xl font-semibold text-white">免费诊断发现问题，人工服务完成交付</h2>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
+            OnePitch 不承诺融资、入驻、成交或自动撮合。人工服务聚焦项目表达、材料重构、资源路径判断和对外沟通准备。
+          </p>
           <div className="mt-8 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {["项目封面", "项目逻辑", "行业痛点", "市场切口", "现有方案缺口", "当前进展 / 业务基础", "为什么现在", "产品闭环", "产品 / 系统结构", "商业模式", "竞争定位", "核心壁垒", "增长计划", "团队与资源诉求"].map((item, index) => (
+            {services.map((item) => (
               <div key={item} className="rounded-md border border-white/10 bg-[#020617] p-4 text-sm text-slate-300">
-                <span className="mr-2 text-blue-300">{String(index + 1).padStart(2, "0")}</span>
                 {item}
               </div>
             ))}
