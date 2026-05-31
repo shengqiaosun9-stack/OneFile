@@ -1,7 +1,234 @@
 {
   "schema_version": 2,
   "users": [],
-  "projects": [],
+  "projects": [
+    {
+      "id": "7451c54f",
+      "title": "北极星协作",
+      "summary": "让外部人用几分钟就能判断一个早期 SaaS 项目现在值不值得继续跟进。",
+      "desc": "把客户反馈、验证状态和下一步动作收进一个共享工作区，让外部人不用依赖长文档，也能快速理解项目进度与价值。",
+      "users": "早期 SaaS 团队",
+      "problem_statement": "早期 SaaS 团队很难把零散反馈和当前进展快速对齐给外部人。",
+      "solution_approach": "通过统一项目卡持续同步反馈、状态和下一步动作，降低外部理解成本。",
+      "use_cases": "周会同步、对外更新、潜在客户评估",
+      "model_desc": "B2B 订阅",
+      "model_type": "B2B_SUBSCRIPTION",
+      "model_type_label": "B2B 订阅",
+      "business_model_type": "TOB",
+      "business_model_type_label": "ToB",
+      "form_type": "SAAS",
+      "form_type_label": "SaaS",
+      "stage": "VALIDATION",
+      "stage_label": "验证阶段",
+      "latest_update": "已完成首批 8 位试用用户访谈，准备整理可复用功能清单",
+      "updated_at": "2026-04-01 18:44:36",
+      "entity_type": "claimed_project",
+      "claim_status": "claimed",
+      "visible_in_library": true,
+      "owner_user_id": "u_system_examples",
+      "claimed_by_user_id": "u_system_examples",
+      "is_system_example": true,
+      "share": {
+        "is_public": true,
+        "slug": "onefile-7451c54f",
+        "published_at": "2026-04-01 18:44:36",
+        "last_shared_at": "2026-04-01 18:44:36"
+      },
+      "updates": []
+    },
+    {
+      "id": "9c28454f",
+      "title": "画境工作室",
+      "summary": "让游戏制作团队先看懂风格方向和合作价值，再决定要不要继续推进合作。",
+      "desc": "围绕国风美术方案沉淀风格方向、样例结果和合作边界，让团队在同一语义下推进创作和协作决策。",
+      "users": "国风游戏美术团队",
+      "problem_statement": "美术工作室很难在一次沟通里讲清风格方向与合作边界。",
+      "solution_approach": "把风格方案和协作边界整理为统一项目卡，缩短合作判断路径。",
+      "use_cases": "制作人评审、外包协同、合作评估",
+      "model_desc": "项目制付费",
+      "model_type": "ONE_TIME",
+      "model_type_label": "一次性付费",
+      "business_model_type": "TOB",
+      "business_model_type_label": "ToB",
+      "form_type": "AI_NATIVE_APP",
+      "form_type_label": "AI 原生应用",
+      "stage": "BUILDING",
+      "stage_label": "开发中",
+      "latest_update": "完成首批风格验证图，准备给 3 位潜在合作方试投递",
+      "updated_at": "2026-04-01 18:54:36",
+      "entity_type": "claimed_project",
+      "claim_status": "claimed",
+      "visible_in_library": true,
+      "owner_user_id": "u_system_examples",
+      "claimed_by_user_id": "u_system_examples",
+      "is_system_example": true,
+      "share": {
+        "is_public": true,
+        "slug": "onefile-9c28454f",
+        "published_at": "2026-04-01 18:54:36",
+        "last_shared_at": "2026-04-01 18:54:36"
+      },
+      "updates": []
+    },
+    {
+      "id": "c36ea7f2",
+      "title": "合同快线",
+      "summary": "让法务负责人快速判断这套合同服务能不能缩短签约流程和沟通成本。",
+      "desc": "把合同审核流程、沟通节点和服务边界整理成一套更容易判断的 API 服务方案，帮助企业更快进入试用或采购决策。",
+      "users": "中小企业法务负责人",
+      "problem_statement": "法务团队难以快速判断合同服务方案是否可缩短签约周期。",
+      "solution_approach": "将合同流程与服务边界结构化为 API 服务方案，减少试用与采购犹豫。",
+      "use_cases": "签约流程优化、法务试用评估、采购决策支持",
+      "model_desc": "一次性服务费",
+      "model_type": "ONE_TIME",
+      "model_type_label": "一次性付费",
+      "business_model_type": "TOB",
+      "business_model_type_label": "ToB",
+      "form_type": "API_SERVICE",
+      "form_type_label": "API 服务",
+      "stage": "VALIDATION",
+      "stage_label": "验证阶段",
+      "latest_update": "已整理首版合同自动化流程，准备给第一批企业用户试用",
+      "updated_at": "2026-04-01 19:05:00",
+      "entity_type": "claimed_project",
+      "claim_status": "claimed",
+      "visible_in_library": true,
+      "owner_user_id": "u_system_examples",
+      "claimed_by_user_id": "u_system_examples",
+      "is_system_example": true,
+      "share": {
+        "is_public": true,
+        "slug": "onefile-c36ea7f2",
+        "published_at": "2026-04-01 19:05:00",
+        "last_shared_at": "2026-04-01 19:05:00"
+      },
+      "updates": []
+    },
+    {
+      "id": "xljz2026",
+      "title": "杏林炬中药临方制剂解决方案",
+      "summary": "以一人一方中药临方制剂能力，帮助综合医院在6-8个月内形成可复制的中医药增收闭环。",
+      "desc": "项目聚焦综合医院中医药能力补位，在国家中医药政策窗口期下，提供中药临方制剂的一体化导入方案。通过设备、制剂室运营、人员培训、质控与院内落地流程，支撑医院从临床处方到制剂转化，再到院内外服务协同，形成可复制的运营闭环。基于已验证的区域落地经验，当前重点推进西南区域医院扩张与标准化导入。",
+      "users": "综合医院管理层、中医临床科室、药剂与运营团队",
+      "problem_statement": "综合医院中医药服务能力薄弱、临方制剂能力缺失，在DRG/DIP与药品零加成背景下面临收入与服务转型双重压力。",
+      "solution_approach": "提供设备+制剂室运营+培训质控+医院导入的一体化临方制剂解决包，支撑院内快速转化、医保路径承接与中医特色服务能力提升。",
+      "use_cases": "院内一人一方制剂转化、慢病康复续方、社区协同、中医特色专科建设",
+      "model_desc": "医院服务费+制剂服务收入+调剂中心与供应链分润",
+      "model": "医院服务费+制剂服务收入+调剂中心与供应链分润",
+      "model_type": "OUTSOURCING",
+      "model_type_label": "外包/服务",
+      "business_model_type": "TOB",
+      "business_model_type_label": "ToB",
+      "form_type": "OTHER",
+      "form_type_label": "其他",
+      "stage": "EARLY_REVENUE",
+      "stage_label": "早期收入",
+      "stage_metric": "西南多地医院落地，单院通常6-8个月进入盈利区间",
+      "latest_update": "政策窗口进入兑现期，重庆等区域医院推进提速，年内新增落地计划推进中。",
+      "updated_at": "2026-04-13 20:30:00",
+      "status_tag": "已上线 / 早期收入",
+      "entity_type": "claimed_project",
+      "claim_status": "claimed",
+      "visible_in_library": true,
+      "owner_user_id": "u_system_examples",
+      "claimed_by_user_id": "u_system_examples",
+      "is_system_example": true,
+      "share": {
+        "is_public": true,
+        "slug": "onefile-xljz2026",
+        "published_at": "2026-04-13 20:30:00",
+        "last_shared_at": "2026-04-13 20:30:00"
+      },
+      "updates": [
+        {
+          "id": "xljz-u1",
+          "project_id": "xljz2026",
+          "author_user_id": "u_system_examples",
+          "content": "已形成设备导入、制剂室运营、培训质控协同的可复制闭环。",
+          "created_at": "2026-04-08 10:00:00",
+          "source": "system_migration",
+          "kind": "result",
+          "evidence_score": 0.88,
+          "action_alignment": 0.74,
+          "completion_signal": false,
+          "input_meta": {
+            "has_text": true,
+            "has_file": true,
+            "merged_chars": 1200
+          }
+        },
+        {
+          "id": "xljz-u2",
+          "project_id": "xljz2026",
+          "author_user_id": "u_system_examples",
+          "content": "区域扩张在谈，下一阶段将集中推进重庆与成都新院导入排期。",
+          "created_at": "2026-04-13 20:30:00",
+          "source": "system_migration",
+          "kind": "action",
+          "evidence_score": 0.8,
+          "action_alignment": 0.83,
+          "completion_signal": false,
+          "input_meta": {
+            "has_text": true,
+            "has_file": true,
+            "merged_chars": 980
+          }
+        }
+      ],
+      "next_action": {
+        "text": "在重庆与成都完成下一批医院签约与上线排期，并沉淀标准化导入SOP。",
+        "status": "open",
+        "generated_at": "2026-04-13 20:30:00",
+        "completed_at": "",
+        "confidence": 0.82
+      },
+      "project_object": {
+        "external_judgment_line": "以一人一方中药临方制剂能力，帮助综合医院在6-8个月内形成可复制的中医药增收闭环。",
+        "project_identity": {
+          "title": "杏林炬中药临方制剂解决方案",
+          "stage": "EARLY_REVENUE",
+          "stage_label": "早期收入",
+          "audience": "综合医院管理层、中医临床科室、药剂与运营团队",
+          "category": "其他",
+          "status_tag": "已上线 / 早期收入"
+        },
+        "project_description": "项目围绕综合医院中医药能力升级，提供从临方制剂设备导入到制剂室运营、培训质控与院内实施的整体方案。依托前期区域落地经验，能够将中医临床处方快速转化为院内可交付制剂服务，缩短从建设到经营验证周期，帮助医院在政策窗口下形成可复制的中医药服务与增收路径。",
+        "key_browse_fields": [
+          {
+            "key": "form_type",
+            "label": "产品形态",
+            "value": "其他"
+          },
+          {
+            "key": "target_user",
+            "label": "目标用户",
+            "value": "综合医院管理层、中医临床科室、药剂与运营团队"
+          },
+          {
+            "key": "business_model",
+            "label": "商业模式",
+            "value": "ToB"
+          },
+          {
+            "key": "monetization",
+            "label": "盈利模式",
+            "value": "外包/服务"
+          }
+        ],
+        "current_status": {
+          "stage": "EARLY_REVENUE",
+          "stage_label": "早期收入",
+          "recent_update": "政策窗口进入兑现期，重庆等区域医院推进提速，年内新增落地计划推进中。",
+          "validation_signal": "西南多地医院落地，单院通常6-8个月进入盈利区间"
+        },
+        "next_step": {
+          "text": "在重庆与成都完成下一批医院签约与上线排期，并沉淀标准化导入SOP。",
+          "status": "open",
+          "status_label": "待推进"
+        }
+      }
+    }
+  ],
   "events": [],
   "auth_challenges": [],
   "auth_sessions": []

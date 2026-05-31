@@ -1664,6 +1664,66 @@ def infer_shape(schema: Dict[str, Any]) -> str:
     return form_type_label(schema.get("form_type", "OTHER"))
 
 
+def _build_project_description(project: Dict[str, Any]) -> str:
+    existing = project.get("project_object", {}) if isinstance(project.get("project_object", {}), dict) else {}
+    existing_description = sanitize_text_strict(existing.get("project_description", ""), allow_empty=True, max_len=220)
+    if existing_description:
+        return existing_description
+    desc = sanitize_text_strict(project.get("desc", ""), allow_empty=True, max_len=220)
+    solution = sanitize_text_strict(project.get("solution_approach", ""), allow_empty=True, max_len=220)
+    if solution:
+        return solution
+    if desc and len(desc) <= 160 and "\n" not in desc:
+        return desc
+    problem = sanitize_text_strict(project.get("problem_statement", ""), allow_empty=True, max_len=220)
+    if problem:
+        return problem
+    return sanitize_text_strict(project.get("summary", ""), allow_empty=False, max_len=160)
+
+
+def _build_key_browse_fields(project: Dict[str, Any]) -> List[Dict[str, str]]:
+    fields = [
+        {"key": "form_type", "label": "产品形态", "value": form_type_label(project.get("form_type", ""))},
+        {"key": "target_user", "label": "目标用户", "value": sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=120) or "待补充"},
+        {"key": "business_model", "label": "商业模式", "value": business_model_label(project.get("business_model_type", ""))},
+        {"key": "monetization", "label": "盈利模式", "value": model_type_label(project.get("model_type", ""))},
+    ]
+    return fields
+
+
+def build_project_object(project: Dict[str, Any]) -> Dict[str, Any]:
+    next_action = project.get("next_action", {}) if isinstance(project.get("next_action", {}), dict) else {}
+    next_step_text = sanitize_text_strict(next_action.get("text", ""), allow_empty=True, max_len=160)
+    if not next_step_text:
+        next_step_text = sanitize_text_strict(project.get("latest_update", ""), allow_empty=True, max_len=160)
+    next_status = sanitize_text_strict(next_action.get("status", ""), allow_empty=True, max_len=20).lower() or "open"
+    stage_value = normalize_stage_value(project.get("stage", ""))
+    return {
+        "external_judgment_line": sanitize_text_strict(project.get("summary", ""), allow_empty=False, max_len=140),
+        "project_identity": {
+            "title": sanitize_text_strict(project.get("title", ""), allow_empty=False, max_len=TITLE_MAX_LEN),
+            "stage": stage_value,
+            "stage_label": stage_label(stage_value),
+            "audience": sanitize_text_strict(project.get("users", ""), allow_empty=True, max_len=120),
+            "category": form_type_label(project.get("form_type", "")),
+            "status_tag": sanitize_text_strict(project.get("status_tag", ""), allow_empty=True, max_len=40),
+        },
+        "project_description": _build_project_description(project),
+        "key_browse_fields": _build_key_browse_fields(project),
+        "current_status": {
+            "stage": stage_value,
+            "stage_label": stage_label(stage_value),
+            "recent_update": sanitize_latest_update(project.get("latest_update", ""), fallback=LATEST_UPDATE_FALLBACK),
+            "validation_signal": sanitize_text_strict(project.get("stage_metric", ""), allow_empty=True, max_len=120),
+        },
+        "next_step": {
+            "text": next_step_text or "待补充",
+            "status": next_status,
+            "status_label": next_action_status_label(next_status),
+        },
+    }
+
+
 def build_versions_from_schema(schema: Dict[str, Any]) -> List[Dict[str, str]]:
     date = get_now_str()
     event = sanitize_version_event(
@@ -1751,6 +1811,7 @@ def normalize_project(project: Dict[str, Any]) -> Dict[str, Any]:
     ui["status_tag"] = infer_status_tag(ui["stage"])
     ui["status_theme"] = get_status_theme(ui["status_tag"])
     ui = ensure_action_loop_defaults(ui)
+    ui["project_object"] = build_project_object(ui)
     return ui
 
 

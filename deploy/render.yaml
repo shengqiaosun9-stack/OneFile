@@ -9,9 +9,25 @@ services:
     envVars:
       - key: ONEFILE_ENV
         value: production
-      - key: ONEFILE_AUTH_DEBUG_CODES
+      - key: ONEFILE_LOCAL_MODE
+        value: "0"
+      - key: ONEFILE_OPS_ENABLED
         value: "1"
+      - key: ONEFILE_OPS_ADMIN_EMAILS
+        sync: false
+      - key: ONEFILE_AUTH_DEBUG_CODES
+        value: "0"
       - key: ONEFILE_SESSION_COOKIE_SECURE
         value: "1"
-      - key: HUNYUAN_API_KEY
+      - key: ONEPITCH_AI_PROVIDER
+        value: deepseek
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
+      - key: DEEPSEEK_MODEL
+        value: deepseek-v4-flash
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: ONEPITCH_STORAGE_BACKEND
+        value: postgres
+      - key: DATABASE_URL
         sync: false

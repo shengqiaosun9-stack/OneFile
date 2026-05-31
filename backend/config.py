@@ -31,6 +31,9 @@ def _clamp(value: int, lower: int, upper: int) -> int:
 @dataclass(frozen=True)
 class Settings:
     app_env: str
+    local_mode: bool
+    ops_enabled: bool
+    ops_admin_emails: str
     cta_token_ttl_days: int
     growth_window_default_days: int
     growth_window_max_days: int
@@ -46,12 +49,17 @@ class Settings:
     auth_email_provider: str
     resend_api_key: str
     resend_from_email: str
+    storage_backend: str
+    database_url: str
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     app_env = _read_str_env("ONEFILE_ENV", "development").lower() or "development"
     is_production = app_env in {"prod", "production"}
+    local_mode = _read_bool_env("ONEFILE_LOCAL_MODE", not is_production)
+    ops_enabled = _read_bool_env("ONEFILE_OPS_ENABLED", local_mode or not is_production)
+    ops_admin_emails = _read_str_env("ONEFILE_OPS_ADMIN_EMAILS", "")
     cta_ttl = _clamp(_read_int_env("ONEFILE_CTA_TOKEN_TTL_DAYS", 7), 1, 30)
     growth_default = _clamp(_read_int_env("ONEFILE_GROWTH_WINDOW_DEFAULT_DAYS", 14), 1, 30)
     growth_max = _clamp(_read_int_env("ONEFILE_GROWTH_WINDOW_MAX_DAYS", 60), 7, 120)
@@ -67,8 +75,15 @@ def get_settings() -> Settings:
     auth_email_provider = _read_str_env("ONEFILE_AUTH_EMAIL_PROVIDER", "resend").lower() or "resend"
     resend_api_key = _read_str_env("ONEFILE_RESEND_API_KEY", "")
     resend_from_email = _read_str_env("ONEFILE_RESEND_FROM_EMAIL", "")
+    storage_backend = _read_str_env("ONEPITCH_STORAGE_BACKEND", "json").lower() or "json"
+    if storage_backend not in {"json", "postgres"}:
+        storage_backend = "json"
+    database_url = _read_str_env("DATABASE_URL", "")
     return Settings(
         app_env=app_env,
+        local_mode=local_mode,
+        ops_enabled=ops_enabled,
+        ops_admin_emails=ops_admin_emails,
         cta_token_ttl_days=cta_ttl,
         growth_window_default_days=min(growth_default, growth_max),
         growth_window_max_days=growth_max,
@@ -84,6 +99,8 @@ def get_settings() -> Settings:
         auth_email_provider=auth_email_provider,
         resend_api_key=resend_api_key,
         resend_from_email=resend_from_email,
+        storage_backend=storage_backend,
+        database_url=database_url,
     )
 
 

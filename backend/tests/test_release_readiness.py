@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+import storage
 
 
 def test_backend_settings_reads_env_and_clamps(monkeypatch):
@@ -56,8 +57,6 @@ def test_migrate_store_to_v3_rejects_non_json_file(tmp_path):
 
 
 def test_save_store_handles_parallel_writes(tmp_path, monkeypatch):
-    import storage
-
     monkeypatch.setattr(storage, "DATA_DIR", tmp_path)
     monkeypatch.setattr(storage, "PROJECTS_FILE", tmp_path / "projects.json")
 
@@ -78,3 +77,96 @@ def test_save_store_handles_parallel_writes(tmp_path, monkeypatch):
     loaded = json.loads(storage.PROJECTS_FILE.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     assert loaded.get("schema_version") == 2
+
+
+def test_load_store_backfills_seed_examples_into_existing_empty_store(tmp_path, monkeypatch):
+    empty_store = {
+        "schema_version": 2,
+        "users": [],
+        "projects": [],
+        "events": [],
+        "auth_challenges": [],
+        "auth_sessions": [],
+    }
+    seed_store = {
+        "schema_version": 2,
+        "users": [],
+        "projects": [
+            {
+                "id": "7451c54f",
+                "title": "Seed Demo",
+                "entity_type": "claimed_project",
+                "claim_status": "claimed",
+                "visible_in_library": True,
+                "share": {"is_public": True, "slug": "seed-demo"},
+            }
+        ],
+        "events": [],
+        "auth_challenges": [],
+        "auth_sessions": [],
+    }
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    project_file = data_dir / "projects.json"
+    seed_file = data_dir / "projects.seed.json"
+    project_file.write_text(json.dumps(empty_store, ensure_ascii=False), encoding="utf-8")
+    seed_file.write_text(json.dumps(seed_store, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(storage, "DATA_DIR", data_dir)
+    monkeypatch.setattr(storage, "PROJECTS_FILE", project_file)
+    monkeypatch.setattr(storage, "SEED_FILE", seed_file)
+
+    loaded = storage.load_store()
+    assert len(loaded.get("projects", [])) == 1
+    assert loaded["projects"][0]["id"] == "7451c54f"
+
+    persisted = json.loads(project_file.read_text(encoding="utf-8"))
+    assert len(persisted.get("projects", [])) == 1
+    assert persisted["projects"][0]["id"] == "7451c54f"
+
+
+def test_load_store_seed_backfill_is_idempotent(tmp_path, monkeypatch):
+    empty_store = {
+        "schema_version": 2,
+        "users": [],
+        "projects": [],
+        "events": [],
+        "auth_challenges": [],
+        "auth_sessions": [],
+    }
+    seed_store = {
+        "schema_version": 2,
+        "users": [],
+        "projects": [
+            {
+                "id": "7451c54f",
+                "title": "Seed Demo",
+                "entity_type": "claimed_project",
+                "claim_status": "claimed",
+                "visible_in_library": True,
+                "share": {"is_public": True, "slug": "seed-demo"},
+            }
+        ],
+        "events": [],
+        "auth_challenges": [],
+        "auth_sessions": [],
+    }
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    project_file = data_dir / "projects.json"
+    seed_file = data_dir / "projects.seed.json"
+    project_file.write_text(json.dumps(empty_store, ensure_ascii=False), encoding="utf-8")
+    seed_file.write_text(json.dumps(seed_store, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(storage, "DATA_DIR", data_dir)
+    monkeypatch.setattr(storage, "PROJECTS_FILE", project_file)
+    monkeypatch.setattr(storage, "SEED_FILE", seed_file)
+
+    first = storage.load_store()
+    second = storage.load_store()
+
+    assert len(first.get("projects", [])) == 1
+    assert len(second.get("projects", [])) == 1
+    assert first["projects"][0]["id"] == second["projects"][0]["id"] == "7451c54f"

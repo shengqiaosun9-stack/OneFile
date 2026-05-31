@@ -12,6 +12,17 @@ from backend.schemas import (
     LoginStartRequest,
     LoginVerifyRequest,
     LoginRequest,
+    OpsContentRequest,
+    OpsInboxItemRequest,
+    OpsInboxRouteRequest,
+    OpsInteractionRequest,
+    OpsNeedRequest,
+    OpsOfferRequest,
+    OpsOrganizationRequest,
+    OpsPersonRequest,
+    OpsProfileRequest,
+    OpsProfileSuggestRequest,
+    OpsProjectRequest,
     ShareCTARequest,
     ToggleShareRequest,
     UpdateProgressRequest,
@@ -46,7 +57,30 @@ from backend.service import (
     update_project_progress,
     edit_project_progress_item,
     delete_project_progress_item,
+    create_ops_item,
+    create_bp_diagnosis,
+    create_bp_service_request,
+    export_ops_crm,
+    get_bp_diagnosis,
+    get_local_ops_user,
+    get_ops_followups,
+    get_ops_bp_followups,
+    get_ops_bp_project,
+    get_ops_relationship_map,
+    import_ops_crm,
     verify_login,
+    get_ops_summary,
+    list_ops_bp_projects,
+    list_ops_items,
+    route_ops_inbox_item,
+    supplement_bp_diagnosis,
+    update_ops_bp_page,
+    update_ops_bp_project,
+    update_ops_item,
+    get_ops_profile,
+    require_ops_admin,
+    suggest_ops_profile,
+    update_ops_profile,
 )
 
 app = FastAPI(title="OneFile Backend API", version="0.1.0")
@@ -98,6 +132,12 @@ def _require_user(request: Request) -> Dict[str, Any]:
     if not user:
         raise ServiceError(401, "unauthorized", "请先登录后再执行该操作。")
     return user
+
+
+def _require_ops_user(request: Request) -> Dict[str, Any]:
+    if get_settings().local_mode:
+        return get_local_ops_user()
+    return _require_user(request)
 
 
 @app.exception_handler(ServiceError)
@@ -159,6 +199,291 @@ def auth_logout_endpoint(request: Request, response: Response) -> Dict[str, Any]
 def backup_export_endpoint(request: Request) -> Dict[str, Any]:
     user = _require_user(request)
     return export_user_backup(email=str(user.get("email", "")))
+
+
+@app.post("/v1/bp/diagnoses")
+def bp_diagnosis_create_endpoint(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return create_bp_diagnosis(payload)
+
+
+@app.get("/v1/bp/diagnoses/{token}")
+def bp_diagnosis_get_endpoint(token: str) -> Dict[str, Any]:
+    return get_bp_diagnosis(token)
+
+
+@app.post("/v1/bp/diagnoses/{token}/supplements")
+def bp_diagnosis_supplement_endpoint(token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    return supplement_bp_diagnosis(token, payload)
+
+
+@app.post("/v1/bp/diagnoses/{token}/service-requests")
+def bp_service_request_create_endpoint(token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    return create_bp_service_request(token, payload)
+
+
+@app.get("/v1/ops/bp/projects")
+def ops_bp_projects_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_bp_projects(user)
+
+
+@app.get("/v1/ops/bp/projects/{project_id}")
+def ops_bp_project_get_endpoint(project_id: str, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return get_ops_bp_project(user, project_id)
+
+
+@app.patch("/v1/ops/bp/projects/{project_id}")
+def ops_bp_project_update_endpoint(project_id: str, payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_bp_project(user, project_id, payload)
+
+
+@app.patch("/v1/ops/bp/pages/{page_id}")
+def ops_bp_page_update_endpoint(page_id: str, payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_bp_page(user, page_id, payload)
+
+
+@app.get("/v1/ops/bp/followups")
+def ops_bp_followups_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return get_ops_bp_followups(user)
+
+
+@app.get("/v1/ops/summary")
+def ops_summary_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return get_ops_summary(user)
+
+
+@app.post("/v1/ops/profiles/suggest")
+def ops_profile_suggest_endpoint(payload: OpsProfileSuggestRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    require_ops_admin(user)
+    return suggest_ops_profile(payload.model_dump())
+
+
+@app.get("/v1/ops/profiles/{subject_type}/{subject_id}")
+def ops_profile_get_endpoint(subject_type: str, subject_id: str, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return get_ops_profile(user, subject_type, subject_id)
+
+
+@app.patch("/v1/ops/profiles/{subject_type}/{subject_id}")
+def ops_profile_update_endpoint(subject_type: str, subject_id: str, payload: OpsProfileRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_profile(user, subject_type, subject_id, payload.model_dump(exclude_none=True))
+
+
+@app.get("/v1/ops/inbox")
+def ops_inbox_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_items(user, "inbox", dict(request.query_params))
+
+
+@app.post("/v1/ops/inbox")
+def ops_inbox_create_endpoint(payload: OpsInboxItemRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return create_ops_item(user, "inbox", payload.model_dump(exclude_none=True))
+
+
+@app.patch("/v1/ops/inbox/{item_id}")
+def ops_inbox_update_endpoint(item_id: str, payload: OpsInboxItemRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_item(user, "inbox", item_id, payload.model_dump(exclude_none=True))
+
+
+@app.post("/v1/ops/inbox/{item_id}/route")
+def ops_inbox_route_endpoint(item_id: str, payload: OpsInboxRouteRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return route_ops_inbox_item(user, item_id, payload.target_type, payload.payload)
+
+
+@app.get("/v1/ops/people")
+def ops_people_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_items(user, "people", dict(request.query_params))
+
+
+@app.post("/v1/ops/people")
+def ops_people_create_endpoint(payload: OpsPersonRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return create_ops_item(user, "people", payload.model_dump(exclude_none=True))
+
+
+@app.patch("/v1/ops/people/{item_id}")
+def ops_people_update_endpoint(item_id: str, payload: OpsPersonRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_item(user, "people", item_id, payload.model_dump(exclude_none=True))
+
+
+@app.get("/v1/ops/organizations")
+def ops_organizations_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_items(user, "organizations", dict(request.query_params))
+
+
+@app.post("/v1/ops/organizations")
+def ops_organizations_create_endpoint(payload: OpsOrganizationRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return create_ops_item(user, "organizations", payload.model_dump(exclude_none=True))
+
+
+@app.patch("/v1/ops/organizations/{item_id}")
+def ops_organizations_update_endpoint(item_id: str, payload: OpsOrganizationRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_item(user, "organizations", item_id, payload.model_dump(exclude_none=True))
+
+
+@app.get("/v1/ops/projects")
+def ops_projects_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_items(user, "projects", dict(request.query_params))
+
+
+@app.post("/v1/ops/projects")
+def ops_projects_create_endpoint(payload: OpsProjectRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return create_ops_item(user, "projects", payload.model_dump(exclude_none=True))
+
+
+@app.patch("/v1/ops/projects/{item_id}")
+def ops_projects_update_endpoint(item_id: str, payload: OpsProjectRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_item(user, "projects", item_id, payload.model_dump(exclude_none=True))
+
+
+@app.get("/v1/ops/opportunities")
+def ops_opportunities_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_items(user, "opportunities", dict(request.query_params))
+
+
+@app.post("/v1/ops/opportunities")
+def ops_opportunities_create_endpoint(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return create_ops_item(user, "opportunities", payload)
+
+
+@app.patch("/v1/ops/opportunities/{item_id}")
+def ops_opportunities_update_endpoint(item_id: str, payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_item(user, "opportunities", item_id, payload)
+
+
+@app.get("/v1/ops/needs")
+def ops_needs_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_items(user, "needs", dict(request.query_params))
+
+
+@app.post("/v1/ops/needs")
+def ops_needs_create_endpoint(payload: OpsNeedRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return create_ops_item(user, "needs", payload.model_dump(exclude_none=True))
+
+
+@app.patch("/v1/ops/needs/{item_id}")
+def ops_needs_update_endpoint(item_id: str, payload: OpsNeedRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_item(user, "needs", item_id, payload.model_dump(exclude_none=True))
+
+
+@app.get("/v1/ops/offers")
+def ops_offers_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_items(user, "offers", dict(request.query_params))
+
+
+@app.post("/v1/ops/offers")
+def ops_offers_create_endpoint(payload: OpsOfferRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return create_ops_item(user, "offers", payload.model_dump(exclude_none=True))
+
+
+@app.patch("/v1/ops/offers/{item_id}")
+def ops_offers_update_endpoint(item_id: str, payload: OpsOfferRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_item(user, "offers", item_id, payload.model_dump(exclude_none=True))
+
+
+@app.get("/v1/ops/interactions")
+def ops_interactions_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_items(user, "interactions", dict(request.query_params))
+
+
+@app.post("/v1/ops/interactions")
+def ops_interactions_create_endpoint(payload: OpsInteractionRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return create_ops_item(user, "interactions", payload.model_dump(exclude_none=True))
+
+
+@app.patch("/v1/ops/interactions/{item_id}")
+def ops_interactions_update_endpoint(item_id: str, payload: OpsInteractionRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_item(user, "interactions", item_id, payload.model_dump(exclude_none=True))
+
+
+@app.get("/v1/ops/contents")
+def ops_contents_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_items(user, "contents", dict(request.query_params))
+
+
+@app.post("/v1/ops/contents")
+def ops_contents_create_endpoint(payload: OpsContentRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return create_ops_item(user, "contents", payload.model_dump(exclude_none=True))
+
+
+@app.patch("/v1/ops/contents/{item_id}")
+def ops_contents_update_endpoint(item_id: str, payload: OpsContentRequest, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_item(user, "contents", item_id, payload.model_dump(exclude_none=True))
+
+
+@app.get("/v1/ops/next-actions")
+def ops_next_actions_list_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return list_ops_items(user, "next-actions", dict(request.query_params))
+
+
+@app.post("/v1/ops/next-actions")
+def ops_next_actions_create_endpoint(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return create_ops_item(user, "next-actions", payload)
+
+
+@app.patch("/v1/ops/next-actions/{item_id}")
+def ops_next_actions_update_endpoint(item_id: str, payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return update_ops_item(user, "next-actions", item_id, payload)
+
+
+@app.get("/v1/ops/followups")
+def ops_followups_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return get_ops_followups(user)
+
+
+@app.get("/v1/ops/relationship-map/{entity_type}/{entity_id}")
+def ops_relationship_map_endpoint(entity_type: str, entity_id: str, request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return get_ops_relationship_map(user, entity_type, entity_id)
+
+
+@app.get("/v1/ops/export")
+def ops_export_endpoint(request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return export_ops_crm(user)
+
+
+@app.post("/v1/ops/import")
+def ops_import_endpoint(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
+    user = _require_ops_user(request)
+    return import_ops_crm(user, payload)
 
 
 @app.get("/v1/projects")

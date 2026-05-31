@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { ProjectCard } from "@/components/onefile/project-card";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { copyZh } from "@/lib/copy-zh";
@@ -238,6 +238,38 @@ export default function LibraryPage() {
   const totalCount = projects.length;
   const publicCount = projects.filter((item) => Boolean(item.share?.is_public)).length;
   const mineCount = userId ? projects.filter((item) => item.owner_user_id === userId).length : 0;
+  const hasAnyPublic = publicCount > 0;
+  const hasActiveFilters =
+    query.trim().length > 0 ||
+    scope !== "all" ||
+    formFilter !== "all" ||
+    usersFilter !== "all" ||
+    businessFilter !== "all" ||
+    modelFilter !== "all";
+  const firstPublicExampleId = useMemo(() => {
+    const first = projects.find((item) => Boolean(item.id) && Boolean(item.share?.is_public));
+    return first?.id || "";
+  }, [projects]);
+  const emptyHint = scope === "mine" ? t.emptyMineHint : hasAnyPublic ? t.emptyFilteredHint : t.emptyHint;
+
+  function openDemoExample() {
+    if (firstPublicExampleId) {
+      router.push(`/card/${firstPublicExampleId}?from=library-empty-demo`);
+      return;
+    }
+    toast.message(copyZh.landing.exampleEmpty);
+    router.push("/#showcase");
+  }
+
+  function resetFilters() {
+    setQuery("");
+    setScope("all");
+    setFormFilter("all");
+    setUsersFilter("all");
+    setBusinessFilter("all");
+    setModelFilter("all");
+    setPage(1);
+  }
 
   async function onLogout() {
     setLoggingOut(true);
@@ -277,10 +309,10 @@ export default function LibraryPage() {
 
   return (
     <main className="app-shell app-shell--browse min-h-screen px-6 py-7 sm:px-8 sm:py-9">
-      <div className="mx-auto w-full max-w-7xl space-y-6 sm:space-y-7">
-        <header className="content-surface flex flex-col gap-5 p-5 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
+      <div className="mx-auto w-full max-w-7xl space-y-6 sm:space-y-8">
+        <header className="library-section library-section--header library-browse-header p-5 sm:p-6">
+          <div className="library-browse-header-main">
+            <div className="library-browse-identity">
               <div className="flex items-center gap-2">
                 <p className="brand-mark">{copyZh.common.brand}</p>
               </div>
@@ -294,78 +326,68 @@ export default function LibraryPage() {
                     : `${t.healthDown}${healthMessage ? `：${healthMessage}` : ""}`}
               </p>
             </div>
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-              {isAuthenticated ? <span className="text-xs content-caption">{t.signedInAs}：{authenticatedEmail}</span> : null}
-              <Link href="/" className={buttonVariants({ variant: "ghost", className: "action-secondary-btn h-10 px-4" })}>
-                {t.backLanding}
-              </Link>
-              <Button
-                className="action-primary-btn h-10 px-5"
-                onClick={() => router.push(isAuthenticated ? richCreateHref : richCreateLoginHref)}
-              >
-                {isAuthenticated ? t.createProject : t.createNeedLogin}
-              </Button>
-              {isAuthenticated ? (
-                <Button variant="ghost" className="action-secondary-btn h-10 px-4" disabled={exportingBackup} onClick={onExportBackup}>
-                  {exportingBackup ? t.exportingBackup : t.exportBackup}
+            <div className="library-browse-actions">
+              <div className="library-browse-primary-action">
+                <Button className="action-primary-btn h-10 px-5" onClick={() => router.push(isAuthenticated ? richCreateHref : richCreateLoginHref)}>
+                  {isAuthenticated ? t.createProject : t.createNeedLogin}
                 </Button>
-              ) : null}
-              {isAuthenticated ? (
-                <Button variant="ghost" className="action-secondary-btn h-10 px-4" disabled={loggingOut} onClick={onLogout}>
-                  {loggingOut ? t.loggingOut : t.logout}
-                </Button>
-              ) : null}
+              </div>
+              <div className="library-browse-action-cluster">
+                {isAuthenticated ? <span className="library-browse-account">{t.signedInAs}：{authenticatedEmail}</span> : null}
+                <Link href="/" className="inline-nav-link library-browse-secondary-action">
+                  {t.backLanding}
+                </Link>
+                {isAuthenticated ? (
+                  <button
+                    type="button"
+                    className="inline-nav-link library-browse-secondary-action"
+                    disabled={exportingBackup}
+                    onClick={onExportBackup}
+                  >
+                    {exportingBackup ? t.exportingBackup : t.exportBackup}
+                  </button>
+                ) : null}
+                {isAuthenticated ? (
+                  <button type="button" className="inline-nav-link library-browse-secondary-action" disabled={loggingOut} onClick={onLogout}>
+                    {loggingOut ? t.loggingOut : t.logout}
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t.searchPlaceholder}
-            className="field-input h-11 w-full sm:max-w-lg"
-          />
         </header>
 
-        <section className="content-surface grid grid-cols-1 gap-4 p-5 sm:grid-cols-3 sm:p-6">
-          <div>
-            <p className="text-xs content-caption">{t.statAll}</p>
-            <p className="mt-1 text-2xl font-semibold text-[var(--landing-title)]">{totalCount}</p>
+        <section className="library-section library-section--rail library-browse-rail p-4 sm:p-5">
+          <div className="library-search-wrap">
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t.searchPlaceholder}
+              className="field-input library-search-input h-11 w-full pr-10"
+            />
+            {query.trim().length > 0 ? (
+              <button type="button" className="library-search-clear" aria-label="清空搜索" onClick={() => setQuery("")}>
+                清除
+              </button>
+            ) : null}
           </div>
-          <div>
-            <p className="text-xs content-caption">{t.statPublic}</p>
-            <p className="mt-1 text-2xl font-semibold text-[var(--landing-title)]">{publicCount}</p>
-          </div>
-          <div>
-            <p className="text-xs content-caption">{t.statMine}</p>
-            <p className="mt-1 text-2xl font-semibold text-[var(--landing-title)]">{mineCount}</p>
-          </div>
-        </section>
-
-        <section className="content-surface space-y-4 p-5 sm:p-6">
-	          <div className="flex flex-wrap gap-2">
+          <div className="library-scope-row">
             <Button variant="ghost" className={`filter-chip h-9 px-4 ${scope === "all" ? "is-active" : ""}`} onClick={() => setScope("all")}>
               {t.filterAll}
             </Button>
-            <Button
-              variant="ghost"
-              className={`filter-chip h-9 px-4 ${scope === "public" ? "is-active" : ""}`}
-              onClick={() => setScope("public")}
-            >
+            <Button variant="ghost" className={`filter-chip h-9 px-4 ${scope === "public" ? "is-active" : ""}`} onClick={() => setScope("public")}>
               {t.filterPublic}
             </Button>
-	            {isAuthenticated ? (
-	              <Button variant="ghost" className={`filter-chip h-9 px-4 ${scope === "mine" ? "is-active" : ""}`} onClick={() => setScope("mine")}>
-	                {t.filterMine}
-	              </Button>
-	            ) : null}
-	          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {isAuthenticated ? (
+              <Button variant="ghost" className={`filter-chip h-9 px-4 ${scope === "mine" ? "is-active" : ""}`} onClick={() => setScope("mine")}>
+                {t.filterMine}
+              </Button>
+            ) : null}
+          </div>
+          <div className="library-filter-row">
             <label className="space-y-1">
               <span className="text-xs content-caption">{t.filterFormLabel}</span>
-              <select
-                className="field-select h-10 w-full rounded-lg px-3 text-sm"
-                value={formFilter}
-                onChange={(e) => setFormFilter(e.target.value)}
-              >
+              <select className="field-select library-filter-select h-10 w-full rounded-lg px-3 text-sm" value={formFilter} onChange={(e) => setFormFilter(e.target.value)}>
                 <option value="all">{t.filterAnyForm}</option>
                 {formOptions.map((item) => (
                   <option key={item} value={item}>
@@ -374,14 +396,9 @@ export default function LibraryPage() {
                 ))}
               </select>
             </label>
-
             <label className="space-y-1">
               <span className="text-xs content-caption">{t.filterUsersLabel}</span>
-              <select
-                className="field-select h-10 w-full rounded-lg px-3 text-sm"
-                value={usersFilter}
-                onChange={(e) => setUsersFilter(e.target.value)}
-              >
+              <select className="field-select library-filter-select h-10 w-full rounded-lg px-3 text-sm" value={usersFilter} onChange={(e) => setUsersFilter(e.target.value)}>
                 <option value="all">{t.filterAnyUsers}</option>
                 {userOptions.map((item) => (
                   <option key={item} value={item}>
@@ -390,14 +407,9 @@ export default function LibraryPage() {
                 ))}
               </select>
             </label>
-
             <label className="space-y-1">
               <span className="text-xs content-caption">{t.filterBusinessLabel}</span>
-              <select
-                className="field-select h-10 w-full rounded-lg px-3 text-sm"
-                value={businessFilter}
-                onChange={(e) => setBusinessFilter(e.target.value)}
-              >
+              <select className="field-select library-filter-select h-10 w-full rounded-lg px-3 text-sm" value={businessFilter} onChange={(e) => setBusinessFilter(e.target.value)}>
                 <option value="all">{t.filterAnyBusiness}</option>
                 {businessOptions.map((item) => (
                   <option key={item} value={item}>
@@ -406,14 +418,9 @@ export default function LibraryPage() {
                 ))}
               </select>
             </label>
-
             <label className="space-y-1">
               <span className="text-xs content-caption">{t.filterModelLabel}</span>
-              <select
-                className="field-select h-10 w-full rounded-lg px-3 text-sm"
-                value={modelFilter}
-                onChange={(e) => setModelFilter(e.target.value)}
-              >
+              <select className="field-select library-filter-select h-10 w-full rounded-lg px-3 text-sm" value={modelFilter} onChange={(e) => setModelFilter(e.target.value)}>
                 <option value="all">{t.filterAnyModel}</option>
                 {modelOptions.map((item) => (
                   <option key={item} value={item}>
@@ -425,10 +432,25 @@ export default function LibraryPage() {
           </div>
         </section>
 
+        <section className="library-section library-section--stats library-stats-strip p-3 sm:px-5 sm:py-3">
+          <div className="library-stat-item">
+            <p className="text-xs content-caption">{t.statAll}</p>
+            <p className="mt-1 text-lg font-semibold text-[var(--landing-title)]/90">{totalCount}</p>
+          </div>
+          <div className="library-stat-item">
+            <p className="text-xs content-caption">{t.statPublic}</p>
+            <p className="mt-1 text-lg font-semibold text-[var(--landing-title)]/90">{publicCount}</p>
+          </div>
+          <div className="library-stat-item">
+            <p className="text-xs content-caption">{t.statMine}</p>
+            <p className="mt-1 text-lg font-semibold text-[var(--landing-title)]/90">{mineCount}</p>
+          </div>
+        </section>
+
         {loading ? (
           <div className="space-y-3">
             <p className="text-sm content-subtle">{t.loadingCards}</p>
-            <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:gap-6 xl:grid-cols-3 2xl:grid-cols-4">
               {Array.from({ length: 8 }).map((_, index) => (
                 <div key={`library-skeleton-${index}`} className="content-panel p-4">
                   <Skeleton className="h-4 w-2/3" />
@@ -442,17 +464,17 @@ export default function LibraryPage() {
         ) : null}
 
         {error ? (
-          <div className="content-panel space-y-3 p-4">
+          <div className="library-section library-state-panel space-y-3 p-4">
             <p className="text-sm text-destructive">{error}</p>
-            <Button variant="ghost" className="action-secondary-btn h-9 px-4" onClick={() => setReloadTick((prev) => prev + 1)}>
+            <Button variant="ghost" className="library-inline-action h-9 px-3" onClick={() => setReloadTick((prev) => prev + 1)}>
               {t.retryLoad}
             </Button>
           </div>
         ) : null}
 
         {!loading && !error && filtered.length === 0 ? (
-          <div className="content-panel space-y-4 p-10 text-center">
-            <p className="text-sm content-subtle">{t.emptyHint}</p>
+          <div className="library-section library-state-panel space-y-4 p-10 text-center">
+            <p className="text-sm content-subtle">{emptyHint}</p>
             <div className="flex flex-wrap items-center justify-center gap-2">
               <Button
                 className="action-primary-btn h-10 px-5"
@@ -460,15 +482,21 @@ export default function LibraryPage() {
               >
                 {isAuthenticated ? t.createProject : t.createNeedLogin}
               </Button>
-              <Link href="/library?mode=guest" className={buttonVariants({ variant: "ghost", className: "action-secondary-btn h-10 px-4" })}>
-                {t.openDemo}
-              </Link>
+              {hasAnyPublic || hasActiveFilters ? (
+                <Button variant="ghost" className="library-inline-action h-10 px-3" onClick={resetFilters}>
+                  {t.clearFilters}
+                </Button>
+              ) : (
+                <Button variant="ghost" className="library-inline-action h-10 px-3" onClick={openDemoExample} disabled={loading}>
+                  {t.openDemo}
+                </Button>
+              )}
             </div>
           </div>
         ) : null}
 
         {!loading && !error && filtered.length > 0 ? (
-          <section className="content-surface flex flex-wrap items-center justify-between gap-3 p-4">
+          <section className="library-section library-section--pagination library-pagination-strip flex flex-wrap items-center justify-between gap-3 p-3 sm:px-4 sm:py-3">
             <p className="text-sm content-subtle">
               共 {filtered.length} 个项目 · 第 {currentPage}/{totalPages} 页
             </p>
@@ -493,17 +521,17 @@ export default function LibraryPage() {
           </section>
         ) : null}
 
-	        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+	        <section className="library-grid-section grid grid-cols-1 gap-5 md:grid-cols-2 xl:gap-6 xl:grid-cols-3 2xl:grid-cols-4">
 	          {pagedProjects.map((project) => (
 	            <ProjectCard key={project.id} project={project} isOwner={Boolean(userId && project.owner_user_id === userId)} />
 	          ))}
 	        </section>
 
-	        {!loading && !error && filtered.length > 0 ? (
-	          <section className="content-surface flex flex-wrap items-center justify-between gap-3 p-4">
-	            <p className="text-sm content-subtle">
-	              共 {filtered.length} 个项目 · 第 {currentPage}/{totalPages} 页
-	            </p>
+        {!loading && !error && filtered.length > 0 ? (
+          <section className="library-section library-section--pagination library-pagination-strip flex flex-wrap items-center justify-between gap-3 p-3 sm:px-4 sm:py-3">
+            <p className="text-sm content-subtle">
+              共 {filtered.length} 个项目 · 第 {currentPage}/{totalPages} 页
+            </p>
 	            <div className="flex items-center gap-2">
 	              <Button
 	                variant="ghost"
