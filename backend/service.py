@@ -4337,45 +4337,19 @@ def generate_bp_assets_with_ai(project: Dict[str, Any], materials: List[Dict[str
     client = get_client()
     model = get_model_name()
     material_text = _bp_materials_text(materials)
-    blueprint_payload = [
-        {"page_number": idx, "title": title, "purpose": purpose}
-        for idx, (title, purpose) in enumerate(BP_PAGE_BLUEPRINTS, start=1)
-    ]
     schema_hint = {
         "insight": {
-            "problem": "string",
-            "solution": "string",
-            "business_model": "string",
-            "ai_relevance": "string",
-            "traction": "string",
-            "key_data": "string",
-            "resource_needs": "string",
-            "material_gaps": ["string"],
-            "recommended_path": "string",
+            "problem": "120字以内",
+            "solution": "120字以内",
+            "business_model": "120字以内",
+            "ai_relevance": "120字以内",
+            "traction": "120字以内",
+            "key_data": "120字以内",
+            "resource_needs": "120字以内",
+            "material_gaps": ["最多5条，每条60字以内"],
+            "recommended_path": "80字以内",
             "readiness_score": 0,
-        },
-        "pages": [
-            {
-                "page_number": 1,
-                "core_judgement": "45字以内",
-                "missing_materials": ["最多2条，每条60字以内"],
-                "draft_copy": "90字以内",
-                "likely_questions": ["最多2条，每条60字以内"],
-            }
-        ],
-        "gap_report": {
-            "summary": "120字以内",
-            "items": [
-                {
-                    "gap_name": "80字以内",
-                    "severity": "必须补|建议补|可后补",
-                    "why_it_matters": "120字以内",
-                    "recommended_fix": "120字以内",
-                    "page_number": 0,
-                    "page_title": "string",
-                }
-            ],
-        },
+        }
     }
     messages = [
         {
@@ -4390,25 +4364,20 @@ def generate_bp_assets_with_ai(project: Dict[str, Any], materials: List[Dict[str
         {
             "role": "user",
             "content": (
-                "请基于项目资料生成项目理解草稿、14 页标准 BP 清单的简短增强文案和材料缺口报告。\n"
-                "不要输出 suggested_content 或 existing_materials。本地系统会补齐固定结构。\n"
+                "请基于项目资料生成项目理解草稿。"
+                "本地系统会根据你的诊断结果生成14页标准BP清单，不需要你输出BP页面。\n"
                 f"项目：{json.dumps(project, ensure_ascii=False)}\n"
-                f"14页结构：{json.dumps(blueprint_payload, ensure_ascii=False)}\n"
-                f"原始材料：\n{material_text[:6000]}\n\n"
+                f"原始材料：\n{material_text[:4000]}\n\n"
                 "输出必须符合这个 JSON 结构：\n"
                 f"{json.dumps(schema_hint, ensure_ascii=False)}"
             ),
         },
     ]
-    resp = create_chat_completion(client, model=model, temperature=0.2, messages=messages, max_tokens=3200)
+    resp = create_chat_completion(client, model=model, temperature=0.2, messages=messages, max_tokens=900)
     parsed = extract_json_object((resp.choices[0].message.content or "{}").strip())
     insight = _merge_bp_ai_insight(parsed.get("insight", {}) if isinstance(parsed.get("insight", {}), dict) else {}, fallback_assets["insight"])
-    pages = _merge_bp_ai_pages(parsed.get("pages", []) if isinstance(parsed.get("pages", []), list) else [], fallback_assets["pages"])
-    gap_report = _merge_bp_ai_gap_report(
-        parsed.get("gap_report", {}) if isinstance(parsed.get("gap_report", {}), dict) else {},
-        fallback_assets["gap_report"],
-        str(project.get("id", "")),
-    )
+    pages = _generate_bp_pages(project, insight, materials)
+    gap_report = _generate_bp_gap_report(project, pages)
     project["readiness_score"] = int(insight.get("readiness_score", project.get("readiness_score", 0)) or 0)
     project["recommended_path"] = sanitize_text_strict(insight.get("recommended_path", project.get("recommended_path", "")), allow_empty=True, max_len=240)
     return {"insight": insight, "pages": pages, "gap_report": gap_report}
