@@ -4357,22 +4357,20 @@ def generate_bp_assets_with_ai(project: Dict[str, Any], materials: List[Dict[str
         "pages": [
             {
                 "page_number": 1,
-                "core_judgement": "string",
-                "suggested_content": "string",
-                "existing_materials": ["string"],
-                "missing_materials": ["string"],
-                "draft_copy": "string",
-                "likely_questions": ["string"],
+                "core_judgement": "45字以内",
+                "missing_materials": ["最多2条，每条60字以内"],
+                "draft_copy": "90字以内",
+                "likely_questions": ["最多2条，每条60字以内"],
             }
         ],
         "gap_report": {
-            "summary": "string",
+            "summary": "120字以内",
             "items": [
                 {
-                    "gap_name": "string",
+                    "gap_name": "80字以内",
                     "severity": "必须补|建议补|可后补",
-                    "why_it_matters": "string",
-                    "recommended_fix": "string",
+                    "why_it_matters": "120字以内",
+                    "recommended_fix": "120字以内",
                     "page_number": 0,
                     "page_title": "string",
                 }
@@ -4386,21 +4384,23 @@ def generate_bp_assets_with_ai(project: Dict[str, Any], materials: List[Dict[str
                 "你是 OnePitch 的项目诊断与标准 BP 清单生成引擎。"
                 "只输出 JSON，不要 markdown，不要解释。"
                 "不要编造客户、收入、融资、资质或政策背书；材料没有出现时必须写成缺失材料。"
+                "输出必须极简，避免长段落。"
             ),
         },
         {
             "role": "user",
             "content": (
-                "请基于项目资料生成项目理解草稿、14 页标准 BP 清单和材料缺口报告。\n"
+                "请基于项目资料生成项目理解草稿、14 页标准 BP 清单的简短增强文案和材料缺口报告。\n"
+                "不要输出 suggested_content 或 existing_materials。本地系统会补齐固定结构。\n"
                 f"项目：{json.dumps(project, ensure_ascii=False)}\n"
                 f"14页结构：{json.dumps(blueprint_payload, ensure_ascii=False)}\n"
-                f"原始材料：\n{material_text[:20000]}\n\n"
+                f"原始材料：\n{material_text[:6000]}\n\n"
                 "输出必须符合这个 JSON 结构：\n"
                 f"{json.dumps(schema_hint, ensure_ascii=False)}"
             ),
         },
     ]
-    resp = create_chat_completion(client, model=model, temperature=0.2, messages=messages)
+    resp = create_chat_completion(client, model=model, temperature=0.2, messages=messages, max_tokens=3200)
     parsed = extract_json_object((resp.choices[0].message.content or "{}").strip())
     insight = _merge_bp_ai_insight(parsed.get("insight", {}) if isinstance(parsed.get("insight", {}), dict) else {}, fallback_assets["insight"])
     pages = _merge_bp_ai_pages(parsed.get("pages", []) if isinstance(parsed.get("pages", []), list) else [], fallback_assets["pages"])

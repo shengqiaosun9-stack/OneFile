@@ -17,8 +17,10 @@ def test_deepseek_provider_uses_deepseek_env_without_hunyuan_extra_body(monkeypa
     kwargs = ai_service.build_chat_completion_kwargs(
         temperature=0.2,
         messages=[{"role": "user", "content": "hello"}],
+        max_tokens=3200,
     )
     assert kwargs["model"] == "deepseek-v4-flash"
+    assert kwargs["max_tokens"] == 3200
     assert "extra_body" not in kwargs
 
 

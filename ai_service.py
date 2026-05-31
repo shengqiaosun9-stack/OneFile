@@ -187,19 +187,29 @@ def get_api_key() -> str:
     return str(api_key or "").strip()
 
 
-def build_chat_completion_kwargs(*, temperature: float, messages: List[Dict[str, str]], model: str = "") -> Dict[str, Any]:
+def build_chat_completion_kwargs(
+    *,
+    temperature: float,
+    messages: List[Dict[str, str]],
+    model: str = "",
+    max_tokens: int = 0,
+) -> Dict[str, Any]:
     kwargs: Dict[str, Any] = {
         "model": model or get_model_name(),
         "temperature": temperature,
         "messages": messages,
     }
+    if max_tokens > 0:
+        kwargs["max_tokens"] = max_tokens
     if get_ai_provider() == "hunyuan":
         kwargs["extra_body"] = {"enable_enhancement": True}
     return kwargs
 
 
-def create_chat_completion(client: Any, *, temperature: float, messages: List[Dict[str, str]], model: str = "") -> Any:
-    return client.chat.completions.create(**build_chat_completion_kwargs(temperature=temperature, messages=messages, model=model))
+def create_chat_completion(client: Any, *, temperature: float, messages: List[Dict[str, str]], model: str = "", max_tokens: int = 0) -> Any:
+    return client.chat.completions.create(
+        **build_chat_completion_kwargs(temperature=temperature, messages=messages, model=model, max_tokens=max_tokens)
+    )
 
 
 def get_client() -> Any:
