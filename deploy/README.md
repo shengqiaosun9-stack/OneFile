@@ -1,73 +1,123 @@
-# OneFile Deployment (Netlify + Render, Demo Tier)
+# OnePitch Online Deployment
 
-This folder provides a low-cost demo deployment baseline:
-- Frontend: Netlify (project root directory `frontend`)
-- Backend: Render Web Service (free tier, ephemeral disk)
+第一版线上架构：
 
-## 1) Backend on Render
+- Frontend: Netlify, deploys the Next.js app in `frontend/`.
+- Backend: Render or Railway, runs `uvicorn backend.main:app`.
+- Database: Supabase Postgres, used as a JSONB store through `onepitch_store`.
+- AI: DeepSeek OpenAI-compatible Chat Completions.
 
-Use `deploy/render.yaml` with Blueprint deploy, or configure manually:
+Do not put `DEEPSEEK_API_KEY` or `DATABASE_URL` in source code. Set them as platform environment variables.
 
-- Build Command: `pip install -r requirements.txt`
-- Start Command: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
-- Health Check Path: `/health`
+## 1) Supabase Postgres
+
+Create a Supabase project and copy the pooled or direct Postgres connection string.
+
+The backend creates this table automatically on first read/write:
+
+```sql
+create table if not exists onepitch_store (
+  id text primary key,
+  schema_version integer not null,
+  payload jsonb not null,
+  updated_at timestamptz not null default now()
+);
+```
+
+To import your local JSON data once:
+
+```bash
+DATABASE_URL="postgresql://..." \
+python3 -m backend.scripts.import_json_store_to_postgres --source data/projects.json
+```
+
+## 2) Backend on Render or Railway
+
+Build command:
+
+```bash
+pip install -r requirements.txt
+```
+
+Start command:
+
+```bash
+uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+```
+
+Health check path:
+
+```text
+/health
+```
 
 Required environment variables:
 
-- `ONEFILE_ENV=production`
-- `ONEFILE_AUTH_DEBUG_CODES=1`
-- `ONEFILE_SESSION_COOKIE_SECURE=1`
-- `HUNYUAN_API_KEY=...` (Render secret, required for cloud AI structuring)
+```env
+ONEFILE_ENV=production
+ONEFILE_LOCAL_MODE=0
+ONEFILE_OPS_ENABLED=1
+ONEFILE_OPS_ADMIN_EMAILS=your-admin@example.com
+ONEFILE_AUTH_DEBUG_CODES=0
+ONEFILE_SESSION_COOKIE_SECURE=1
 
-Optional (when switching to real email OTP):
+ONEPITCH_AI_PROVIDER=deepseek
+DEEPSEEK_API_KEY=...
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
 
-- `ONEFILE_AUTH_EMAIL_PROVIDER=resend`
-- `ONEFILE_RESEND_API_KEY=...`
-- `ONEFILE_RESEND_FROM_EMAIL=OneFile <noreply@yourdomain.com>`
-
-Optional AI override:
-
-- `HUNYUAN_BASE_URL=...` (defaults to `https://api.hunyuan.cloud.tencent.com/v1`)
-- `HUNYUAN_MODEL=...` (defaults to `hunyuan-turbos-latest`)
-
-## 2) Frontend on Netlify
-
-- Base directory: `frontend`
-- Build Command: `npm run build`
-- Publish directory: `.next` (if Netlify auto-detects Next.js settings, keep default)
-- Environment Variable:
-  - `BACKEND_API_URL=https://<your-render-backend>.onrender.com`
-  - `NEXT_PUBLIC_DEMO_MODE=1`
-
-## 3) Continuous deployment
-
-- Render and Netlify both connect to this repo and track `main`.
-- Use the release script to run gates before push:
-
-```bash
-./scripts/release-demo.sh
+ONEPITCH_STORAGE_BACKEND=postgres
+DATABASE_URL=...
 ```
 
-The script includes:
-- backend tests
-- backend AI readiness guard (fails release if structuring falls back to local rules)
-- frontend lint
-- frontend build
-- `frontend` impeccable UI gate (`npm run check:impeccable`)
-- repository secret scan before push
+Optional real email OTP:
 
-Recommended once per local clone:
-
-```bash
-./scripts/install-git-hooks.sh
+```env
+ONEFILE_AUTH_EMAIL_PROVIDER=resend
+ONEFILE_RESEND_API_KEY=<set as secret>
+ONEFILE_RESEND_FROM_EMAIL=OnePitch <noreply@yourdomain.com>
 ```
 
-## 4) Demo-tier data caveat
+## 3) Frontend on Netlify
 
-Render free instances can restart and lose filesystem changes.
-Use in-app backup export (`/library` -> 导出我的备份) as a safety fallback.
+Current `netlify.toml` builds from `frontend/` and uses `@netlify/plugin-nextjs`.
 
-## 5) No-domain WeChat fallback (current stage)
+Set Netlify environment variables in the UI or CLI:
 
-Without a custom domain, WeChat in-app link opening may be unstable.
-Use the share poster and QR code as the primary distribution path, and provide copy-link guidance for opening in system browser.
+```env
+BACKEND_API_URL=https://your-backend-service.example.com
+NEXT_PUBLIC_DEMO_MODE=0
+```
+
+`BACKEND_API_URL` is server-side only for Next.js API route proxies. Do not put DeepSeek or database secrets in Netlify unless backend logic is moved into Next.js later.
+
+## 4) Release checks
+
+Before pushing a production release:
+
+```bash
+python3 -m pytest backend/tests -q
+cd frontend && npm run lint && npm run build
+cd ..
+bash scripts/check-secrets.sh repo
+```
+
+With production-like environment variables available:
+
+```bash
+bash scripts/check-online-readiness.sh
+```
+
+The online readiness check verifies:
+
+- backend health;
+- selected storage can read/write;
+- public BP diagnosis returns 14 pages;
+- DeepSeek is used when `ONEPITCH_AI_PROVIDER=deepseek` and `DEEPSEEK_API_KEY` is present;
+- Ops BP endpoints are not public when local mode is off.
+
+## 5) Deployment caveats
+
+- Netlify hosts the frontend only; Python FastAPI still needs Render, Railway, Fly, or another backend host.
+- Supabase is accessed only from the backend. Do not expose service credentials to browser code.
+- The first online storage version is a JSONB store to preserve current local data shape. Normalize into relational tables later only after real usage stabilizes.

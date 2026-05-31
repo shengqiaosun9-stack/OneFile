@@ -1,729 +1,117 @@
-"use client";
-
-import { FormEvent, KeyboardEvent, PointerEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { ArrowRight, FileCheck2, ListChecks, SearchCheck } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { copyZh } from "@/lib/copy-zh";
-import { getApiErrorMessage, resolveApiError } from "@/lib/error-zh";
-import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
-import { saveLastGeneratedCardId } from "@/lib/last-generated-card";
-import { createRequestId } from "@/lib/request-id";
-import { saveEmail } from "@/lib/session";
-import type { AuthResponse, AuthStartResponse, MutationResponse } from "@/lib/types";
+import { PublicBpShell, PrimaryLink, SecondaryLink, SectionPanel } from "@/components/onepitch-bp/PublicBpShell";
 
-type ExampleCard = {
-  cardId: string;
-  title: string;
-  audience: string;
-  input: string;
-  summary: string;
-  description: string;
-};
-
-type PromptBarState = "idle" | "focused" | "typing" | "submitting" | "failed";
-
-const EXAMPLES: ExampleCard[] = [
+const outputs = [
   {
-    cardId: "7451c54f",
-    title: "北极星协作",
-    audience: "早期 SaaS 团队",
-    input: "帮早期 SaaS 团队把客户反馈、当前验证状态和下一步动作收进一个共享工作区，让潜在客户和投资人能快速判断这个产品现在值不值得继续跟进。",
-    summary: "让外部人用几分钟就能判断一个早期 SaaS 项目现在值不值得继续跟进。",
-    description: "把客户反馈、验证状态和下一步动作压缩成一张同步页面，帮助团队持续对齐同一个项目事实。",
+    title: "项目理解草稿",
+    body: "把项目名、一句话、阶段、客户、问题、方案、商业模式和资源诉求先梳理清楚。",
+    icon: SearchCheck,
   },
   {
-    cardId: "9c28454f",
-    title: "画境工作室",
-    audience: "国风游戏美术团队",
-    input: "给国风游戏美术团队做一个 AI 绘画工作台，让制作人不用看长文档也能快速判断这套风格方案是否适合当前项目。",
-    summary: "让游戏制作团队先看懂风格方向和合作价值，再决定要不要继续推进合作。",
-    description: "围绕国风美术方案沉淀风格方向、样例结果和合作边界，让团队在同一语义下推进创作决策。",
+    title: "14 页 BP 清单预览",
+    body: "不是直接生成融资 PPT，而是告诉你对外沟通时每一页应该讲什么、缺什么。",
+    icon: ListChecks,
   },
   {
-    cardId: "c36ea7f2",
-    title: "合同快线",
-    audience: "中小企业法务负责人",
-    input: "做一个帮助中小企业快速生成标准合同初稿的服务，让法务负责人在第一次看到时就知道这套方案能不能缩短签约流程。",
-    summary: "让法务负责人快速判断这套合同服务能不能缩短签约流程和沟通成本。",
-    description: "将常见签约条款整理成可复用模板和流程节点，帮助法务团队更快产出可审核的合同初稿。",
+    title: "材料缺口报告",
+    body: "指出园区、投资人、技术方或合作方可能继续追问的问题。",
+    icon: FileCheck2,
   },
 ];
 
-function getCarouselOffset(index: number, activeIndex: number, total: number) {
-  let offset = index - activeIndex;
-  const midpoint = Math.floor(total / 2);
-  if (offset > midpoint) offset -= total;
-  if (offset < -midpoint) offset += total;
-  return offset;
-}
+const fitItems = ["AI/OPC 早期项目", "准备进园区或对接政策资源的项目", "想找技术、订单、算力、资金或合作方的项目", "已有业务但不知道如何讲清楚的传统产业 AI 项目", "准备做访谈、路演、闭门会介绍的项目"];
 
-function HeroPoster({
-  titleLines,
-  subtitle,
-  socialProof,
-  promptBar,
-}: {
-  titleLines: readonly [string, string, string];
-  subtitle: string;
-  socialProof: string;
-  promptBar: ReactNode;
-}) {
-  const title = Array.isArray(titleLines) ? titleLines.join("") : String(titleLines);
-
+export default function HomePage() {
   return (
-    <section className="landing-reset-hero" data-landing-hero-poster>
-      <header className="landing-reset-brandbar">
-        <div className="landing-reset-brandlockup">
-          <span className="landing-reset-brand">OnePitch</span>
-          <span className="landing-reset-brand-sub">· 一眼项目</span>
-        </div>
-      </header>
-
-      <div className="landing-reset-hero-copy">
-        <p className="landing-reset-overline">Shareable project object</p>
-        <h1 className="landing-reset-title" suppressHydrationWarning>
-          {title}
-        </h1>
-        <p className="landing-reset-subtitle">{subtitle}</p>
-        {promptBar}
-        <p className="landing-reset-proof">{socialProof}</p>
-      </div>
-    </section>
-  );
-}
-
-function PromptBar({
-  value,
-  onChange,
-  onSubmit,
-  onFocus,
-  onBlur,
-  state,
-  loading,
-  error,
-  warning,
-  hint,
-  emptyHint,
-  onHintClick,
-  inputRef,
-  placeholder,
-  submitLabel,
-  richCreateHref,
-  richCreateLabel,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  onSubmit: (event: FormEvent) => void;
-  onFocus: () => void;
-  onBlur: () => void;
-  state: PromptBarState;
-  loading: boolean;
-  error: string;
-  warning: string;
-  hint: string;
-  emptyHint: string;
-  onHintClick: () => void;
-  inputRef: React.RefObject<HTMLTextAreaElement | null>;
-  placeholder: string;
-  submitLabel: string;
-  richCreateHref: string;
-  richCreateLabel: string;
-}) {
-  return (
-    <form className="landing-prompt-bar" data-prompt-bar data-state={state} onSubmit={onSubmit}>
-      <div className="landing-prompt-shell">
-        <textarea
-          ref={inputRef}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onFocus={onFocus}
-          onBlur={onBlur}
-          placeholder={placeholder}
-          className="landing-prompt-input"
-          maxLength={300}
-          rows={3}
-          aria-label="项目一句话输入"
-        />
-        <button type="submit" className="landing-prompt-submit" disabled={loading || !value.trim()}>
-          {loading ? "正在生成项目卡..." : submitLabel}
-        </button>
-      </div>
-      <div className="landing-prompt-support">
-        <button type="button" className="landing-prompt-hint" onClick={onHintClick}>
-          {hint}
-        </button>
-        <Link href={richCreateHref} className="landing-prompt-rich-link">
-          {richCreateLabel}
-        </Link>
-        <span className="landing-prompt-count">{value.length}/300</span>
-      </div>
-      {!error && !value.trim() ? <p className="landing-prompt-empty-hint">{emptyHint}</p> : null}
-      {error ? <p className="landing-prompt-error">{error}</p> : null}
-      {!error && warning ? <p className="landing-prompt-empty-hint">{warning}</p> : null}
-    </form>
-  );
-}
-
-function ExampleObjectCard({
-  example,
-  selected,
-  position,
-  offset,
-  onSelect,
-  onGenerate,
-  inputLabel,
-  quickGenerateLabel,
-  viewCardLabel,
-}: {
-  example: ExampleCard;
-  selected: boolean;
-  position: "center" | "left" | "right";
-  offset: number;
-  onSelect: () => void;
-  onGenerate: () => void;
-  inputLabel: string;
-  quickGenerateLabel: string;
-  viewCardLabel: string;
-}) {
-  const preview = !selected;
-  return (
-    <article
-      className="landing-example-object"
-      data-showcase-card
-      data-state={selected ? "selected" : "rest"}
-      data-density={selected ? "full" : "preview"}
-      data-position={position}
-      style={{ ["--showcase-offset" as string]: String(offset) }}
-      onClick={selected ? undefined : onSelect}
-      tabIndex={selected ? 0 : -1}
-    >
-      {!preview ? (
-        <div className="landing-example-input-strip" aria-live="polite">
-          <p className="landing-example-input-label">{inputLabel}</p>
-          <p className="landing-example-input-text">{example.input}</p>
-        </div>
-      ) : null}
-      <div className="landing-example-object-inner">
-        <div className="landing-example-copy">
-          <p className="landing-example-summary">{example.summary}</p>
-          <p className="landing-example-meta">
-            {example.title} · 面向 {example.audience}
-          </p>
-          {!preview ? <p className="landing-example-scenario">{example.description}</p> : null}
-        </div>
-        {!preview ? (
-          <div className="landing-example-actions">
-            <button
-              type="button"
-              className="landing-example-primary"
-              onClick={(event) => {
-                event.stopPropagation();
-                onGenerate();
-              }}
-            >
-              {quickGenerateLabel}
-            </button>
-            <Link
-              href={`/card/${example.cardId}?from=landing-example`}
-              className="landing-example-link"
-              onClick={(event) => event.stopPropagation()}
-            >
-              {viewCardLabel}
-            </Link>
-          </div>
-        ) : (
-          <p className="landing-example-preview-note">示例预览</p>
-        )}
-      </div>
-    </article>
-  );
-}
-
-function ShowcaseCarousel({
-  title,
-  subtitle,
-  inputLabel,
-  examples,
-  activeIndex,
-  onCycle,
-  onSelect,
-  onGenerate,
-  onKeyDown,
-  onPointerDown,
-  onPointerUp,
-  quickGenerateLabel,
-  viewCardLabel,
-}: {
-  title: string;
-  subtitle: string;
-  inputLabel: string;
-  examples: ExampleCard[];
-  activeIndex: number;
-  onCycle: (direction: 1 | -1) => void;
-  onSelect: (index: number) => void;
-  onGenerate: (example: ExampleCard) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
-  onPointerDown: (event: PointerEvent<HTMLElement>) => void;
-  onPointerUp: (event: PointerEvent<HTMLElement>) => void;
-  quickGenerateLabel: string;
-  viewCardLabel: string;
-}) {
-  return (
-    <section
-      className="landing-showcase-carousel"
-      aria-label="示例项目轮播区"
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      onPointerDown={onPointerDown}
-      onPointerUp={onPointerUp}
-    >
-      <div className="landing-showcase-head">
+    <PublicBpShell>
+      <section className="mx-auto grid max-w-6xl gap-10 px-5 py-20 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
         <div>
-          <p className="landing-showcase-kicker">Result showcase</p>
-          <h2 className="landing-showcase-title">{title}</h2>
-          <p className="landing-showcase-subtitle">{subtitle}</p>
+          <h1 className="max-w-3xl text-4xl font-semibold leading-tight text-white md:text-6xl">把混乱项目材料，整理成资源方看得懂的 BP 清单</h1>
+          <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
+            OnePitch 帮 AI/OPC 早期项目完成项目诊断、BP 缺口识别和外部沟通材料预整理，让园区、投资人、技术方和合作方更快判断你在做什么、缺什么、下一步能不能聊。
+          </p>
+          <div className="mt-6 flex flex-wrap gap-2 text-sm text-slate-300">
+            {["不做完整融资 BP", "不做花哨 PPT", "先判断项目是否讲清楚"].map((item) => (
+              <span key={item} className="rounded-md border border-white/10 bg-white/[0.04] px-3 py-2">
+                {item}
+              </span>
+            ))}
+          </div>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <PrimaryLink href="/diagnose">
+              开始项目诊断 <ArrowRight className="ml-2 size-4" />
+            </PrimaryLink>
+            <SecondaryLink href="#bp-structure">查看 14 页清单结构</SecondaryLink>
+          </div>
         </div>
-        <div className="landing-showcase-controls" aria-label="showcase controls">
-          <button type="button" className="landing-showcase-control" onClick={() => onCycle(-1)} aria-label="查看上一个案例">
-            ←
-          </button>
-          <button type="button" className="landing-showcase-control landing-showcase-control--active" onClick={() => onCycle(1)} aria-label="查看下一个案例">
-            →
-          </button>
-        </div>
-      </div>
-      <div className="landing-showcase-stage">
-        {examples.map((example, index) => {
-          const offset = getCarouselOffset(index, activeIndex, examples.length);
-          const position = offset === 0 ? "center" : offset < 0 ? "left" : "right";
-          return (
-            <ExampleObjectCard
-              key={example.cardId}
-              example={example}
-              selected={offset === 0}
-              position={position}
-              offset={offset}
-              onSelect={() => onSelect(index)}
-              onGenerate={() => onGenerate(example)}
-              inputLabel={inputLabel}
-              quickGenerateLabel={quickGenerateLabel}
-              viewCardLabel={viewCardLabel}
-            />
-          );
-        })}
-      </div>
-    </section>
-  );
-}
+        <SectionPanel>
+          <div className="mb-5 text-sm text-blue-300">诊断输出预览</div>
+          <div className="space-y-4">
+            {outputs.map((item) => {
+              const Icon = item.icon;
+              return (
+                <div key={item.title} className="rounded-md border border-white/10 bg-[#020617] p-4">
+                  <div className="flex items-center gap-3">
+                    <Icon className="size-5 text-blue-300" />
+                    <h2 className="font-medium text-white">{item.title}</h2>
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-slate-400">{item.body}</p>
+                </div>
+              );
+            })}
+          </div>
+        </SectionPanel>
+      </section>
 
-function NarrativeRail({
-  title,
-  lead,
-  items,
-}: {
-  title: string;
-  lead: string;
-  items: readonly { title: string; desc: string }[];
-}) {
-  return (
-    <section className="landing-narrative-rail" data-narrative-rail>
-      <div className="landing-narrative-intro">
-        <p className="landing-narrative-kicker">Usage framing</p>
-        <h2 className="landing-narrative-title">{title}</h2>
-        <p className="landing-narrative-lead">{lead}</p>
-      </div>
-      <div className="landing-narrative-track">
-        {items.map((item, index) => (
-          <article key={item.title} className="landing-narrative-step">
-            <div className="landing-narrative-node">{String(index + 1).padStart(2, "0")}</div>
-            <div className="landing-narrative-step-copy">
-              <h3 className="landing-narrative-step-title">{item.title}</h3>
-              <p className="landing-narrative-step-text">{item.desc}</p>
+      <section className="mx-auto max-w-6xl px-5 pb-20">
+        <div className="grid gap-5 md:grid-cols-2">
+          <SectionPanel>
+            <h2 className="text-2xl font-semibold text-white">适合这些项目先做一次诊断</h2>
+            <div className="mt-6 space-y-3">
+              {fitItems.map((item) => (
+                <div key={item} className="flex gap-3 rounded-md border border-white/10 bg-black/20 p-3 text-sm text-slate-300">
+                  <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                  <span>{item}</span>
+                </div>
+              ))}
             </div>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
+          </SectionPanel>
+          <SectionPanel>
+            <h2 className="text-2xl font-semibold text-white">从混乱材料到可沟通清单</h2>
+            <div className="mt-6 space-y-4">
+              {["粘贴项目材料", "生成项目理解草稿", "查看 14 页 BP 清单", "识别材料缺口", "申请真人精修或资源路径建议"].map((item, index) => (
+                <div key={item} className="flex items-center gap-3 text-sm text-slate-300">
+                  <span className="flex size-7 items-center justify-center rounded-md bg-blue-600/20 text-xs text-blue-200">{index + 1}</span>
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+          </SectionPanel>
+        </div>
+      </section>
 
-export default function LandingPage() {
-  const t = copyZh.landing;
-  const router = useRouter();
-  const composerRef = useRef<HTMLTextAreaElement | null>(null);
-  const dragStartRef = useRef<number | null>(null);
-
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [warning, setWarning] = useState("");
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [challengeId, setChallengeId] = useState("");
-  const [authStep, setAuthStep] = useState<"email" | "code">("email");
-  const [debugCode, setDebugCode] = useState("");
-  const [resendCooldown, setResendCooldown] = useState(0);
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authError, setAuthError] = useState("");
-  const [nextPathRaw, setNextPathRaw] = useState("");
-  const [reasonRaw, setReasonRaw] = useState("");
-  const [ctaToken, setCtaToken] = useState("");
-  const [promptFocused, setPromptFocused] = useState(false);
-  const [activeExampleIndex, setActiveExampleIndex] = useState(0);
-
-  const nextPath = useMemo(() => {
-    const candidate = nextPathRaw.trim();
-    if (!candidate) return "/library";
-    if (!candidate.startsWith("/") || candidate.startsWith("//")) return "/library";
-    return candidate;
-  }, [nextPathRaw]);
-
-  const activeExample = EXAMPLES[activeExampleIndex] ?? EXAMPLES[0];
-  const promptState: PromptBarState = loading ? "submitting" : promptFocused ? "focused" : input.trim() ? "typing" : error ? "failed" : "idle";
-  const richCreateHref = useMemo(() => {
-    const query = new URLSearchParams({ mode: "rich", from: "landing" });
-    if (ctaToken) query.set("cta_token", ctaToken);
-    return `/projects/new?${query.toString()}`;
-  }, [ctaToken]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const query = new URLSearchParams(window.location.search);
-    setNextPathRaw(query.get("next") || "");
-    setReasonRaw((query.get("reason") || "").trim());
-    setCtaToken(query.get("cta_token") || "");
-  }, []);
-
-  useEffect(() => {
-    if (nextPathRaw) setLoginOpen(true);
-  }, [nextPathRaw]);
-
-  useEffect(() => {
-    if (!reasonRaw) return;
-    const message = getApiErrorMessage({ error: reasonRaw, message: "" }, t.loginFailed);
-    setAuthError(message);
-    setLoginOpen(true);
-    toast.error(message);
-  }, [reasonRaw, t.loginFailed]);
-
-  useEffect(() => {
-    if (authStep !== "code" || resendCooldown <= 0) return;
-    const timer = window.setInterval(() => {
-      setResendCooldown((current) => (current <= 1 ? 0 : current - 1));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [authStep, resendCooldown]);
-
-  function fillExample(example: ExampleCard) {
-    setInput(example.input);
-    setWarning("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    window.setTimeout(() => composerRef.current?.focus(), 220);
-  }
-
-  function selectExample(index: number) {
-    setActiveExampleIndex((index + EXAMPLES.length) % EXAMPLES.length);
-  }
-
-  function cycleExample(direction: 1 | -1) {
-    setActiveExampleIndex((current) => (current + direction + EXAMPLES.length) % EXAMPLES.length);
-  }
-
-  function handleShowcaseKeyDown(event: KeyboardEvent<HTMLElement>) {
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      cycleExample(-1);
-    }
-    if (event.key === "ArrowRight") {
-      event.preventDefault();
-      cycleExample(1);
-    }
-  }
-
-  function handleShowcasePointerDown(event: PointerEvent<HTMLElement>) {
-    dragStartRef.current = event.clientX;
-  }
-
-  function handleShowcasePointerUp(event: PointerEvent<HTMLElement>) {
-    if (dragStartRef.current === null) return;
-    const delta = event.clientX - dragStartRef.current;
-    dragStartRef.current = null;
-    if (Math.abs(delta) < 40) return;
-    cycleExample(delta < 0 ? 1 : -1);
-  }
-
-  async function handleGenerate(event: FormEvent) {
-    event.preventDefault();
-    if (!input.trim() || loading) return;
-    setLoading(true);
-    setError("");
-    setWarning("");
-    try {
-      const res = await fetchWithTimeout(
-        "/api/cards/generate",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            raw_input: input.trim(),
-            optional_title: "",
-            output_language: "zh-CN",
-            cta_token: ctaToken,
-            request_id: createRequestId("card"),
-          }),
-        },
-        60_000,
-      );
-      if (!res.ok) {
-        const failure = await resolveApiError(res, "生成失败，请稍后重试。");
-        setError(failure.message);
-        toast.error(failure.message);
-        return;
-      }
-      const body = (await res.json()) as MutationResponse;
-      if (body.used_fallback) {
-        const warningMessage = (body.warning || copyZh.create.fallbackWarning).trim();
-        if (warningMessage) {
-          setWarning(warningMessage);
-          toast.warning(warningMessage);
-        }
-      }
-      if (body.project?.id) {
-        saveLastGeneratedCardId(body.project.id);
-        router.push(`/card/${body.project.id}`);
-        return;
-      }
-      setError("生成结果异常，请稍后重试。");
-    } catch {
-      setError("服务暂时不可用，请稍后重试。");
-      toast.error("服务暂时不可用，请稍后重试。");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function resetLoginFlow() {
-    setCode("");
-    setChallengeId("");
-    setAuthStep("email");
-    setDebugCode("");
-    setResendCooldown(0);
-    setAuthError("");
-    setAuthLoading(false);
-  }
-
-  async function requestLoginCode(targetEmail: string): Promise<boolean> {
-    const res = await fetchWithTimeout(
-      "/api/auth/login/start",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: targetEmail }),
-      },
-      30_000,
-    );
-    if (!res.ok) {
-      const failure = await resolveApiError(res, t.loginFailed);
-      setAuthError(failure.message);
-      toast.error(failure.message);
-      return false;
-    }
-    const body = (await res.json()) as AuthStartResponse;
-    setChallengeId(body.challenge_id || "");
-    setDebugCode(body.debug_code || "");
-    setAuthStep("code");
-    setResendCooldown(Math.max(10, Math.min(120, Number(body.expires_in_seconds || 60))));
-    return true;
-  }
-
-  async function handleLoginSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (authLoading) return;
-    setAuthLoading(true);
-    setAuthError("");
-    try {
-      if (authStep === "email") {
-        const ok = await requestLoginCode(email);
-        if (ok) toast.success(t.codeSentHint);
-        return;
-      }
-
-      const res = await fetchWithTimeout(
-        "/api/auth/login/verify",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email, challenge_id: challengeId, code }),
-        },
-        30_000,
-      );
-      if (!res.ok) {
-        const failure = await resolveApiError(res, t.loginFailed);
-        setAuthError(failure.message);
-        toast.error(failure.message);
-        return;
-      }
-      const body = (await res.json()) as AuthResponse;
-      saveEmail(body.user?.email || email);
-      setLoginOpen(false);
-      resetLoginFlow();
-      router.push(nextPath);
-    } catch {
-      setAuthError(t.loginTimeout);
-      toast.error(t.loginTimeout);
-    } finally {
-      setAuthLoading(false);
-    }
-  }
-
-  async function onResendCode() {
-    if (authLoading || resendCooldown > 0 || !email.trim()) return;
-    setAuthLoading(true);
-    setAuthError("");
-    try {
-      const ok = await requestLoginCode(email);
-      if (ok) toast.success(t.codeResentHint);
-    } catch {
-      setAuthError(t.loginTimeout);
-      toast.error(t.loginTimeout);
-    } finally {
-      setAuthLoading(false);
-    }
-  }
-
-  return (
-    <main className="landing-reset-page">
-      <div className="landing-reset-backdrop" aria-hidden="true" />
-      <div className="landing-reset-stack">
-        <HeroPoster
-          titleLines={t.heroTitleLines as [string, string, string]}
-          subtitle={t.heroSubtitle}
-          socialProof={t.socialProof}
-          promptBar={
-            <PromptBar
-              value={input}
-              onChange={setInput}
-              onSubmit={handleGenerate}
-              onFocus={() => setPromptFocused(true)}
-              onBlur={() => setPromptFocused(false)}
-              state={promptState}
-              loading={loading}
-              error={error}
-              warning={warning}
-              hint={t.promptHint}
-              emptyHint={t.promptEmptyHint}
-              onHintClick={() => fillExample(activeExample)}
-              inputRef={composerRef}
-              placeholder={t.promptPlaceholder}
-              submitLabel={t.jumpToCta}
-              richCreateHref={richCreateHref}
-              richCreateLabel={t.promptRichLink}
-            />
-          }
-        />
-
-        <ShowcaseCarousel
-          title={t.exampleTitle}
-          subtitle={t.exampleSubtitle}
-          inputLabel={t.exampleInputLabel}
-          examples={EXAMPLES}
-          activeIndex={activeExampleIndex}
-          onCycle={cycleExample}
-          onSelect={selectExample}
-          onGenerate={fillExample}
-          onKeyDown={handleShowcaseKeyDown}
-          onPointerDown={handleShowcasePointerDown}
-          onPointerUp={handleShowcasePointerUp}
-          quickGenerateLabel={t.exampleTry}
-          viewCardLabel={t.exampleViewCard}
-        />
-
-        <NarrativeRail title={t.valueTitle} lead={t.valueLead} items={t.valueItems} />
-
-        <section className="landing-reset-final-cta">
-          <div className="landing-reset-final-copy">
-            <p className="landing-reset-final-kicker">Ready to send</p>
-            <h2 className="landing-reset-final-title">{t.ctaTitle}</h2>
-            <p className="landing-reset-final-text">{t.ctaDesc}</p>
-          </div>
-          <div className="landing-reset-final-actions">
-            <button type="button" className="landing-final-primary" onClick={() => composerRef.current?.focus()}>
-              {t.finalQuickCta}
-            </button>
-            <button type="button" className="landing-final-link" onClick={() => router.push(richCreateHref)}>
-              {t.finalRichCta}
-            </button>
-          </div>
-        </section>
-
-        <footer className="landing-reset-footer">
-          <span className="landing-reset-footer-brand">OnePitch · 一眼项目</span>
-          <div className="landing-reset-footer-links">
-            <button type="button" className="landing-reset-footer-link" onClick={() => router.push("/library")}>
-              查看项目库
-            </button>
-            <Link href="/privacy" className="landing-reset-footer-link">
-              隐私
-            </Link>
-            <Link href="/terms" className="landing-reset-footer-link">
-              条款
-            </Link>
-          </div>
-        </footer>
-      </div>
-
-      <Dialog
-        open={loginOpen}
-        onOpenChange={(open) => {
-          setLoginOpen(open);
-          if (!open) resetLoginFlow();
-        }}
-      >
-        <DialogContent className="auth-dialog-sheet data-[open]:auth-dialog-sheet border-white/12 bg-[var(--bg-surface-2)] text-[var(--text-primary)] sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>登录后继续编辑</DialogTitle>
-            <DialogDescription>生成和分享不需要登录，只有认领和编辑才需要。</DialogDescription>
-          </DialogHeader>
-          <form className="space-y-4" onSubmit={handleLoginSubmit}>
-            <Input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder={t.emailPlaceholder}
-              className="field-input h-12"
-            />
-            {authStep === "code" ? (
-              <Input
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-                placeholder={t.codePlaceholder}
-                className="field-input h-12"
-              />
-            ) : null}
-            {debugCode ? <p className="text-xs content-caption">{t.debugCodeHint} {debugCode}</p> : null}
-            {authError ? <p className="text-sm text-red-500">{authError}</p> : null}
-            <Button type="submit" className="action-primary-btn h-11 w-full" disabled={authLoading}>
-              {authLoading ? (authStep === "email" ? t.sendingCode : t.verifyingCode) : authStep === "email" ? t.sendCode : t.verifyCode}
-            </Button>
-            {authStep === "code" ? (
-              <div className="flex items-center justify-between text-sm">
-                <button type="button" className="inline-nav-link" onClick={onResendCode} disabled={resendCooldown > 0 || authLoading}>
-                  {resendCooldown > 0 ? t.resendIn(resendCooldown) : t.resendCode}
-                </button>
-                <button type="button" className="inline-nav-link" onClick={resetLoginFlow}>
-                  {t.switchEmail}
-                </button>
+      <section id="bp-structure" className="border-y border-white/10 bg-white/[0.02]">
+        <div className="mx-auto max-w-6xl px-5 py-16">
+          <h2 className="text-2xl font-semibold text-white">14 页标准外部沟通 BP 清单</h2>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">它不是完整融资 BP，也不是 PPT 设计稿，而是一份外部沟通前的页级结构清单。</p>
+          <div className="mt-8 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {["项目封面", "项目逻辑", "行业痛点", "市场切口", "现有方案缺口", "当前进展 / 业务基础", "为什么现在", "产品闭环", "产品 / 系统结构", "商业模式", "竞争定位", "核心壁垒", "增长计划", "团队与资源诉求"].map((item, index) => (
+              <div key={item} className="rounded-md border border-white/10 bg-[#020617] p-4 text-sm text-slate-300">
+                <span className="mr-2 text-blue-300">{String(index + 1).padStart(2, "0")}</span>
+                {item}
               </div>
-            ) : null}
-          </form>
-        </DialogContent>
-      </Dialog>
-    </main>
+            ))}
+          </div>
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <PrimaryLink href="/diagnose">开始项目诊断</PrimaryLink>
+            <Link href="/library" className="text-sm text-slate-500 hover:text-slate-300">
+              查看旧项目库
+            </Link>
+          </div>
+        </div>
+      </section>
+    </PublicBpShell>
   );
 }

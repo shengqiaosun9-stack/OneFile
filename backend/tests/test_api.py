@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Dict
 
 import pytest
@@ -214,10 +215,74 @@ def test_generate_project_supports_raw_file_and_optional_title(client: TestClien
     assert body["project"]["model_desc"] == "B2B 订阅"
     assert body["project"]["latest_update"] == "已完成首版生成链路"
     assert body["project"]["stage_metric"] == "当前阶段：首轮生成成功率 92%"
+    assert body["project"]["project_object"]["external_judgment_line"] == "AI 自动生成项目档案"
+    assert body["project"]["project_object"]["project_identity"]["title"] == "指定标题"
+    assert body["project"]["project_object"]["project_identity"]["audience"] == "独立开发者"
+    assert body["project"]["project_object"]["project_description"] == "自动结构化输入"
+    assert body["project"]["project_object"]["current_status"]["recent_update"] == "已完成首版生成链路"
+    assert body["project"]["project_object"]["next_step"]["text"]
+    assert len(body["project"]["project_object"]["key_browse_fields"]) >= 3
     assert "BP 提取文本" in captured.get("raw_input", "")
     assert "一句话输入" in captured.get("raw_input", "")
     assert captured.get("optional_title", "") == "指定标题"
     assert captured.get("output_language", "") == "zh-CN"
+
+
+def test_create_project_normalizes_canonical_project_object(client: TestClient, monkeypatch):
+    monkeypatch.setattr(service, "structure_project", lambda raw_input, user_title="": _fake_schema(user_title or "项目"))
+    monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": False, "last_api_error": ""})
+
+    response = client.post(
+        "/v1/projects",
+        json={
+            "email": "owner@example.com",
+            "title": "CanonicalCreate",
+            "input_text": "做一个 AI 产品",
+            "stage": "MVP",
+        },
+    )
+    assert response.status_code == 200
+    project = response.json()["project"]
+    assert project["project_object"]["external_judgment_line"] == "一句话亮点"
+    assert project["project_object"]["project_identity"]["title"] == "CanonicalCreate"
+    assert project["project_object"]["project_identity"]["stage"] == "MVP"
+    assert project["project_object"]["project_identity"]["stage_label"] == "MVP"
+    assert project["project_object"]["project_description"] == "方案"
+    assert project["project_object"]["current_status"]["recent_update"] == "v1.0"
+    assert project["project_object"]["next_step"]["text"]
+
+
+def test_edit_project_updates_canonical_next_step(client: TestClient, monkeypatch):
+    monkeypatch.setattr(service, "structure_project", lambda raw_input, user_title="": _fake_schema(user_title or "项目"))
+    monkeypatch.setattr(service, "get_last_structuring_meta", lambda: {"used_local_structuring": False, "last_api_error": ""})
+
+    created = client.post(
+        "/v1/projects",
+        json={
+            "email": "owner@example.com",
+            "title": "EditCanonical",
+            "input_text": "做一个 AI 产品",
+        },
+    )
+    assert created.status_code == 200
+    project_id = created.json()["project"]["id"]
+
+    edited = client.patch(
+        f"/v1/projects/{project_id}",
+        json={
+            "email": "owner@example.com",
+            "next_action_text": "下周完成一次真实用户回访并记录可复用结论。",
+            "next_action_status": "stale",
+            "summary": "外部 3 分钟可判断当前是否值得继续推进。",
+        },
+    )
+    assert edited.status_code == 200
+    body = edited.json()
+    assert body["project"]["next_action"]["text"] == "下周完成一次真实用户回访并记录可复用结论。"
+    assert body["project"]["next_action"]["status"] == "stale"
+    assert body["project"]["project_object"]["external_judgment_line"] == "外部 3 分钟可判断当前是否值得继续推进。"
+    assert body["project"]["project_object"]["next_step"]["text"] == "下周完成一次真实用户回访并记录可复用结论。"
+    assert body["project"]["project_object"]["next_step"]["status"] == "stale"
 
 
 def test_generate_project_supports_file_only_and_invalid_input(client: TestClient, monkeypatch):
@@ -1120,3 +1185,183 @@ def test_progress_item_edit_and_delete_endpoints(client: TestClient, monkeypatch
     deleted = client.delete(f"/v1/projects/{project_id}/updates/{update_item_id}")
     assert deleted.status_code == 200
     assert len(deleted.json()["project"].get("updates", [])) == 1
+
+
+def test_ops_requires_admin_session(client: TestClient, monkeypatch):
+    monkeypatch.setenv("ONEFILE_LOCAL_MODE", "0")
+    monkeypatch.setenv("ONEFILE_OPS_ENABLED", "1")
+    monkeypatch.setenv("ONEFILE_OPS_ADMIN_EMAILS", "owner@example.com")
+    reset_settings_cache()
+    try:
+        anon_client = TestClient(client.app)
+        anon = anon_client.get("/v1/ops/summary")
+        assert anon.status_code == 401
+
+        other_client = TestClient(client.app)
+        _login(other_client, "other@example.com")
+        forbidden = other_client.get("/v1/ops/summary")
+        assert forbidden.status_code == 403
+
+        allowed = client.get("/v1/ops/summary")
+        assert allowed.status_code == 200
+        assert allowed.json()["summary"]["inbox_count"] == 0
+    finally:
+        reset_settings_cache()
+
+
+def test_local_ops_crm_can_manage_inbox_entities_followups_and_relationship_map(client: TestClient, monkeypatch):
+    monkeypatch.setenv("ONEFILE_LOCAL_MODE", "1")
+    monkeypatch.setenv("ONEFILE_OPS_ENABLED", "1")
+    reset_settings_cache()
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        anon_client = TestClient(client.app)
+        summary = anon_client.get("/v1/ops/summary")
+        assert summary.status_code == 200
+
+        inbox_created = anon_client.post(
+            "/v1/ops/inbox",
+            json={
+                "who": "AI 漫剧创始人",
+                "source_channel": "douyin",
+                "does_what": "用 AI 做短剧内容生产",
+                "can_offer": "可提供内容样片和增长经验",
+                "currently_needs": "正在找技术合伙人，也缺首批客户",
+                "raw_text": "抖音私信：AI 漫剧项目，找技术合伙人",
+                "tags": ["AI 内容"],
+            },
+        )
+        assert inbox_created.status_code == 200
+        inbox_id = inbox_created.json()["item"]["id"]
+
+        routed = anon_client.post(f"/v1/ops/inbox/{inbox_id}/route", json={"target_type": "person", "payload": {"city": "成都", "next_action": "约一次云访谈", "next_action_at": today}})
+        assert routed.status_code == 200
+        person = routed.json()["item"]
+        assert person["display_name"] == "AI 漫剧创始人"
+        assert person["currently_needs_summary"] == "正在找技术合伙人，也缺首批客户"
+
+        org_created = anon_client.post(
+            "/v1/ops/organizations",
+            json={"name": "星元云智", "type": "compute_provider", "city": "成都", "offers": "可提供算力和私有化部署"},
+        )
+        assert org_created.status_code == 200
+        org = org_created.json()["item"]
+
+        project_created = anon_client.post(
+            "/v1/ops/projects",
+            json={
+                "name": "AI 漫剧工坊",
+                "founder_people_ids": [person["id"]],
+                "one_liner": "用 AI 做短剧内容生产",
+                "current_stage": "prototype",
+                "evidence_level": "materials",
+                "needs_tech": True,
+                "recommended_org_ids": [org["id"]],
+                "suitable_for_interview": True,
+                "next_action": "整理访谈提纲",
+                "next_action_at": "2026-05-12",
+                "sensitive_notes": "内部判断：先观察，不公开",
+            },
+        )
+        assert project_created.status_code == 200
+        project = project_created.json()["item"]
+
+        need_created = anon_client.post(
+            "/v1/ops/needs",
+            json={"owner_type": "project", "owner_id": project["id"], "category": "tech", "description": "找技术合伙人", "next_action": "匹配技术方", "next_action_at": today},
+        )
+        assert need_created.status_code == 200
+
+        offer_created = anon_client.post(
+            "/v1/ops/offers",
+            json={"owner_type": "organization", "owner_id": org["id"], "category": "compute", "description": "算力和私有化部署资源"},
+        )
+        assert offer_created.status_code == 200
+
+        interaction_created = anon_client.post(
+            "/v1/ops/interactions",
+            json={"date": today, "channel": "wechat", "people_ids": [person["id"]], "project_ids": [project["id"]], "summary": "确认对方真实需求是找技术合伙人", "commitments": "我整理两个技术方候选", "next_action": "发介绍话术", "next_action_at": today},
+        )
+        assert interaction_created.status_code == 200
+
+        content_created = anon_client.post(
+            "/v1/ops/contents",
+            json={"platform": "douyin", "title": "星元云智视频", "related_project_ids": [project["id"]], "metrics": {"views": 1000, "dms": 3}, "insights": "算力和私有化部署带来项目方咨询"},
+        )
+        assert content_created.status_code == 200
+
+        summary = anon_client.get("/v1/ops/summary")
+        assert summary.status_code == 200
+        body = summary.json()["summary"]
+        assert body["people_count"] == 1
+        assert body["organization_count"] == 1
+        assert body["project_count"] == 1
+        assert body["need_count"] == 1
+        assert body["offer_count"] == 1
+        assert body["today_followup_count"] >= 1
+
+        followups = anon_client.get("/v1/ops/followups")
+        assert followups.status_code == 200
+        assert any(item["entity_id"] == person["id"] for item in followups.json()["followups"]["today"])
+
+        relationship = anon_client.get(f"/v1/ops/relationship-map/project/{project['id']}")
+        assert relationship.status_code == 200
+        related = relationship.json()["related"]
+        assert related["people"][0]["id"] == person["id"]
+        assert related["organizations"][0]["id"] == org["id"]
+        assert related["needs"][0]["owner_id"] == project["id"]
+        assert related["contents"][0]["title"] == "星元云智视频"
+    finally:
+        reset_settings_cache()
+
+
+def test_local_ops_crm_export_import_and_does_not_leak_publicly(client: TestClient, monkeypatch):
+    monkeypatch.setenv("ONEFILE_LOCAL_MODE", "1")
+    monkeypatch.setenv("ONEFILE_OPS_ENABLED", "1")
+    reset_settings_cache()
+    try:
+        project_created = client.post(
+            "/v1/ops/projects",
+            json={"name": "高校 AI 项目", "one_liner": "有学校资源，希望接入 AI 项目", "sensitive_notes": "只给内部看，不公开"},
+        )
+        assert project_created.status_code == 200
+
+        public_list = client.get("/v1/projects")
+        assert "ops_projects" not in public_list.text
+        assert "只给内部看，不公开" not in public_list.text
+
+        exported = client.get("/v1/ops/export")
+        assert exported.status_code == 200
+        export_body = exported.json()
+        assert len(export_body["ops"]["ops_projects"]) == 1
+
+        imported = client.post("/v1/ops/import", json=export_body["ops"])
+        assert imported.status_code == 200
+        assert imported.json()["imported"]["ops_projects"] == 1
+    finally:
+        reset_settings_cache()
+
+
+def test_ops_profile_suggest_uses_local_rules_without_ai(client: TestClient, monkeypatch):
+    monkeypatch.setenv("ONEFILE_LOCAL_MODE", "1")
+    monkeypatch.setenv("ONEFILE_OPS_ENABLED", "1")
+    reset_settings_cache()
+    monkeypatch.setattr(service, "structure_project_object", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("AI should not be called")))
+    try:
+        response = client.post(
+            "/v1/ops/profiles/suggest",
+            json={
+                "core_need": "正在找技术合伙人，也缺客户",
+                "target_people": "希望认识 CTO 和企业客户",
+                "offers": "可提供学校资源和线下场景",
+                "direction": "AI 教育",
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert "技术合伙人" in body["need_tags"]
+        assert "客户" in body["need_tags"]
+        assert "学校资源" in body["offer_tags"]
+        assert body["tech_need_type"] == "cofounder"
+    finally:
+        reset_settings_cache()

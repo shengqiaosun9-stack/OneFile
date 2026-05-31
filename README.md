@@ -1,18 +1,42 @@
-# OneFile
+# OnePitch
 
-OneFile is now reset to a clean **shadcn-first** product baseline:
+OnePitch is a user-facing **AI/OPC project diagnosis and BP checklist workspace**. Project teams can paste messy materials, generate a diagnosis report, preview a 14-page external communication BP checklist, identify missing materials, and request human service support. The internal `/ops/bp` workspace receives those submissions for follow-up and delivery.
+
 - Frontend: Next.js + shadcn/ui
 - Backend: FastAPI + JSON storage
-- No Streamlit runtime
+- Default mode: local-first, no production deployment required for MVP validation
+- AI is optional; the first BP diagnosis flow uses local mock/rule generation
 
 ## Product Flow
-1. Landing / email login
-2. Public project library (3-4 cards per row)
-3. Project detail (update + advanced edit + share toggle)
-4. Share page (read-only + CTA back to create)
-5. Create page (single input as default path)
+1. `/`: explain OnePitch and start a project diagnosis.
+2. `/diagnose`: paste project materials and generate a diagnosis.
+3. `/diagnose/{token}`: view the public diagnosis report.
+4. `/diagnose/{token}/bp`: preview the 14-page BP checklist.
+5. `/diagnose/{token}/gaps`: review missing materials and likely resource-side questions.
+6. `/diagnose/{token}/service`: request human support.
+7. `/ops/bp`: review submitted projects internally and move them through service delivery.
 
 ## Run Locally
+
+Recommended one-command local start:
+
+```bash
+python -m pip install -r requirements.txt
+cd frontend && npm install && cd ..
+./scripts/start-local.sh
+```
+
+Open: `http://127.0.0.1:3000/`
+
+Local mode sets:
+
+```bash
+ONEFILE_LOCAL_MODE=1
+ONEFILE_OPS_ENABLED=1
+NEXT_PUBLIC_ONEFILE_LOCAL_MODE=1
+```
+
+The backend writes to `data/projects.json`. Before each save it creates a best-effort timestamped backup in `data/backups/` and keeps the latest 50 backups.
 
 ### 1) Backend
 ```bash
@@ -36,7 +60,7 @@ npm install
 BACKEND_API_URL=http://127.0.0.1:8000 npm run dev
 ```
 
-Open: `http://127.0.0.1:3000`
+Open: `http://127.0.0.1:3000/`
 
 ### 3) Secret safety (required once per clone)
 ```bash
@@ -46,7 +70,20 @@ Open: `http://127.0.0.1:3000`
 
 Use `.env.example` / `frontend/.env.example` as templates, and keep real secrets only in local `.env*` files (ignored by git).
 
-## Production Deploy (Demo Tier)
+## Public Card Shell
+
+The old public product-card routes still exist as auxiliary preview/share tools:
+
+- `/library`
+- `/projects/{id}`
+- `/cards/{id}`
+- `/share/{id}`
+
+BP diagnosis data is stored in separate `bp_*` collections. Ops CRM data remains in `ops_*`. Neither should appear in public project-card APIs or public pages unless explicitly exported later.
+
+## Production Deploy (Legacy Demo Tier)
+
+Production deployment is no longer the primary workflow. Keep this section only if you need to demo the old public project-card shell online.
 
 Target architecture:
 - Frontend: Netlify (`frontend` 目录)

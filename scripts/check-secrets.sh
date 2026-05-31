@@ -42,7 +42,7 @@ scan_lines() {
       fail "detected OpenAI-style secret token pattern (sk-...) in content"
     fi
 
-    if [[ "$line" =~ (HUNYUAN_API_KEY|OPENAI_API_KEY)[[:space:]]*=[[:space:]]*([^[:space:]#\"]+) ]]; then
+    if [[ "$line" =~ (DEEPSEEK_API_KEY|HUNYUAN_API_KEY|OPENAI_API_KEY)[[:space:]]*=[[:space:]]*([^[:space:]#\"]+) ]]; then
       local value="${BASH_REMATCH[2]}"
       if ! allow_placeholder_assignment "$value"; then
         fail "detected non-placeholder assignment for ${BASH_REMATCH[1]}"
@@ -66,7 +66,7 @@ if [[ "$MODE" == "repo" ]]; then
   if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     fail "not inside a git repository"
   fi
-  repo_text="$(git grep -nE 'sk-[A-Za-z0-9_-]{20,}|(HUNYUAN_API_KEY|OPENAI_API_KEY)[[:space:]]*=[[:space:]]*[^[:space:]#]+' -- ':!README.md' ':!deploy/README.md' ':!backend/README.md' ':!.env.example' || true)"
+  repo_text="$(git grep -nE 'sk-[A-Za-z0-9_-]{20,}|(DEEPSEEK_API_KEY|HUNYUAN_API_KEY|OPENAI_API_KEY)[[:space:]]*=[[:space:]]*[^[:space:]#]+' -- ':!README.md' ':!deploy/README.md' ':!backend/README.md' ':!.env.example' || true)"
   scan_lines "$repo_text"
   echo "secret scan passed (repository)"
   exit 0

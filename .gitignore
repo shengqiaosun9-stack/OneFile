@@ -15,6 +15,8 @@ env/
 # Local persistent data (runtime generated)
 data/projects.json
 data/*.tmp
+data/backups/
+tmp/
 
 # OS/editor
 .DS_Store
@@ -28,4 +30,5 @@ data/*.tmp
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
+.netlify/
 .tmp/

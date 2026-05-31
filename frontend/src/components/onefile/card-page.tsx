@@ -12,7 +12,8 @@ import { copyZh } from "@/lib/copy-zh";
 import { resolveApiError } from "@/lib/error-zh";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { clearLastGeneratedCardId, loadLastGeneratedCardId } from "@/lib/last-generated-card";
-import type { AuthMeResponse, CtaResponse, OneFileProject, ShareResponse } from "@/lib/types";
+import { getProjectObject } from "@/lib/project-object";
+import type { AuthMeResponse, CtaResponse, ListResponse, OneFileProject, ShareResponse } from "@/lib/types";
 
 export function CardPage({ projectId }: { projectId: string }) {
   const t = copyZh.share;
@@ -49,6 +50,8 @@ export function CardPage({ projectId }: { projectId: string }) {
       ? t.backLibrary
       : t.backHome;
   const backTarget = returnPath || (fromLibrary ? "/library" : fromLandingExample ? "/" : "/");
+  const canFallbackToDemo = source === "landing-example" || source === "library-empty-demo";
+  const projectObject = project ? getProjectObject(project) : null;
 
   useEffect(() => {
     (async () => {
@@ -73,6 +76,23 @@ export function CardPage({ projectId }: { projectId: string }) {
       try {
         const res = await fetchWithTimeout(`/api/cards/${projectId}`, { cache: "no-store" }, 20_000);
         if (!res.ok) {
+          if (res.status === 404 && canFallbackToDemo) {
+            try {
+              const listRes = await fetchWithTimeout("/api/projects", { cache: "no-store" }, 12_000);
+              if (listRes.ok) {
+                const body = (await listRes.json()) as ListResponse;
+                const fallbackId =
+                  (body.projects || []).find((item) => Boolean(item.share?.is_public) && item.id && item.id !== projectId)?.id || "";
+                if (fallbackId) {
+                  toast.message("该示例已更新，已为你打开可用示例。");
+                  router.replace(`/card/${fallbackId}?from=${source}`);
+                  return;
+                }
+              }
+            } catch {
+              // keep default error rendering below when fallback resolution fails
+            }
+          }
           const failure = await resolveApiError(res, t.loadFailed);
           setMessage(failure.message);
           setCanRetry(true);
@@ -87,7 +107,7 @@ export function CardPage({ projectId }: { projectId: string }) {
         setLoading(false);
       }
     })();
-  }, [projectId, t.loadFailed, t.loadTimeout]);
+  }, [canFallbackToDemo, projectId, router, source, t.loadFailed, t.loadTimeout]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -249,10 +269,10 @@ export function CardPage({ projectId }: { projectId: string }) {
             <section className="project-card-surface project-card-surface--public" data-state={isOwner ? "owner-view" : isTemporary ? "claimed" : "ready"}>
               <div className="project-card-hero">
                 <p className="project-card-kicker">Project card surface</p>
-                <h1 className="project-card-summary">{project.summary || "项目摘要待补充"}</h1>
+                <h1 className="project-card-summary">{projectObject?.external_judgment_line || "项目摘要待补充"}</h1>
                 <div className="project-card-title-row">
-                  <p className="project-card-title">{project.title || "项目卡"}</p>
-                  {project.stage_label ? <Badge className="stage-badge stage-badge--public">{project.stage_label}</Badge> : null}
+                  <p className="project-card-title">{projectObject?.project_identity.title || project.title || "项目卡"}</p>
+                  {projectObject?.project_identity.stage_label ? <Badge className="stage-badge stage-badge--public">{projectObject.project_identity.stage_label}</Badge> : null}
                 </div>
                 {ownershipHintVisible && isTemporary ? (
                   <p className="project-card-ownership-hint">{t.ownershipHint}</p>
@@ -261,27 +281,29 @@ export function CardPage({ projectId }: { projectId: string }) {
 
               <div className="project-card-context-flow">
                 <article className="project-card-context-line">
-                  <p className="project-card-label">{t.problem}</p>
-                  <p className="project-card-value">{project.problem_statement || "-"}</p>
+                  <p className="project-card-label">项目描述</p>
+                  <p className="project-card-value">{projectObject?.project_description || "-"}</p>
                 </article>
-                <article className="project-card-context-line">
-                  <p className="project-card-label">{t.solution}</p>
-                  <p className="project-card-value">{project.solution_approach || "-"}</p>
-                </article>
-                <article className="project-card-context-line">
-                  <p className="project-card-label">目标用户</p>
-                  <p className="project-card-value">{project.users || "-"}</p>
-                </article>
+                {(projectObject?.key_browse_fields || []).slice(0, 3).map((field) => (
+                  <article key={field.key} className="project-card-context-line">
+                    <p className="project-card-label">{field.label}</p>
+                    <p className="project-card-value">{field.value || "-"}</p>
+                  </article>
+                ))}
               </div>
 
               <div className="project-card-status-flow">
                 <article className="project-card-status-line">
                   <p className="project-card-label">当前阶段</p>
-                  <p className="project-card-status-copy">{project.stage_label || "待补充"}</p>
+                  <p className="project-card-status-copy">{projectObject?.current_status.stage_label || "待补充"}</p>
+                </article>
+                <article className="project-card-status-line">
+                  <p className="project-card-label">最近进展</p>
+                  <p className="project-card-status-copy">{projectObject?.current_status.recent_update || "待补充"}</p>
                 </article>
                 <article className="project-card-status-line">
                   <p className="project-card-label">下一步计划</p>
-                  <p className="project-card-status-copy">{project.next_action?.text || project.latest_update || "待补充"}</p>
+                  <p className="project-card-status-copy">{projectObject?.next_step.text || "待补充"}</p>
                 </article>
               </div>
 
@@ -328,21 +350,12 @@ export function CardPage({ projectId }: { projectId: string }) {
               <div ref={posterRef} className="poster-surface-shell">
                 <div className="poster-surface">
                   <p className="poster-surface-brand">OnePitch · 一眼项目</p>
-                  <h2 className="poster-surface-summary">{project.summary || "一句话说明待补充"}</h2>
+                  <h2 className="poster-surface-summary">{projectObject?.external_judgment_line || "一句话说明待补充"}</h2>
                   <div className="poster-surface-heading-row">
-                    <p className="poster-surface-title">{project.title || "主体名称"}</p>
-                    <p className="poster-surface-stage">{project.stage_label || "当前状态待补充"}</p>
+                    <p className="poster-surface-title">{projectObject?.project_identity.title || project.title || "主体名称"}</p>
+                    <p className="poster-surface-stage">{projectObject?.project_identity.stage_label || "当前状态待补充"}</p>
                   </div>
-                  <div className="poster-surface-grid">
-                    <div>
-                      <p className="poster-surface-label">问题</p>
-                      <p className="poster-surface-value">{project.problem_statement || "-"}</p>
-                    </div>
-                    <div>
-                      <p className="poster-surface-label">目标用户</p>
-                      <p className="poster-surface-value">{project.users || "-"}</p>
-                    </div>
-                  </div>
+                  <p className="poster-surface-value">{projectObject?.project_description || "-"}</p>
                   <div className="poster-surface-qr-row">
                     {qrDataUrl ? (
                       <Image src={qrDataUrl} alt="card qr" width={220} height={220} unoptimized className="poster-surface-qr" />

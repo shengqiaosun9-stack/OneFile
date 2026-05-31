@@ -13,6 +13,7 @@ import { buildLoginRedirectPath, currentPathWithQuery } from "@/lib/auth-redirec
 import { copyZh } from "@/lib/copy-zh";
 import { resolveApiError } from "@/lib/error-zh";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
+import { getProjectObject } from "@/lib/project-object";
 import { createRequestId } from "@/lib/request-id";
 import type { AuthMeResponse, MutationResponse, OneFileProject } from "@/lib/types";
 
@@ -20,22 +21,26 @@ export const dynamic = "force-dynamic";
 
 type EditableField =
   | "title"
-  | "summary"
+  | "externalJudgmentLine"
+  | "projectDescription"
   | "problemStatement"
-  | "solutionApproach"
   | "useCases"
   | "modelDesc"
   | "users"
   | "stage"
   | "formType"
   | "businessModelType"
-  | "modelType";
+  | "modelType"
+  | "recentUpdate"
+  | "validationSignal"
+  | "nextStepText"
+  | "nextStepStatus";
 
 type DetailDraft = {
   title: string;
-  summary: string;
+  externalJudgmentLine: string;
+  projectDescription: string;
   problemStatement: string;
-  solutionApproach: string;
   useCases: string;
   modelDesc: string;
   users: string;
@@ -43,7 +48,29 @@ type DetailDraft = {
   formType: string;
   businessModelType: string;
   modelType: string;
+  recentUpdate: string;
+  validationSignal: string;
+  nextStepText: string;
+  nextStepStatus: string;
 };
+
+const EDITABLE_FIELDS_ORDER: EditableField[] = [
+  "title",
+  "externalJudgmentLine",
+  "projectDescription",
+  "users",
+  "stage",
+  "formType",
+  "businessModelType",
+  "modelType",
+  "recentUpdate",
+  "validationSignal",
+  "nextStepText",
+  "nextStepStatus",
+  "problemStatement",
+  "useCases",
+  "modelDesc",
+];
 
 const FORM_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "AI_NATIVE_APP", label: "AI 原生应用" },
@@ -88,24 +115,37 @@ const STAGE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "MATURE", label: "成熟阶段" },
 ];
 
+const NEXT_STEP_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "open", label: "待执行" },
+  { value: "stale", label: "待刷新" },
+  { value: "completed", label: "已完成" },
+];
+
 function findOptionLabel(options: Array<{ value: string; label: string }>, value: string): string {
   const upper = (value || "").toUpperCase();
   return options.find((item) => item.value === upper)?.label || value || "待补充";
 }
 
 function projectToDraft(project: OneFileProject): DetailDraft {
+  const projectObject = getProjectObject(project);
+  const recentUpdate = projectObject.current_status.recent_update === "暂无最近进展" ? "" : projectObject.current_status.recent_update;
+  const nextStepText = projectObject.next_step.text === "待补充" ? "" : projectObject.next_step.text;
   return {
-    title: project.title || "",
-    summary: project.summary || "",
+    title: projectObject.project_identity.title || project.title || "",
+    externalJudgmentLine: projectObject.external_judgment_line || project.summary || "",
+    projectDescription: projectObject.project_description || project.solution_approach || project.problem_statement || project.summary || "",
     problemStatement: project.problem_statement || "",
-    solutionApproach: project.solution_approach || "",
     useCases: project.use_cases || "",
     modelDesc: project.model_desc || "",
-    users: project.users || "",
-    stage: project.stage || "BUILDING",
+    users: projectObject.project_identity.audience || project.users || "",
+    stage: projectObject.project_identity.stage || project.stage || "BUILDING",
     formType: project.form_type || "OTHER",
     businessModelType: project.business_model_type || "UNKNOWN",
     modelType: project.model_type || "UNKNOWN",
+    recentUpdate,
+    validationSignal: projectObject.current_status.validation_signal || project.stage_metric || "",
+    nextStepText,
+    nextStepStatus: projectObject.next_step.status || project.next_action?.status || "open",
   };
 }
 
@@ -179,6 +219,7 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const [saveHintField, setSaveHintField] = useState<EditableField | "">("");
+  const [preparingPreview, setPreparingPreview] = useState(false);
 
   const isOwner = Boolean(project && authUserId && project.owner_user_id === authUserId);
 
@@ -296,18 +337,18 @@ export default function ProjectDetailPage() {
     }
   }
 
-  async function saveEditableField(field: EditableField) {
-    if (!project || !isOwner || !draft || !savedDraft) return;
+  async function saveEditableField(field: EditableField): Promise<boolean> {
+    if (!project || !isOwner || !draft || !savedDraft) return false;
     if (draft[field] === savedDraft[field]) {
       setActiveField("");
-      return;
+      return true;
     }
 
     let payload: Record<string, string> = {};
     if (field === "title") payload = { title: draft.title };
-    if (field === "summary") payload = { summary: draft.summary };
+    if (field === "externalJudgmentLine") payload = { summary: draft.externalJudgmentLine };
+    if (field === "projectDescription") payload = { solution_approach: draft.projectDescription };
     if (field === "problemStatement") payload = { problem_statement: draft.problemStatement };
-    if (field === "solutionApproach") payload = { solution_approach: draft.solutionApproach };
     if (field === "useCases") payload = { use_cases: draft.useCases };
     if (field === "modelDesc") payload = { model_desc: draft.modelDesc };
     if (field === "users") payload = { users: draft.users };
@@ -315,6 +356,10 @@ export default function ProjectDetailPage() {
     if (field === "formType") payload = { form_type: draft.formType };
     if (field === "businessModelType") payload = { business_model_type: draft.businessModelType };
     if (field === "modelType") payload = { model_type: draft.modelType };
+    if (field === "recentUpdate") payload = { latest_update: draft.recentUpdate };
+    if (field === "validationSignal") payload = { stage_metric: draft.validationSignal };
+    if (field === "nextStepText") payload = { next_action_text: draft.nextStepText };
+    if (field === "nextStepStatus") payload = { next_action_status: draft.nextStepStatus };
 
     setSavingField(field);
     setError("");
@@ -331,7 +376,7 @@ export default function ProjectDetailPage() {
 
       if (!res.ok) {
         await handleWriteFailure(res, t.editFailed);
-        return;
+        return false;
       }
 
       const body = (await res.json()) as { project: OneFileProject };
@@ -341,12 +386,38 @@ export default function ProjectDetailPage() {
       window.setTimeout(() => {
         setSaveHintField((current) => (current === field ? "" : current));
       }, 1800);
+      return true;
     } catch {
       setError(t.editFailed);
       toast.error(t.editFailed);
+      return false;
     } finally {
       setSavingField("");
     }
+  }
+
+  function getDirtyFields(): EditableField[] {
+    if (!draft || !savedDraft) return [];
+    return EDITABLE_FIELDS_ORDER.filter((field) => draft[field] !== savedDraft[field]);
+  }
+
+  async function previewProjectCard(): Promise<void> {
+    if (!project) return;
+    if (isOwner) {
+      const dirtyFields = getDirtyFields();
+      if (dirtyFields.length > 0) {
+        setPreparingPreview(true);
+        for (const field of dirtyFields) {
+          const ok = await saveEditableField(field);
+          if (!ok) {
+            setPreparingPreview(false);
+            return;
+          }
+        }
+        setPreparingPreview(false);
+      }
+    }
+    router.push(`/card/${project.id}?from=edit&return=${encodeURIComponent(`/projects/${project.id}`)}`);
   }
 
   async function toggleShareVisibility() {
@@ -510,7 +581,7 @@ export default function ProjectDetailPage() {
 
   function openProjectEditorFromMenu() {
     setShowMoreMenu(false);
-    setActiveField("summary");
+    setActiveField("externalJudgmentLine");
     profileSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -610,27 +681,27 @@ export default function ProjectDetailPage() {
                 <h1 className="text-2xl font-semibold text-[var(--landing-title)] sm:text-3xl">{draft.title || t.projectTitlePlaceholder}</h1>
               )}
 
-              {isOwner && activeField === "summary" ? (
+              {isOwner && activeField === "externalJudgmentLine" ? (
                 <div className="draft-hero-editor">
                   <Textarea
                     autoFocus
                     rows={4}
                     className="editor-field-input min-h-[110px]"
-                    value={draft.summary}
-                    onChange={(event) => updateDraftField("summary", event.target.value)}
-                    onKeyDown={(event) => onFieldKeyDown(event, "summary", { allowMultiline: true })}
+                    value={draft.externalJudgmentLine}
+                    onChange={(event) => updateDraftField("externalJudgmentLine", event.target.value)}
+                    onKeyDown={(event) => onFieldKeyDown(event, "externalJudgmentLine", { allowMultiline: true })}
                   />
-                  {renderFieldActions("summary")}
+                  {renderFieldActions("externalJudgmentLine")}
                 </div>
               ) : isOwner ? (
                 <div className="draft-hero-display">
-                  <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("summary")}>
-                    <p className="text-sm content-subtle">{draft.summary || t.noSummary}</p>
+                  <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("externalJudgmentLine")}>
+                    <p className="text-sm content-subtle">{draft.externalJudgmentLine || t.noSummary}</p>
                   </button>
-                  {renderFieldActions("summary")}
+                  {renderFieldActions("externalJudgmentLine")}
                 </div>
               ) : (
-                <p className="text-sm content-subtle">{draft.summary || t.noSummary}</p>
+                <p className="text-sm content-subtle">{draft.externalJudgmentLine || t.noSummary}</p>
               )}
             </div>
 
@@ -641,9 +712,10 @@ export default function ProjectDetailPage() {
               <Button
                 variant="ghost"
                 className="detail-header-link"
-                onClick={() => router.push(`/card/${project.id}?from=edit&return=${encodeURIComponent(`/projects/${project.id}`)}`)}
+                onClick={() => void previewProjectCard()}
+                disabled={preparingPreview}
               >
-                {t.openShare}
+                {preparingPreview ? t.saving : t.openShare}
               </Button>
               {isOwner ? (
                 <div className="detail-owner-menu" ref={moreMenuRef}>
@@ -686,9 +758,352 @@ export default function ProjectDetailPage() {
           <div className="detail-edit-groups">
             <section className="detail-edit-group">
               <div className="detail-edit-group-head">
-                <h3 className="detail-edit-group-title">{t.expressionTitle}</h3>
+                <h3 className="detail-edit-group-title">{t.canonicalExternalTitle}</h3>
+                <p className="text-sm content-subtle">{t.canonicalExternalHint}</p>
               </div>
-              <div className="detail-expression-flow">
+              <article className={`detail-expression-item ${activeField === "externalJudgmentLine" ? "is-active" : ""}`}>
+                <div className="detail-expression-head">
+                  <p className="detail-expression-label">{t.fieldSummary}</p>
+                  {renderFieldActions("externalJudgmentLine")}
+                </div>
+                {isOwner && activeField === "externalJudgmentLine" ? (
+                  <Textarea
+                    autoFocus
+                    className="editor-field-input detail-expression-input min-h-[120px]"
+                    value={draft.externalJudgmentLine}
+                    onChange={(event) => updateDraftField("externalJudgmentLine", event.target.value)}
+                    onKeyDown={(event) => onFieldKeyDown(event, "externalJudgmentLine", { allowMultiline: true })}
+                  />
+                ) : isOwner ? (
+                  <button type="button" className="detail-expression-trigger" onClick={() => openFieldEditor("externalJudgmentLine")}>
+                    <p className="detail-expression-value">{draft.externalJudgmentLine || t.fieldEmpty}</p>
+                  </button>
+                ) : (
+                  <p className="detail-expression-value">{draft.externalJudgmentLine || t.fieldEmpty}</p>
+                )}
+              </article>
+            </section>
+
+            <section className="detail-edit-group">
+              <div className="detail-edit-group-head">
+                <h3 className="detail-edit-group-title">{t.canonicalIdentityTitle}</h3>
+                <p className="text-sm content-subtle">
+                  {`受众：${draft.users || t.fieldEmpty} · 类别：${findOptionLabel(FORM_TYPE_OPTIONS, draft.formType)}`}
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <article className={`draft-display-block draft-inline-editing ${activeField === "title" ? "is-active" : ""}`}>
+                  <div className="draft-block-head">
+                    <p className="draft-block-label">{t.fieldProjectName}</p>
+                    {renderFieldActions("title")}
+                  </div>
+                  {isOwner && activeField === "title" ? (
+                    <Input
+                      autoFocus
+                      className="editor-field-input"
+                      value={draft.title}
+                      onChange={(event) => updateDraftField("title", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "title")}
+                    />
+                  ) : isOwner ? (
+                    <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("title")}>
+                      <p className="draft-block-value">{draft.title || t.projectTitlePlaceholder}</p>
+                    </button>
+                  ) : (
+                    <p className="draft-block-value">{draft.title || t.projectTitlePlaceholder}</p>
+                  )}
+                </article>
+
+                <article className={`draft-display-block draft-inline-editing ${activeField === "stage" ? "is-active" : ""}`}>
+                  <div className="draft-block-head">
+                    <p className="draft-block-label">{t.fieldStage}</p>
+                    {renderFieldActions("stage")}
+                  </div>
+                  {isOwner && activeField === "stage" ? (
+                    <select
+                      autoFocus
+                      className="field-select h-10 w-full rounded-lg px-3 text-sm"
+                      value={draft.stage}
+                      onChange={(event) => updateDraftField("stage", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "stage")}
+                    >
+                      {STAGE_OPTIONS.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : isOwner ? (
+                    <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("stage")}>
+                      <p className="draft-block-value">{findOptionLabel(STAGE_OPTIONS, draft.stage)}</p>
+                    </button>
+                  ) : (
+                    <p className="draft-block-value">{project.stage_label || findOptionLabel(STAGE_OPTIONS, draft.stage)}</p>
+                  )}
+                </article>
+              </div>
+            </section>
+
+            <section className="detail-edit-group">
+              <div className="detail-edit-group-head">
+                <h3 className="detail-edit-group-title">{t.canonicalDescriptionTitle}</h3>
+                <p className="text-sm content-subtle">{t.canonicalDescriptionHint}</p>
+              </div>
+              <article className={`detail-expression-item ${activeField === "projectDescription" ? "is-active" : ""}`}>
+                <div className="detail-expression-head">
+                  <p className="detail-expression-label">{t.fieldProjectDescription}</p>
+                  {renderFieldActions("projectDescription")}
+                </div>
+                {isOwner && activeField === "projectDescription" ? (
+                  <Textarea
+                    autoFocus
+                    className="editor-field-input detail-expression-input min-h-[140px]"
+                    value={draft.projectDescription}
+                    onChange={(event) => updateDraftField("projectDescription", event.target.value)}
+                    onKeyDown={(event) => onFieldKeyDown(event, "projectDescription", { allowMultiline: true })}
+                  />
+                ) : isOwner ? (
+                  <button type="button" className="detail-expression-trigger" onClick={() => openFieldEditor("projectDescription")}>
+                    <p className="detail-expression-value">{draft.projectDescription || t.fieldEmpty}</p>
+                  </button>
+                ) : (
+                  <p className="detail-expression-value">{draft.projectDescription || t.fieldEmpty}</p>
+                )}
+              </article>
+            </section>
+
+            <section className="detail-edit-group">
+              <div className="detail-edit-group-head">
+                <h3 className="detail-edit-group-title">{t.canonicalBrowseTitle}</h3>
+                <p className="text-sm content-subtle">{t.businessHint}</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <article className={`draft-display-block draft-inline-editing ${activeField === "formType" ? "is-active" : ""}`}>
+                  <div className="draft-block-head">
+                    <p className="draft-block-label">{t.fieldFormType}</p>
+                    {renderFieldActions("formType")}
+                  </div>
+                  {isOwner && activeField === "formType" ? (
+                    <select
+                      autoFocus
+                      className="field-select h-10 w-full rounded-lg px-3 text-sm"
+                      value={draft.formType}
+                      onChange={(event) => updateDraftField("formType", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "formType")}
+                    >
+                      {FORM_TYPE_OPTIONS.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : isOwner ? (
+                    <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("formType")}>
+                      <p className="draft-block-value">{findOptionLabel(FORM_TYPE_OPTIONS, draft.formType)}</p>
+                    </button>
+                  ) : (
+                    <p className="draft-block-value">{project.form_type_label || findOptionLabel(FORM_TYPE_OPTIONS, draft.formType)}</p>
+                  )}
+                </article>
+
+                <article className={`draft-display-block draft-inline-editing ${activeField === "users" ? "is-active" : ""}`}>
+                  <div className="draft-block-head">
+                    <p className="draft-block-label">{t.fieldUsers}</p>
+                    {renderFieldActions("users")}
+                  </div>
+                  {isOwner && activeField === "users" ? (
+                    <Input
+                      autoFocus
+                      className="editor-field-input"
+                      value={draft.users}
+                      onChange={(event) => updateDraftField("users", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "users")}
+                    />
+                  ) : isOwner ? (
+                    <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("users")}>
+                      <p className="draft-block-value">{draft.users || t.fieldEmpty}</p>
+                    </button>
+                  ) : (
+                    <p className="draft-block-value">{draft.users || t.fieldEmpty}</p>
+                  )}
+                </article>
+
+                <article className={`draft-display-block draft-inline-editing ${activeField === "businessModelType" ? "is-active" : ""}`}>
+                  <div className="draft-block-head">
+                    <p className="draft-block-label">{t.fieldBusinessModel}</p>
+                    {renderFieldActions("businessModelType")}
+                  </div>
+                  {isOwner && activeField === "businessModelType" ? (
+                    <select
+                      autoFocus
+                      className="field-select h-10 w-full rounded-lg px-3 text-sm"
+                      value={draft.businessModelType}
+                      onChange={(event) => updateDraftField("businessModelType", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "businessModelType")}
+                    >
+                      {BUSINESS_MODEL_OPTIONS.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : isOwner ? (
+                    <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("businessModelType")}>
+                      <p className="draft-block-value">{findOptionLabel(BUSINESS_MODEL_OPTIONS, draft.businessModelType)}</p>
+                    </button>
+                  ) : (
+                    <p className="draft-block-value">
+                      {project.business_model_type_label || findOptionLabel(BUSINESS_MODEL_OPTIONS, draft.businessModelType)}
+                    </p>
+                  )}
+                </article>
+
+                <article className={`draft-display-block draft-inline-editing ${activeField === "modelType" ? "is-active" : ""}`}>
+                  <div className="draft-block-head">
+                    <p className="draft-block-label">{t.fieldModelType}</p>
+                    {renderFieldActions("modelType")}
+                  </div>
+                  {isOwner && activeField === "modelType" ? (
+                    <select
+                      autoFocus
+                      className="field-select h-10 w-full rounded-lg px-3 text-sm"
+                      value={draft.modelType}
+                      onChange={(event) => updateDraftField("modelType", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "modelType")}
+                    >
+                      {MODEL_TYPE_OPTIONS.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : isOwner ? (
+                    <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("modelType")}>
+                      <p className="draft-block-value">{findOptionLabel(MODEL_TYPE_OPTIONS, draft.modelType)}</p>
+                    </button>
+                  ) : (
+                    <p className="draft-block-value">{project.model_type_label || findOptionLabel(MODEL_TYPE_OPTIONS, draft.modelType)}</p>
+                  )}
+                </article>
+              </div>
+            </section>
+
+            <section className="detail-edit-group">
+              <div className="detail-edit-group-head">
+                <h3 className="detail-edit-group-title">{t.canonicalStatusTitle}</h3>
+                <p className="text-sm content-subtle">{t.canonicalStatusHint}</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <article className={`detail-expression-item ${activeField === "recentUpdate" ? "is-active" : ""}`}>
+                  <div className="detail-expression-head">
+                    <p className="detail-expression-label">{t.fieldRecentUpdate}</p>
+                    {renderFieldActions("recentUpdate")}
+                  </div>
+                  {isOwner && activeField === "recentUpdate" ? (
+                    <Textarea
+                      autoFocus
+                      className="editor-field-input detail-expression-input min-h-[120px]"
+                      value={draft.recentUpdate}
+                      onChange={(event) => updateDraftField("recentUpdate", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "recentUpdate", { allowMultiline: true })}
+                    />
+                  ) : isOwner ? (
+                    <button type="button" className="detail-expression-trigger" onClick={() => openFieldEditor("recentUpdate")}>
+                      <p className="detail-expression-value">{draft.recentUpdate || t.fieldEmpty}</p>
+                    </button>
+                  ) : (
+                    <p className="detail-expression-value">{draft.recentUpdate || t.fieldEmpty}</p>
+                  )}
+                </article>
+
+                <article className={`draft-display-block draft-inline-editing ${activeField === "validationSignal" ? "is-active" : ""}`}>
+                  <div className="draft-block-head">
+                    <p className="draft-block-label">{t.fieldValidationSignal}</p>
+                    {renderFieldActions("validationSignal")}
+                  </div>
+                  {isOwner && activeField === "validationSignal" ? (
+                    <Input
+                      autoFocus
+                      className="editor-field-input"
+                      value={draft.validationSignal}
+                      onChange={(event) => updateDraftField("validationSignal", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "validationSignal")}
+                    />
+                  ) : isOwner ? (
+                    <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("validationSignal")}>
+                      <p className="draft-block-value">{draft.validationSignal || t.fieldEmpty}</p>
+                    </button>
+                  ) : (
+                    <p className="draft-block-value">{draft.validationSignal || t.fieldEmpty}</p>
+                  )}
+                </article>
+              </div>
+            </section>
+
+            <section className="detail-edit-group">
+              <div className="detail-edit-group-head">
+                <h3 className="detail-edit-group-title">{t.canonicalNextStepTitle}</h3>
+                <p className="text-sm content-subtle">{t.canonicalNextStepHint}</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <article className={`detail-expression-item ${activeField === "nextStepText" ? "is-active" : ""}`}>
+                  <div className="detail-expression-head">
+                    <p className="detail-expression-label">{t.fieldNextStepText}</p>
+                    {renderFieldActions("nextStepText")}
+                  </div>
+                  {isOwner && activeField === "nextStepText" ? (
+                    <Textarea
+                      autoFocus
+                      className="editor-field-input detail-expression-input min-h-[120px]"
+                      value={draft.nextStepText}
+                      onChange={(event) => updateDraftField("nextStepText", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "nextStepText", { allowMultiline: true })}
+                    />
+                  ) : isOwner ? (
+                    <button type="button" className="detail-expression-trigger" onClick={() => openFieldEditor("nextStepText")}>
+                      <p className="detail-expression-value">{draft.nextStepText || t.fieldEmpty}</p>
+                    </button>
+                  ) : (
+                    <p className="detail-expression-value">{draft.nextStepText || t.fieldEmpty}</p>
+                  )}
+                </article>
+
+                <article className={`draft-display-block draft-inline-editing ${activeField === "nextStepStatus" ? "is-active" : ""}`}>
+                  <div className="draft-block-head">
+                    <p className="draft-block-label">{t.fieldNextStepStatus}</p>
+                    {renderFieldActions("nextStepStatus")}
+                  </div>
+                  {isOwner && activeField === "nextStepStatus" ? (
+                    <select
+                      autoFocus
+                      className="field-select h-10 w-full rounded-lg px-3 text-sm"
+                      value={draft.nextStepStatus}
+                      onChange={(event) => updateDraftField("nextStepStatus", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "nextStepStatus")}
+                    >
+                      {NEXT_STEP_STATUS_OPTIONS.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : isOwner ? (
+                    <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("nextStepStatus")}>
+                      <p className="draft-block-value">{findOptionLabel(NEXT_STEP_STATUS_OPTIONS, draft.nextStepStatus)}</p>
+                    </button>
+                  ) : (
+                    <p className="draft-block-value">{findOptionLabel(NEXT_STEP_STATUS_OPTIONS, draft.nextStepStatus)}</p>
+                  )}
+                </article>
+              </div>
+            </section>
+
+            <section className="detail-edit-group">
+              <div className="detail-edit-group-head">
+                <h3 className="detail-edit-group-title">{t.canonicalFallbackTitle}</h3>
+                <p className="text-sm content-subtle">{t.canonicalFallbackHint}</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <article className={`detail-expression-item ${activeField === "problemStatement" ? "is-active" : ""}`}>
                   <div className="detail-expression-head">
                     <p className="detail-expression-label">{t.fieldProblem}</p>
@@ -708,28 +1123,6 @@ export default function ProjectDetailPage() {
                     </button>
                   ) : (
                     <p className="detail-expression-value">{draft.problemStatement || t.fieldEmpty}</p>
-                  )}
-                </article>
-
-                <article className={`detail-expression-item ${activeField === "solutionApproach" ? "is-active" : ""}`}>
-                  <div className="detail-expression-head">
-                    <p className="detail-expression-label">{t.fieldSolution}</p>
-                    {renderFieldActions("solutionApproach")}
-                  </div>
-                  {isOwner && activeField === "solutionApproach" ? (
-                    <Textarea
-                      autoFocus
-                      className="editor-field-input detail-expression-input min-h-[120px]"
-                      value={draft.solutionApproach}
-                      onChange={(event) => updateDraftField("solutionApproach", event.target.value)}
-                      onKeyDown={(event) => onFieldKeyDown(event, "solutionApproach", { allowMultiline: true })}
-                    />
-                  ) : isOwner ? (
-                    <button type="button" className="detail-expression-trigger" onClick={() => openFieldEditor("solutionApproach")}>
-                      <p className="detail-expression-value">{draft.solutionApproach || t.fieldEmpty}</p>
-                    </button>
-                  ) : (
-                    <p className="detail-expression-value">{draft.solutionApproach || t.fieldEmpty}</p>
                   )}
                 </article>
 
@@ -754,179 +1147,28 @@ export default function ProjectDetailPage() {
                     <p className="detail-expression-value">{draft.useCases || t.fieldEmpty}</p>
                   )}
                 </article>
-              </div>
-            </section>
 
-            <section className="detail-edit-group">
-              <div className="detail-edit-group-head">
-                <h3 className="detail-edit-group-title">{t.businessTitle}</h3>
-              </div>
-              <p className="detail-edit-group-hint">{t.businessHint}</p>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <article className={`draft-display-block draft-inline-editing ${activeField === "modelDesc" ? "is-active" : ""}`}>
-              <div className="draft-block-head">
-                <p className="draft-block-label">{t.fieldModel}</p>
-                {renderFieldActions("modelDesc")}
-              </div>
-              {isOwner && activeField === "modelDesc" ? (
-                <Textarea
-                  autoFocus
-                  className="editor-field-input min-h-[120px]"
-                  value={draft.modelDesc}
-                  onChange={(event) => updateDraftField("modelDesc", event.target.value)}
-                  onKeyDown={(event) => onFieldKeyDown(event, "modelDesc", { allowMultiline: true })}
-                />
-              ) : isOwner ? (
-                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("modelDesc")}>
-                  <p className="draft-block-value">{draft.modelDesc || t.fieldEmpty}</p>
-                </button>
-              ) : (
-                <p className="draft-block-value">{draft.modelDesc || t.fieldEmpty}</p>
-              )}
-            </article>
-
-            <article className={`draft-display-block draft-inline-editing ${activeField === "users" ? "is-active" : ""}`}>
-              <div className="draft-block-head">
-                <p className="draft-block-label">{t.fieldUsers}</p>
-                {renderFieldActions("users")}
-              </div>
-              {isOwner && activeField === "users" ? (
-                <Input
-                  autoFocus
-                  className="editor-field-input"
-                  value={draft.users}
-                  onChange={(event) => updateDraftField("users", event.target.value)}
-                  onKeyDown={(event) => onFieldKeyDown(event, "users")}
-                />
-              ) : isOwner ? (
-                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("users")}>
-                  <p className="draft-block-value">{draft.users || t.fieldEmpty}</p>
-                </button>
-              ) : (
-                <p className="draft-block-value">{draft.users || t.fieldEmpty}</p>
-              )}
-            </article>
-
-            <article className={`draft-display-block draft-inline-editing ${activeField === "formType" ? "is-active" : ""}`}>
-              <div className="draft-block-head">
-                <p className="draft-block-label">{t.fieldFormType}</p>
-                {renderFieldActions("formType")}
-              </div>
-              {isOwner && activeField === "formType" ? (
-                <select
-                  autoFocus
-                  className="field-select h-10 w-full rounded-lg px-3 text-sm"
-                  value={draft.formType}
-                  onChange={(event) => updateDraftField("formType", event.target.value)}
-                  onKeyDown={(event) => onFieldKeyDown(event, "formType")}
-                >
-                  {FORM_TYPE_OPTIONS.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              ) : isOwner ? (
-                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("formType")}>
-                  <p className="draft-block-value">{findOptionLabel(FORM_TYPE_OPTIONS, draft.formType)}</p>
-                </button>
-              ) : (
-                <p className="draft-block-value">{project.form_type_label || findOptionLabel(FORM_TYPE_OPTIONS, draft.formType)}</p>
-              )}
-            </article>
-
-            <article className={`draft-display-block draft-inline-editing ${activeField === "businessModelType" ? "is-active" : ""}`}>
-              <div className="draft-block-head">
-                <p className="draft-block-label">{t.fieldBusinessModel}</p>
-                {renderFieldActions("businessModelType")}
-              </div>
-              {isOwner && activeField === "businessModelType" ? (
-                <select
-                  autoFocus
-                  className="field-select h-10 w-full rounded-lg px-3 text-sm"
-                  value={draft.businessModelType}
-                  onChange={(event) => updateDraftField("businessModelType", event.target.value)}
-                  onKeyDown={(event) => onFieldKeyDown(event, "businessModelType")}
-                >
-                  {BUSINESS_MODEL_OPTIONS.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              ) : isOwner ? (
-                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("businessModelType")}>
-                  <p className="draft-block-value">{findOptionLabel(BUSINESS_MODEL_OPTIONS, draft.businessModelType)}</p>
-                </button>
-              ) : (
-                <p className="draft-block-value">
-                  {project.business_model_type_label || findOptionLabel(BUSINESS_MODEL_OPTIONS, draft.businessModelType)}
-                </p>
-              )}
-            </article>
-
-            <article className={`draft-display-block draft-inline-editing ${activeField === "modelType" ? "is-active" : ""}`}>
-              <div className="draft-block-head">
-                <p className="draft-block-label">{t.fieldModelType}</p>
-                {renderFieldActions("modelType")}
-              </div>
-              {isOwner && activeField === "modelType" ? (
-                <select
-                  autoFocus
-                  className="field-select h-10 w-full rounded-lg px-3 text-sm"
-                  value={draft.modelType}
-                  onChange={(event) => updateDraftField("modelType", event.target.value)}
-                  onKeyDown={(event) => onFieldKeyDown(event, "modelType")}
-                >
-                  {MODEL_TYPE_OPTIONS.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              ) : isOwner ? (
-                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("modelType")}>
-                  <p className="draft-block-value">{findOptionLabel(MODEL_TYPE_OPTIONS, draft.modelType)}</p>
-                </button>
-              ) : (
-                <p className="draft-block-value">{project.model_type_label || findOptionLabel(MODEL_TYPE_OPTIONS, draft.modelType)}</p>
-              )}
-            </article>
-              </div>
-            </section>
-
-            <section className="detail-edit-group">
-              <div className="detail-edit-group-head">
-                <h3 className="detail-edit-group-title">{t.progressInfoTitle}</h3>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <article className={`draft-display-block draft-inline-editing ${activeField === "stage" ? "is-active" : ""}`}>
-              <div className="draft-block-head">
-                <p className="draft-block-label">{t.fieldStage}</p>
-                {renderFieldActions("stage")}
-              </div>
-              {isOwner && activeField === "stage" ? (
-                <select
-                  autoFocus
-                  className="field-select h-10 w-full rounded-lg px-3 text-sm"
-                  value={draft.stage}
-                  onChange={(event) => updateDraftField("stage", event.target.value)}
-                  onKeyDown={(event) => onFieldKeyDown(event, "stage")}
-                >
-                  {STAGE_OPTIONS.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              ) : isOwner ? (
-                <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("stage")}>
-                  <p className="draft-block-value">{findOptionLabel(STAGE_OPTIONS, draft.stage)}</p>
-                </button>
-              ) : (
-                <p className="draft-block-value">{project.stage_label || findOptionLabel(STAGE_OPTIONS, draft.stage)}</p>
-              )}
-            </article>
+                <article className={`draft-display-block draft-inline-editing ${activeField === "modelDesc" ? "is-active" : ""}`}>
+                  <div className="draft-block-head">
+                    <p className="draft-block-label">{t.fieldModel}</p>
+                    {renderFieldActions("modelDesc")}
+                  </div>
+                  {isOwner && activeField === "modelDesc" ? (
+                    <Textarea
+                      autoFocus
+                      className="editor-field-input min-h-[120px]"
+                      value={draft.modelDesc}
+                      onChange={(event) => updateDraftField("modelDesc", event.target.value)}
+                      onKeyDown={(event) => onFieldKeyDown(event, "modelDesc", { allowMultiline: true })}
+                    />
+                  ) : isOwner ? (
+                    <button type="button" className="draft-content-trigger" onClick={() => openFieldEditor("modelDesc")}>
+                      <p className="draft-block-value">{draft.modelDesc || t.fieldEmpty}</p>
+                    </button>
+                  ) : (
+                    <p className="draft-block-value">{draft.modelDesc || t.fieldEmpty}</p>
+                  )}
+                </article>
               </div>
             </section>
           </div>

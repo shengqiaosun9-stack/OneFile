@@ -23,6 +23,7 @@ _LAST_API_ERROR_TYPE = ""
 
 ZH_LANG_KEYS = {"zh", "zh-cn", "zh_hans", "zh-hans", "chinese", "cn"}
 EN_LANG_KEYS = {"en", "en-us", "en-gb", "english"}
+AI_PROVIDERS = {"deepseek", "hunyuan", "openai"}
 
 
 def _safe_secret_get(key: str) -> Optional[str]:
@@ -55,7 +56,7 @@ def _report_structuring_fallback(api_error: str) -> None:
     category = _classify_ai_error(api_error)
     print(
         "[OneFile][AI-Fallback]"
-        f" provider=hunyuan"
+        f" provider={get_ai_provider()}"
         f" base_url={get_base_url()}"
         f" model={get_model_name()}"
         f" category={category or 'unknown'}"
@@ -118,21 +119,87 @@ def extract_text_from_uploaded_file(uploaded_file: Any) -> str:
     raise ValueError("仅支持 PDF、TXT、MD 文件。")
 
 
+def get_ai_provider() -> str:
+    configured = (os.getenv("ONEPITCH_AI_PROVIDER") or os.getenv("ONEFILE_AI_PROVIDER") or "").strip().lower()
+    if configured in AI_PROVIDERS:
+        return configured
+    if os.getenv("DEEPSEEK_API_KEY"):
+        return "deepseek"
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
+    return "hunyuan"
+
+
 def get_model_name() -> str:
-    model = (
-        os.getenv("HUNYUAN_MODEL")
-        or os.getenv("MODEL_NAME")
-    )
+    provider = get_ai_provider()
+    if provider == "deepseek":
+        model = os.getenv("DEEPSEEK_MODEL") or os.getenv("MODEL_NAME")
+        if not model:
+            model = _safe_secret_get("DEEPSEEK_MODEL") or _safe_secret_get("MODEL_NAME")
+        return str(model or "deepseek-v4-flash").strip()
+    if provider == "openai":
+        model = os.getenv("OPENAI_MODEL") or os.getenv("MODEL_NAME")
+        if not model:
+            model = _safe_secret_get("OPENAI_MODEL") or _safe_secret_get("MODEL_NAME")
+        return str(model or "gpt-4o-mini").strip()
+
+    model = os.getenv("HUNYUAN_MODEL") or os.getenv("MODEL_NAME")
     if not model:
         model = _safe_secret_get("HUNYUAN_MODEL") or _safe_secret_get("MODEL_NAME")
     return str(model or "hunyuan-turbos-latest").strip()
 
 
 def get_base_url() -> str:
-    base_url = os.getenv("HUNYUAN_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+    provider = get_ai_provider()
+    if provider == "deepseek":
+        base_url = os.getenv("DEEPSEEK_BASE_URL")
+        if not base_url:
+            base_url = _safe_secret_get("DEEPSEEK_BASE_URL")
+        return str(base_url or "https://api.deepseek.com").strip()
+    if provider == "openai":
+        base_url = os.getenv("OPENAI_BASE_URL")
+        if not base_url:
+            base_url = _safe_secret_get("OPENAI_BASE_URL")
+        return str(base_url or "https://api.openai.com/v1").strip()
+
+    base_url = os.getenv("HUNYUAN_BASE_URL")
     if not base_url:
-        base_url = _safe_secret_get("HUNYUAN_BASE_URL") or _safe_secret_get("OPENAI_BASE_URL")
+        base_url = _safe_secret_get("HUNYUAN_BASE_URL")
     return str(base_url or "https://api.hunyuan.cloud.tencent.com/v1").strip()
+
+
+def get_api_key() -> str:
+    provider = get_ai_provider()
+    if provider == "deepseek":
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            api_key = _safe_secret_get("DEEPSEEK_API_KEY")
+        return str(api_key or "").strip()
+    if provider == "openai":
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            api_key = _safe_secret_get("OPENAI_API_KEY")
+        return str(api_key or "").strip()
+
+    api_key = os.getenv("HUNYUAN_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        api_key = _safe_secret_get("HUNYUAN_API_KEY") or _safe_secret_get("OPENAI_API_KEY")
+    return str(api_key or "").strip()
+
+
+def build_chat_completion_kwargs(*, temperature: float, messages: List[Dict[str, str]], model: str = "") -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {
+        "model": model or get_model_name(),
+        "temperature": temperature,
+        "messages": messages,
+    }
+    if get_ai_provider() == "hunyuan":
+        kwargs["extra_body"] = {"enable_enhancement": True}
+    return kwargs
+
+
+def create_chat_completion(client: Any, *, temperature: float, messages: List[Dict[str, str]], model: str = "") -> Any:
+    return client.chat.completions.create(**build_chat_completion_kwargs(temperature=temperature, messages=messages, model=model))
 
 
 def get_client() -> Any:
@@ -141,15 +208,9 @@ def get_client() -> Any:
     except Exception as exc:
         raise ValueError(f"OpenAI 兼容 SDK 不可用：{clean_text(exc, 80)}")
 
-    api_key = (
-        os.getenv("HUNYUAN_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-    )
+    api_key = get_api_key()
     if not api_key:
-        api_key = _safe_secret_get("HUNYUAN_API_KEY") or _safe_secret_get("OPENAI_API_KEY")
-    api_key = str(api_key or "").strip()
-    if not api_key:
-        raise ValueError("未检测到 API Key。请设置 HUNYUAN_API_KEY，或使用 OPENAI_API_KEY 作为回退。")
+        raise ValueError("未检测到 API Key。请设置 DEEPSEEK_API_KEY、HUNYUAN_API_KEY 或 OPENAI_API_KEY。")
 
     timeout_raw = os.getenv("ONEFILE_AI_TIMEOUT_SECONDS", "6").strip()
     try:
@@ -360,15 +421,15 @@ JSON Schema:
         client = get_client()
         model_name = get_model_name()
         base_url = get_base_url()
-        print(f"[OneFile] provider=hunyuan base_url={base_url} model={model_name}")
-        resp = client.chat.completions.create(
+        print(f"[OneFile] provider={get_ai_provider()} base_url={base_url} model={model_name}")
+        resp = create_chat_completion(
+            client,
             model=model_name,
             temperature=0.2,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            extra_body={"enable_enhancement": True},
         )
         parsed = extract_json_object(resp.choices[0].message.content or "{}")
         schema = sanitize_schema(parsed)
@@ -499,14 +560,14 @@ def _rewrite_project_object_language(
         "输出必须是 JSON 对象。"
         f"\n\n输入对象：\n{json.dumps(source, ensure_ascii=False)}\n\nJSON Schema:\n{schema_text}"
     )
-    resp = client.chat.completions.create(
+    resp = create_chat_completion(
+        client,
         model=get_model_name(),
         temperature=0.1,
         messages=[
             {"role": "system", "content": "你是多语言项目文案改写助手，只输出符合 schema 的 JSON。"},
             {"role": "user", "content": rewrite_prompt},
         ],
-        extra_body={"enable_enhancement": True},
     )
     parsed = extract_json_object((resp.choices[0].message.content or "{}").strip())
     return {
@@ -634,9 +695,10 @@ def structure_project_object(raw_input: str, optional_title: str = "", output_la
         client = get_client()
         model_name = get_model_name()
         base_url = get_base_url()
-        print(f"[OneFile] provider=hunyuan base_url={base_url} model={model_name}")
+        print(f"[OneFile] provider={get_ai_provider()} base_url={base_url} model={model_name}")
         schema_text = json.dumps(schema, ensure_ascii=False)
-        resp = client.chat.completions.create(
+        resp = create_chat_completion(
+            client,
             model=model_name,
             temperature=0.2,
             messages=[
@@ -650,7 +712,6 @@ def structure_project_object(raw_input: str, optional_title: str = "", output_la
                     ),
                 },
             ],
-            extra_body={"enable_enhancement": True},
         )
         parsed = extract_json_object((resp.choices[0].message.content or "{}").strip())
 
