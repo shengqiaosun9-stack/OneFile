@@ -212,12 +212,12 @@ def get_client() -> Any:
     if not api_key:
         raise ValueError("未检测到 API Key。请设置 DEEPSEEK_API_KEY、HUNYUAN_API_KEY 或 OPENAI_API_KEY。")
 
-    timeout_raw = os.getenv("ONEFILE_AI_TIMEOUT_SECONDS", "6").strip()
+    timeout_raw = os.getenv("ONEFILE_AI_TIMEOUT_SECONDS", "25" if get_ai_provider() == "deepseek" else "6").strip()
     try:
         timeout_seconds = float(timeout_raw)
     except Exception:
-        timeout_seconds = 6.0
-    timeout_seconds = max(3.0, min(timeout_seconds, 30.0))
+        timeout_seconds = 25.0 if get_ai_provider() == "deepseek" else 6.0
+    timeout_seconds = max(3.0, min(timeout_seconds, 60.0))
 
     return OpenAI(
         api_key=api_key,
