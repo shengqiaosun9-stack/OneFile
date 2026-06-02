@@ -7,7 +7,7 @@ const outputs = [
   { title: "项目初诊", body: "先判断项目是否被讲清楚，而不是直接生成一份看似完整的 BP。", icon: FileSearch },
   { title: "准备度评分", body: "评估材料完整度和表达清晰度，不代表项目好坏或融资价值。", icon: ClipboardCheck },
   { title: "资源路径准备度", body: "分别判断园区、活动、客户、技术、融资、内容等路径还缺什么。", icon: Route },
-  { title: "可分享项目卡", body: "生成适合发给合伙人、园区、活动主办方或合作方的轻量项目卡。", icon: Share2 },
+  { title: "项目判断卡", body: "生成适合先发给合伙人、园区、活动主办方或投资人的半公开判断卡。", icon: Share2 },
   { title: "人工服务入口", body: "当项目准备对外沟通时，进入项目档案精修或园区/路演材料重构。", icon: UserCheck },
 ];
 
@@ -22,7 +22,7 @@ export default function HomePage() {
         <div>
           <h1 className="max-w-4xl text-4xl font-semibold leading-tight text-white md:text-6xl">先判断你的 AI / OPC 项目，是否已经准备好进入资源方视野</h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
-            OnePitch 帮 AI / OPC 早期项目完成项目初诊、材料缺口识别、资源路径准备度判断和可分享项目卡生成，让园区、活动主办方、技术方、客户、投资人和合作伙伴更快看懂你是谁、缺什么、下一步能不能聊。
+            OnePitch 帮 AI / OPC 早期项目完成项目初诊、材料缺口识别、资源路径准备度判断和项目判断卡生成，让园区、活动主办方、技术方、客户、投资人和合作伙伴更快看懂你是谁、缺什么、下一步能不能聊。
           </p>
           <div className="mt-6 flex flex-wrap gap-2 text-sm text-slate-300">
             {["不是 BP 生成器", "不是项目广场", "先诊断表达和材料", "再进入人工精修"].map((item) => (
@@ -74,7 +74,7 @@ export default function HomePage() {
           <SectionPanel>
             <h2 className="text-2xl font-semibold text-white">从提交材料到服务转化</h2>
             <div className="mt-6 space-y-4">
-              {["粘贴项目材料", "生成项目初诊报告", "识别资源路径和材料缺口", "生成可分享项目卡", "申请人工精修或资源路径推进"].map((item, index) => (
+              {["粘贴项目材料", "生成项目初诊报告", "识别资源路径和材料缺口", "生成项目判断卡", "申请人工精修或资源路径推进"].map((item, index) => (
                 <div key={item} className="flex items-center gap-3 text-sm text-slate-300">
                   <span className="flex size-7 items-center justify-center rounded-md bg-blue-600/20 text-xs text-blue-200">{index + 1}</span>
                   <span>{item}</span>

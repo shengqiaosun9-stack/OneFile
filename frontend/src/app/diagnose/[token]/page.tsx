@@ -96,6 +96,10 @@ export default function DiagnosisReportPage() {
                   <span className="pb-2 text-sm text-slate-500">/ 100</span>
                 </div>
                 <p className="mt-4 text-sm leading-6 text-slate-400">这个分数只代表材料完整度和表达清晰度，不代表项目好坏、融资价值或商业成功概率。</p>
+                <p className="mt-5 text-sm leading-6 text-slate-400">不方便直接发 BP 时，可以先发这张项目判断卡。</p>
+                <Link href={`/diagnose/${token}/card`} className="mt-3 inline-flex h-10 items-center rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-500">
+                  生成项目判断卡
+                </Link>
               </SectionPanel>
             </section>
 
@@ -205,7 +209,7 @@ export default function DiagnosisReportPage() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <PrimaryLink href={`/diagnose/${token}/service?type=project_diagnosis`}>申请人工项目初诊</PrimaryLink>
                 <SecondaryLink href={`/diagnose/${token}/service?type=bp_restructure`}>申请 BP 清单人工重构</SecondaryLink>
-                <SecondaryLink href={`/diagnose/${token}/card`}>生成可分享项目卡</SecondaryLink>
+                <SecondaryLink href={`/diagnose/${token}/card`}>生成项目判断卡</SecondaryLink>
               </div>
             </SectionPanel>
 

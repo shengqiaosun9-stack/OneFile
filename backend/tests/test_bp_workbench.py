@@ -41,6 +41,17 @@ def test_public_diagnosis_creates_bp_project_without_public_project_leak(tmp_pat
     assert body["insight"]["likely_questions"]
     assert body["insight"]["next_actions"]
     assert body["insight"]["bp_structure_preview"]
+    share_card = body["insight"]["share_card"]
+    assert share_card["core_problem"]
+    assert share_card["solution"]
+    assert share_card["ai_role"]
+    assert share_card["current_needs"]
+    assert share_card["can_provide"]
+    assert share_card["suitable_for"]
+    assert "已有收入" not in share_card["business_model_status"]
+    assert share_card["sensitive_info_boundary"].startswith("这张卡不包含完整 BP")
+    assert share_card["contact_visibility"] == "hidden"
+    assert share_card["contact_method"] == ""
     assert len(body["pages"]) == 14
     assert body["pages"][0]["title"] == "项目封面"
     assert body["pages"][0]["draft_copy"] == ""
@@ -162,6 +173,10 @@ def test_public_token_view_hides_internal_fields_and_service_request_enters_ops(
     assert public_body["pages"][0]["draft_copy"] == ""
     assert public_body["pages"][0]["suggested_content"] == ""
     assert public_body["pages"][0]["existing_materials"] == []
+    assert public_body["raw_materials"] == []
+    assert public_body["insight"]["share_card"]["contact_visibility"] == "hidden"
+    assert public_body["insight"]["share_card"]["contact_method"] == ""
+    assert "完整 BP" in public_body["insight"]["share_card"]["sensitive_info_boundary"]
 
     ops_list = client.get("/v1/ops/bp/projects")
     assert ops_list.status_code == 200
@@ -198,7 +213,7 @@ def test_supplement_material_regenerates_public_report(tmp_path, monkeypatch):
 
     assert supplement.status_code == 200
     body = supplement.json()
-    assert len(body["raw_materials"]) == 2
+    assert body["raw_materials"] == []
     assert len(body["pages"]) == 14
     assert body["project"]["updated_at"]
     assert any(item["version_name"] == "补充材料并重新生成" for item in body["versions"])

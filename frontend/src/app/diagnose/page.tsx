@@ -139,7 +139,7 @@ export default function DiagnosePage() {
             <div className="grid gap-3 md:grid-cols-3">
               {[
                 { value: "private", title: "只生成私密诊断报告", body: "适合先自己看，不生成对外项目卡。" },
-                { value: "share_card", title: "生成可分享项目卡", body: "适合发给园区、合伙人、活动主办方或合作方。" },
+                { value: "share_card", title: "生成可分享项目判断卡", body: "适合在不发送完整 BP 的情况下，让对方先看懂项目。" },
                 { value: "anonymous_case", title: "允许匿名案例复盘", body: "隐藏身份后，后续可用于 OnePitch 内容复盘。" },
               ].map((item) => (
                 <button

@@ -3937,6 +3937,7 @@ BP_RESOURCE_PATHS = [
     ("内容曝光", ["内容", "曝光", "媒体", "访谈", "视频"], "适合先补传播角度、案例边界和公开授权。"),
     ("合作伙伴", ["合作", "伙伴", "资源", "渠道", "生态"], "适合先明确希望谁参与、对方能得到什么。"),
 ]
+BP_SHARE_CARD_BOUNDARY = "这张卡不包含完整 BP、客户名单、财务数据、原始材料和技术细节。更详细信息需在建立沟通后，由项目方授权单独提供。"
 
 
 def _bp_list(value: Any, max_items: int = 12, max_len: int = 80) -> List[str]:
@@ -4172,8 +4173,133 @@ def _bp_next_actions(project: Dict[str, Any], insight: Dict[str, Any], material_
         actions.append("先重写一句话定位，让资源方 10 秒内理解项目在做什么。")
     if not _bp_has_any(material_text, ["团队", "创始人", "资质", "经验"]):
         actions.append("补充团队背景、分工和当前最短板能力。")
-    actions.append("整理一版可分享项目卡，再决定是否进入完整 BP 或路演材料重构。")
+    actions.append("整理一版项目判断卡，再决定是否进入完整 BP 或路演材料重构。")
     return actions[:3]
+
+
+def _bp_project_category(project: Dict[str, Any], material_text: str) -> str:
+    industry = _ops_text(project.get("industry", ""), max_len=80)
+    if industry:
+        return industry
+    if _bp_has_any(material_text, ["医疗", "医院", "药", "患者", "慢病", "健康"]):
+        return "医疗健康 AI"
+    if _bp_has_any(material_text, ["园区", "政策", "opc", "产业"]):
+        return "AI / OPC 产业项目"
+    if _bp_has_any(material_text, ["内容", "小红书", "抖音", "视频", "aigc"]):
+        return "AIGC / 内容增长"
+    if _bp_has_any(material_text, ["agent", "rag", "自动化", "智能体", "企业", "系统"]):
+        return "企业 AI 应用"
+    return "AI / OPC 早期项目"
+
+
+def _bp_business_model_status(material_text: str, insight: Dict[str, Any]) -> str:
+    business_model = _ops_text(insight.get("business_model", ""), max_len=240)
+    if _bp_has_any(material_text, ["收入", "订单", "盈利", "付费", "收费"]):
+        return "已有收入或付费线索，具体数据需授权后提供。"
+    if _bp_has_any(material_text, ["客户", "试点", "交付", "案例"]):
+        return "已有客户、试点或交付线索，商业模式仍需补充验证。"
+    if business_model and "尚不清楚" not in business_model:
+        return business_model
+    return "商业模式待进一步讲清：谁付费、按什么收费、是否已验证。"
+
+
+def _bp_public_evidence(material_text: str, insight: Dict[str, Any]) -> str:
+    signals: List[str] = []
+    if _bp_has_any(material_text, ["demo", "原型", "开发", "上线", "系统", "web"]):
+        signals.append("已有 Demo / 原型或开发进展")
+    if _bp_has_any(material_text, ["软著", "资质", "专利"]):
+        signals.append("已有软著、资质或专业背景线索")
+    if _bp_has_any(material_text, ["客户", "订单", "收入", "交付", "试点", "案例"]):
+        signals.append("已有客户、订单、收入或交付线索")
+    if signals:
+        return "；".join(signals[:3]) + "，具体证明材料需授权后提供。"
+    key_data = _ops_text(insight.get("key_data", ""), max_len=240)
+    if key_data and "不足" not in key_data and not _bp_has_any(key_data, ["万", "亿", "客户名单", "手机号", "微信", "电话", "预算"]):
+        return key_data
+    return "当前已有轻证据待项目方补充可公开证明。"
+
+
+def _bp_can_provide(material_text: str) -> List[str]:
+    offers: List[str] = []
+    if _bp_has_any(material_text, ["医疗", "医院", "药", "患者", "资质", "专业"]):
+        offers.append("行业专业经验与真实场景理解")
+    if _bp_has_any(material_text, ["技术", "开发", "agent", "rag", "系统", "自动化", "智能体"]):
+        offers.append("AI 产品 / Agent / 系统落地经验")
+    if _bp_has_any(material_text, ["客户", "渠道", "园区", "政府", "央企", "资源", "场景"]):
+        offers.append("场景、渠道或资源线索")
+    if _bp_has_any(material_text, ["内容", "运营", "小红书", "抖音", "私域", "矩阵"]):
+        offers.append("内容运营或获客经验")
+    return offers[:4] or ["项目一线反馈和合作共创空间"]
+
+
+def _bp_suitable_for(project: Dict[str, Any], material_text: str) -> List[str]:
+    selected = " ".join(project.get("current_resource_need", []))
+    source = f"{selected} {material_text}"
+    targets: List[str] = []
+    if _bp_has_any(source, ["技术", "开发", "agent", "rag", "系统", "团队"]):
+        targets.append("AI 工程化团队 / 技术合伙人")
+    if _bp_has_any(source, ["园区", "政策", "opc", "入驻"]):
+        targets.append("园区 / 政策服务资源方")
+    if _bp_has_any(source, ["客户", "订单", "销售", "场景"]):
+        targets.append("潜在客户 / 场景方")
+    if _bp_has_any(source, ["算力", "私有化", "部署", "服务器"]):
+        targets.append("算力 / 私有化部署服务商")
+    if _bp_has_any(source, ["融资", "投资", "资本"]):
+        targets.append("关注早期 AI 应用的投资人")
+    if _bp_has_any(source, ["内容", "媒体", "访谈", "视频"]):
+        targets.append("内容传播或采访合作方")
+    return targets[:4] or ["愿意继续了解项目的合作伙伴"]
+
+
+def _bp_card_text(raw_card: Dict[str, Any], keys: List[str], fallback: str, *, max_len: int = 240) -> str:
+    for key in keys:
+        value = _ops_text(raw_card.get(key, ""), max_len=max_len)
+        if value:
+            return value
+    return _ops_text(fallback, max_len=max_len)
+
+
+def _bp_build_share_card(
+    project: Dict[str, Any],
+    insight: Dict[str, Any],
+    material_text: str,
+    gap_report: Optional[Dict[str, Any]] = None,
+    raw_card: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    source = raw_card if isinstance(raw_card, dict) else {}
+    gaps = [item.get("gap_name", "") for item in (gap_report or {}).get("items", []) if isinstance(item, dict)]
+    current_needs = _bp_list(source.get("current_needs", source.get("currentNeeds", [])), max_items=4, max_len=80)
+    if not current_needs:
+        current_needs = _bp_list(project.get("current_resource_need", []), max_items=4, max_len=80)
+    if not current_needs:
+        current_needs = _bp_list(insight.get("resource_needs", ""), max_items=4, max_len=80)
+    can_provide = _bp_list(source.get("can_provide", source.get("canProvide", [])), max_items=4, max_len=80) or _bp_can_provide(material_text)
+    suitable_for = _bp_list(source.get("suitable_for", source.get("suitableFor", [])), max_items=4, max_len=80) or _bp_suitable_for(project, material_text)
+    return {
+        "title": _bp_card_text(source, ["title"], project.get("name", ""), max_len=160),
+        "one_line": _bp_card_text(source, ["one_line", "oneLine"], project.get("tagline") or insight.get("solution", ""), max_len=220),
+        "stage": _bp_card_text(source, ["stage"], project.get("stage", "unknown"), max_len=60),
+        "category": _bp_card_text(source, ["category"], _bp_project_category(project, material_text), max_len=80),
+        "scenario": _bp_card_text(source, ["scenario"], _bp_pick_sentence(material_text, ["场景", "客户", "用户", "企业", "老人", "医院"], project.get("target_customer", "") or "具体使用场景待补充。"), max_len=180),
+        "target_user": _bp_card_text(source, ["target_user", "targetUser", "target_customer", "targetCustomer"], project.get("target_customer", "") or "待补充", max_len=180),
+        "core_problem": _bp_card_text(source, ["core_problem", "coreProblem"], insight.get("problem", ""), max_len=220),
+        "solution": _bp_card_text(source, ["solution"], insight.get("solution", ""), max_len=220),
+        "ai_role": _bp_card_text(source, ["ai_role", "aiRole"], insight.get("ai_relevance", ""), max_len=220),
+        "current_progress": _bp_card_text(source, ["current_progress", "currentProgress"], insight.get("traction", ""), max_len=220),
+        "evidence": _bp_public_evidence(material_text, insight),
+        "business_model_status": _bp_business_model_status(material_text, insight),
+        "current_needs": current_needs or ["当前资源诉求待进一步明确"],
+        "can_provide": can_provide,
+        "suitable_for": suitable_for,
+        "sensitive_info_boundary": BP_SHARE_CARD_BOUNDARY,
+        "contact_visibility": "hidden",
+        "contact_method": "",
+        "target_customer": _bp_card_text(source, ["target_customer", "targetCustomer"], project.get("target_customer", "") or "待补充", max_len=180),
+        "resource_ask": _bp_card_text(source, ["resource_ask", "resourceAsk"], insight.get("resource_needs", ""), max_len=220),
+        "recommended_path": _bp_card_text(source, ["recommended_path", "recommendedPath"], insight.get("recommended_path", ""), max_len=220),
+        "highlights": _bp_list(source.get("highlights", [insight.get("solution", ""), insight.get("traction", ""), insight.get("ai_relevance", "")]), max_items=3, max_len=120),
+        "gaps": _bp_list(source.get("gaps", gaps), max_items=3, max_len=120) or ["待补充可公开材料缺口"],
+    }
 
 
 def _bp_structure_preview(pages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
@@ -4352,7 +4478,7 @@ def _generate_bp_assets_local(project: Dict[str, Any], materials: List[Dict[str,
     pages = _generate_bp_pages(project, insight, materials)
     insight["bp_structure_preview"] = _bp_structure_preview(pages)
     gap_report = _generate_bp_gap_report(project, pages)
-    insight["share_card"]["gaps"] = [item.get("gap_name", "") for item in gap_report.get("items", [])[:3]]
+    insight["share_card"] = _bp_build_share_card(project, insight, text, gap_report, insight.get("share_card", {}))
     return {"insight": insight, "pages": pages, "gap_report": gap_report}
 
 
@@ -4430,6 +4556,8 @@ def _merge_bp_ai_insight(ai_insight: Dict[str, Any], fallback: Dict[str, Any]) -
     next_actions = _bp_list(ai_insight.get("next_actions", ai_insight.get("nextActions", [])), max_items=5, max_len=180)
     if next_actions:
         merged["next_actions"] = next_actions
+    if isinstance(ai_insight.get("share_card", ai_insight.get("shareCard", {})), dict):
+        merged["share_card"] = copy.deepcopy(ai_insight.get("share_card", ai_insight.get("shareCard", {})))
     merged["updated_at"] = _now_ts()
     return merged
 
@@ -4532,6 +4660,21 @@ def generate_bp_assets_with_ai(project: Dict[str, Any], materials: List[Dict[str
             ],
             "likely_questions": ["最多8条，每条60字以内"],
             "next_actions": ["最多3条，每条80字以内"],
+            "share_card": {
+                "title": "项目名",
+                "one_line": "80字以内",
+                "category": "方向/类型，20字以内",
+                "scenario": "场景，60字以内",
+                "target_user": "目标用户，60字以内",
+                "core_problem": "核心问题，80字以内",
+                "solution": "解决方案，80字以内",
+                "ai_role": "AI作用，80字以内",
+                "current_progress": "当前进展，80字以内",
+                "business_model_status": "商业模式状态，80字以内",
+                "current_needs": ["最多4条"],
+                "can_provide": ["最多4条"],
+                "suitable_for": ["最多4条"],
+            },
         }
     }
     messages = [
@@ -4556,7 +4699,7 @@ def generate_bp_assets_with_ai(project: Dict[str, Any], materials: List[Dict[str
             ),
         },
     ]
-    resp = create_chat_completion(client, model=model, temperature=0.2, messages=messages, max_tokens=900)
+    resp = create_chat_completion(client, model=model, temperature=0.2, messages=messages, max_tokens=1100)
     parsed = extract_json_object((resp.choices[0].message.content or "{}").strip())
     insight = _merge_bp_ai_insight(parsed.get("insight", {}) if isinstance(parsed.get("insight", {}), dict) else {}, fallback_assets["insight"])
     text = _bp_materials_text(materials)
@@ -4569,17 +4712,7 @@ def generate_bp_assets_with_ai(project: Dict[str, Any], materials: List[Dict[str
     pages = _generate_bp_pages(project, insight, materials)
     insight["bp_structure_preview"] = _bp_structure_preview(pages)
     gap_report = _generate_bp_gap_report(project, pages)
-    share_card = insight.get("share_card", {}) if isinstance(insight.get("share_card", {}), dict) else {}
-    insight["share_card"] = {
-        "title": _ops_text(share_card.get("title", project.get("name", "")), max_len=160),
-        "one_line": _ops_text(share_card.get("one_line", share_card.get("oneLine", project.get("tagline", insight.get("solution", "")))), max_len=240),
-        "stage": _ops_text(share_card.get("stage", project.get("stage", "unknown")), max_len=60),
-        "target_customer": _ops_text(share_card.get("target_customer", share_card.get("targetCustomer", project.get("target_customer", ""))), max_len=240) or "待补充",
-        "resource_ask": _ops_text(share_card.get("resource_ask", share_card.get("resourceAsk", insight.get("resource_needs", ""))), max_len=240),
-        "recommended_path": _ops_text(share_card.get("recommended_path", share_card.get("recommendedPath", insight.get("recommended_path", ""))), max_len=240),
-        "highlights": _bp_list(share_card.get("highlights", [insight.get("solution", ""), insight.get("traction", ""), insight.get("ai_relevance", "")]), max_items=3, max_len=120),
-        "gaps": [item.get("gap_name", "") for item in gap_report.get("items", [])[:3]],
-    }
+    insight["share_card"] = _bp_build_share_card(project, insight, text, gap_report, insight.get("share_card", {}))
     project["readiness_score"] = int(insight.get("readiness_score", project.get("readiness_score", 0)) or 0)
     project["recommended_path"] = sanitize_text_strict(insight.get("recommended_path", project.get("recommended_path", "")), allow_empty=True, max_len=240)
     return {"insight": insight, "pages": pages, "gap_report": gap_report}
@@ -4652,7 +4785,7 @@ def _bp_bundle(state: Dict[str, Any], project: Dict[str, Any], *, public: bool) 
     next_actions = [item for item in state.get("bp_next_actions", []) if isinstance(item, dict) and item.get("project_id") == project_id]
     return {
         "project": _bp_public_project(project) if public else copy.deepcopy(project),
-        "raw_materials": copy.deepcopy(raw_materials),
+        "raw_materials": [] if public else copy.deepcopy(raw_materials),
         "insight": copy.deepcopy(insight),
         "pages": [_bp_public_page(item) for item in pages] if public else copy.deepcopy(pages),
         "gap_report": copy.deepcopy(gap_report),
